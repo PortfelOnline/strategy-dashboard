@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useAuth } from '@/_core/hooks/useAuth';
+import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -40,14 +42,37 @@ const contentPillars = [
 ];
 
 export default function Home() {
+  // The userAuth hooks provides authentication state
+  // To implement login/logout functionality, simply call logout() or redirect to getLoginUrl()
+  let { user, loading, error, isAuthenticated, logout } = useAuth();
+  const [, navigate] = useLocation();
+
   const [expandedPillar, setExpandedPillar] = useState<number | null>(0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#F8F6F1] to-white">
       {/* Header */}
-      <header className="bg-gradient-to-r from-[#1E3A8A] to-[#FF6B35] text-white py-12 px-4">
+      <header className="bg-gradient-to-r from-[#1E3A8A] to-[#FF6B35] text-white py-8 px-4">
         <div className="container max-w-6xl mx-auto">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">AI Consultant India Strategy</h1>
+          <div className="flex justify-between items-center mb-4">
+            <h1 className="text-3xl md:text-4xl font-bold">AI Consultant India Strategy</h1>
+            {isAuthenticated && (
+              <div className="flex gap-3">
+                <Button
+                  onClick={() => navigate('/generator')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  Generate Content
+                </Button>
+                <Button
+                  onClick={() => navigate('/library')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  My Library
+                </Button>
+              </div>
+            )}
+          </div>
           <p className="text-lg md:text-xl opacity-90">Viral Marketing Guide for get-my-agent.com</p>
         </div>
       </header>

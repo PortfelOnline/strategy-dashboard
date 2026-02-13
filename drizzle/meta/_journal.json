@@ -15,6 +15,13 @@
       "when": 1769404679075,
       "tag": "0001_legal_luke_cage",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1770628229728,
+      "tag": "0002_mighty_blonde_phantom",
+      "breakpoints": true
     }
   ]
 }

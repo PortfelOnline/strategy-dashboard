@@ -57,7 +57,7 @@ export default function Home() {
           <div className="flex justify-between items-center mb-4">
             <h1 className="text-3xl md:text-4xl font-bold">AI Consultant India Strategy</h1>
             {isAuthenticated && (
-              <div className="flex gap-3">
+              <div className="flex gap-3 flex-wrap">
                 <Button
                   onClick={() => navigate('/generator')}
                   className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
@@ -69,6 +69,12 @@ export default function Home() {
                   className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
                 >
                   My Library
+                </Button>
+                <Button
+                  onClick={() => navigate('/accounts')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  Connected Accounts
                 </Button>
               </div>
             )}

@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import ContentGenerator from "./pages/ContentGenerator";
 import ContentLibrary from "./pages/ContentLibrary";
+import MetaAccounts from "./pages/MetaAccounts";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -15,6 +16,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/generator" component={ContentGenerator} />
       <Route path="/library" component={ContentLibrary} />
+      <Route path="/accounts" component={MetaAccounts} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

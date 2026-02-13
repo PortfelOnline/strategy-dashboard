@@ -5,9 +5,11 @@ import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import { invokeLLM } from "./_core/llm";
 import { createContentPost, getUserContentPosts, getContentTemplates, createContentTemplate } from "./db";
+import { metaRouter } from "./routers/meta";
 
 export const appRouter = router({
   system: systemRouter,
+  meta: metaRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

@@ -32,7 +32,10 @@
 
 ## Phase 5: Integration & Publishing
 - [x] Add draft/publish workflow (status: draft, scheduled, published, archived)
-- [ ] Add Meta API integration for Facebook/Instagram
+- [x] Add Meta API integration for Facebook/Instagram
+- [x] Create MetaAccounts management page
+- [x] Add PublishToMeta dialog component
+- [x] Implement OAuth authentication flow
 - [ ] Implement scheduled posting
 - [ ] Create content approval system
 - [ ] Add bulk scheduling capabilities

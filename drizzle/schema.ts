@@ -68,3 +68,22 @@ export const contentPosts = mysqlTable("contentPosts", {
 
 export type ContentPost = typeof contentPosts.$inferSelect;
 export type InsertContentPost = typeof contentPosts.$inferInsert;
+/**
+ * Meta (Facebook/Instagram) account credentials
+ */
+export const metaAccounts = mysqlTable("metaAccounts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull().references(() => users.id),
+  accountType: mysqlEnum("accountType", ["facebook_page", "instagram_business"]).notNull(),
+  accountId: varchar("accountId", { length: 255 }).notNull(),
+  accountName: varchar("accountName", { length: 255 }).notNull(),
+  accessToken: text("accessToken").notNull(),
+  refreshToken: text("refreshToken"),
+  expiresAt: timestamp("expiresAt"),
+  isActive: int("isActive").default(1).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type MetaAccount = typeof metaAccounts.$inferSelect;
+export type InsertMetaAccount = typeof metaAccounts.$inferInsert;

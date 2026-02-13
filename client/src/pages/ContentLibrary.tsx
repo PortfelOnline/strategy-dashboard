@@ -6,8 +6,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { Loader2, Trash2, Edit2, Share2, Calendar } from 'lucide-react';
+import { Loader2, Trash2, Edit2, Share2, Calendar, Send } from 'lucide-react';
 import { toast } from 'sonner';
+import { PublishToMeta } from '@/components/PublishToMeta';
 
 type Status = 'draft' | 'scheduled' | 'published' | 'archived';
 
@@ -28,6 +29,8 @@ export default function ContentLibrary() {
   const { user } = useAuth();
   const [selectedStatus, setSelectedStatus] = useState<Status>('draft');
   const [searchQuery, setSearchQuery] = useState('');
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<any>(null);
 
   const { data: posts, isLoading } = trpc.content.listPosts.useQuery({
     status: selectedStatus,
@@ -136,6 +139,20 @@ export default function ContentLibrary() {
                       <Edit2 className="w-4 h-4 mr-1" />
                       Edit
                     </Button>
+                    {post.status === 'draft' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1 text-blue-600 hover:text-blue-700"
+                        onClick={() => {
+                          setSelectedPost(post);
+                          setPublishDialogOpen(true);
+                        }}
+                      >
+                        <Send className="w-4 h-4 mr-1" />
+                        Publish
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -158,6 +175,17 @@ export default function ContentLibrary() {
           </div>
         )}
       </div>
+
+      {selectedPost && (
+        <PublishToMeta
+          open={publishDialogOpen}
+          onOpenChange={setPublishDialogOpen}
+          postId={selectedPost.id}
+          content={selectedPost.content}
+          platform={selectedPost.platform}
+          imageUrl={selectedPost.mediaUrl}
+        />
+      )}
     </div>
   );
 }

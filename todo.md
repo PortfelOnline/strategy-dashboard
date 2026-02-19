@@ -21,6 +21,8 @@
 - [x] Add platform selection (Facebook, Instagram, WhatsApp)
 - [x] Create content history/library view
 - [ ] Add content editing capabilities
+- [ ] Add Content Calendar page
+- [ ] Implement drag-and-drop scheduling
 
 ## Phase 4: Template Library & Analytics
 - [x] Create template management system (via saveTemplate API)

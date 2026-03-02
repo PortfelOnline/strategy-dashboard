@@ -1,0 +1,11 @@
+---
+description: Express + tRPC backend conventions
+globs: server/**
+alwaysApply: false
+---
+
+# server/ (Express + tRPC)
+
+- Keep API logic inside tRPC routers and core services under `server/_core/`.
+- Use Drizzle helpers from `server/db.ts` instead of ad-hoc SQL where possible.
+- After backend changes, run `npm run test` and, if needed, `npm run db:push` for schema updates.

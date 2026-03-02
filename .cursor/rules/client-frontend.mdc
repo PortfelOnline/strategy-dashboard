@@ -1,0 +1,11 @@
+---
+description: React frontend conventions for client/
+globs: client/**
+alwaysApply: false
+---
+
+# client/ (React + Vite)
+
+- Use the existing Stack (React + Vite + TypeScript) and component patterns (shadcn/ui, Radix).
+- Prefer small, focused changes to pages and components; follow existing layout and routing structure.
+- Run `npm run dev` for local development and `npm run test` / `npm run check` when touching critical logic.

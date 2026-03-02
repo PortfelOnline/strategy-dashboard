@@ -28,3 +28,6 @@
 - Auth: OAuth 2.0 for Meta accounts
 - AI content generation via LLM — see server routers for prompt logic
 - Multi-language: Hinglish, Hindi, English, Tamil, Telugu, Bengali
+
+## Cursor scoped rules
+Path-scoped guidance for `client/`, `server/`, `drizzle/`, and `shared/` lives in `.cursor/rules/`.

@@ -1,0 +1,10 @@
+---
+description: Shared types and constants
+globs: shared/**
+alwaysApply: false
+---
+
+# shared/ (types & constants)
+
+- Keep shared types minimal and generic; avoid coupling them to implementation details of a single layer.
+- When changing shared types, update both client and server usage and run type checks (`npm run check`).

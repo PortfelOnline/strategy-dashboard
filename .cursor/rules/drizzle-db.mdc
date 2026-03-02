@@ -1,0 +1,11 @@
+---
+description: Drizzle ORM schema and migrations
+globs: drizzle/**
+alwaysApply: false
+---
+
+# drizzle/ (DB schema & migrations)
+
+- Treat `drizzle/schema.ts` and migrations as the single source of truth for the DB structure.
+- Keep migrations small and additive; avoid destructive changes unless explicitly intended and documented.
+- Coordinate schema updates with backend code changes and update any relevant docs.

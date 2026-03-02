@@ -29,5 +29,8 @@
 - AI content generation via LLM — see server routers for prompt logic
 - Multi-language: Hinglish, Hindi, English, Tamil, Telugu, Bengali
 
+## Agent guide
+- For cross-project agent behavior (commands, skills, MCP, rules, settings) see `docs/agent/AGENT_GUIDE.md`.
+
 ## Cursor scoped rules
 Path-scoped guidance for `client/`, `server/`, `drizzle/`, and `shared/` lives in `.cursor/rules/`.

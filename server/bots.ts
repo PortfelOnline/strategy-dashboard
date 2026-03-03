@@ -111,3 +111,92 @@ export function clearProxyBlacklist() {
   const f = path.join(BOT_DIR, 'outputs', 'proxy_blacklist.json');
   if (fs.existsSync(f)) fs.writeFileSync(f, '{}');
 }
+
+// --- proxies.txt management ---
+const PROXIES_FILE = () => path.join(BOT_DIR, 'proxies.txt');
+
+function parseProxyLine(line: string): { raw: string; user: string; host: string } | null {
+  const m = line.match(/^(?:https?:\/\/)?([^:]+:[^@]+)@([^:]+:\d+)$/);
+  if (!m) return null;
+  return { raw: line, user: m[1].split(':')[0], host: m[2] };
+}
+
+export function getProxies(): { proxies: string[]; total: number } {
+  const file = PROXIES_FILE();
+  try {
+    if (fs.existsSync(file)) {
+      const proxies = fs.readFileSync(file, 'utf8')
+        .split('\n').map(l => l.trim()).filter(Boolean);
+      return { proxies, total: proxies.length };
+    }
+  } catch {}
+  return { proxies: [], total: 0 };
+}
+
+export function addProxies(lines: string[]): { added: number; skipped: number; total: number } {
+  const existing = new Set(getProxies().proxies);
+  const toAdd = lines.map(l => l.trim()).filter(l => l && !existing.has(l));
+  if (toAdd.length > 0) {
+    fs.appendFileSync(PROXIES_FILE(), '\n' + toAdd.join('\n'));
+  }
+  const total = existing.size + toAdd.length;
+  return { added: toAdd.length, skipped: lines.length - toAdd.length, total };
+}
+
+export function replaceProxies(lines: string[]): { total: number } {
+  const clean = lines.map(l => l.trim()).filter(Boolean);
+  fs.writeFileSync(PROXIES_FILE(), clean.join('\n') + (clean.length ? '\n' : ''));
+  return { total: clean.length };
+}
+
+export function deleteProxy(proxy: string): { total: number } {
+  const { proxies } = getProxies();
+  const filtered = proxies.filter(p => p !== proxy);
+  fs.writeFileSync(PROXIES_FILE(), filtered.join('\n') + (filtered.length ? '\n' : ''));
+  return { total: filtered.length };
+}
+
+export function getProxyBlacklist(): Record<string, string> {
+  const blFile = path.join(BOT_DIR, 'outputs', 'proxy_blacklist.json');
+  try {
+    if (fs.existsSync(blFile)) return JSON.parse(fs.readFileSync(blFile, 'utf8'));
+  } catch {}
+  return {};
+}
+
+// --- Google Docs config ---
+export interface GoogleDocsConfig {
+  global: { proxies: string; queries: string; warmup_queries: string };
+  websites: Record<string, string>; // website URL -> queries_doc URL
+}
+
+const GOOGLE_DOCS_FILE = () => path.join(BOT_DIR, 'outputs', 'google_docs.json');
+
+const DEFAULT_GOOGLE_DOCS: GoogleDocsConfig = {
+  global: {
+    proxies: 'https://docs.google.com/document/d/1yOxZzMJg2cbYCa3t1OPJ5qfnRv2oD09kyyhUJRFxYoo',
+    queries: 'https://docs.google.com/document/d/1pcMQljv073k1va7Op8tcZp66MwAVo4gNbnyzL_i-yTA',
+    warmup_queries: 'https://docs.google.com/document/d/11KvPjdtznTnAbWGczJfXuURp6IBfT4fz5cgdNk7Esp0',
+  },
+  websites: {
+    'https://shared-brains.ru': 'https://docs.google.com/document/d/1pcMQljv073k1va7Op8tcZp66MwAVo4gNbnyzL_i-yTA',
+    'https://brain-skill.ru': 'https://docs.google.com/document/d/1pcMQljv073k1va7Op8tcZp66MwAVo4gNbnyzL_i-yTA',
+    'https://edu.shared-brains.ru': 'https://docs.google.com/document/d/1pcMQljv073k1va7Op8tcZp66MwAVo4gNbnyzL_i-yTA',
+    'https://kadastrmap.info': 'https://docs.google.com/document/d/14IKdB6QhaLmwRi62XjgVDoEGCx-pNmuMhK4dNzrLA2w',
+    'https://мцск.рф': 'https://docs.google.com/document/d/1vKkmHdT6i42siz3joUtKhpMTbphgLtq84nthOl5FkQs',
+  },
+};
+
+export function getGoogleDocs(): GoogleDocsConfig {
+  try {
+    const f = GOOGLE_DOCS_FILE();
+    if (fs.existsSync(f)) return JSON.parse(fs.readFileSync(f, 'utf8'));
+  } catch {}
+  return DEFAULT_GOOGLE_DOCS;
+}
+
+export function setGoogleDocs(config: GoogleDocsConfig): void {
+  const dir = path.join(BOT_DIR, 'outputs');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(GOOGLE_DOCS_FILE(), JSON.stringify(config, null, 2));
+}

@@ -2,6 +2,15 @@ import { router, protectedProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as botManager from '../bots';
 
+const googleDocsSchema = z.object({
+  global: z.object({
+    proxies: z.string().url(),
+    queries: z.string().url(),
+    warmup_queries: z.string().url(),
+  }),
+  websites: z.record(z.string(), z.string().url()),
+});
+
 export const botsRouter = router({
   list: protectedProcedure.query(() => {
     const running = botManager.getRunningBots();
@@ -42,4 +51,41 @@ export const botsRouter = router({
 
   clearCache: protectedProcedure.mutation(() => { botManager.clearProxyCache(); return { success: true }; }),
   clearBlacklist: protectedProcedure.mutation(() => { botManager.clearProxyBlacklist(); return { success: true }; }),
+
+  // --- proxies.txt ---
+  proxyList: protectedProcedure.query(() => {
+    const { proxies } = botManager.getProxies();
+    const blacklist = botManager.getProxyBlacklist();
+    const now = new Date();
+    return proxies.map(p => ({
+      proxy: p,
+      banned: p in blacklist && new Date(blacklist[p]) > now,
+      banUntil: blacklist[p] ?? null,
+    }));
+  }),
+
+  proxyAdd: protectedProcedure
+    .input(z.object({ text: z.string() }))
+    .mutation(({ input }) => {
+      const lines = input.text.split('\n').map(l => l.trim()).filter(Boolean);
+      return botManager.addProxies(lines);
+    }),
+
+  proxyReplace: protectedProcedure
+    .input(z.object({ text: z.string() }))
+    .mutation(({ input }) => {
+      const lines = input.text.split('\n').map(l => l.trim()).filter(Boolean);
+      return botManager.replaceProxies(lines);
+    }),
+
+  proxyDelete: protectedProcedure
+    .input(z.object({ proxy: z.string() }))
+    .mutation(({ input }) => botManager.deleteProxy(input.proxy)),
+
+  // --- Google Docs config ---
+  googleDocs: protectedProcedure.query(() => botManager.getGoogleDocs()),
+
+  setGoogleDocs: protectedProcedure
+    .input(googleDocsSchema)
+    .mutation(({ input }) => { botManager.setGoogleDocs(input); return { success: true }; }),
 });

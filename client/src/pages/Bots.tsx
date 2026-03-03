@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
+import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -32,7 +34,21 @@ interface BotEntry {
   } | null;
 }
 
+interface ProxyEntry {
+  proxy: string;
+  banned: boolean;
+  banUntil: string | null;
+}
+
+interface GoogleDocsConfig {
+  global: { proxies: string; queries: string; warmup_queries: string };
+  websites: Record<string, string>;
+}
+
 export default function Bots() {
+  const [tab, setTab] = useState<'bots' | 'proxies' | 'docs'>('bots');
+
+  // Bots state
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsBot, setLogsBot] = useState<number | null>(null);
   const [startOpen, setStartOpen] = useState(false);
@@ -40,39 +56,93 @@ export default function Bots() {
   const [newMode, setNewMode] = useState<'warmup' | 'target'>('warmup');
   const [newWebsite, setNewWebsite] = useState(WEBSITES[0]);
 
+  // Proxies state
+  const [proxyInput, setProxyInput] = useState('');
+  const [proxySearch, setProxySearch] = useState('');
+  const [replaceConfirm, setReplaceConfirm] = useState(false);
+
+  // Google Docs state
+  const [docsEdits, setDocsEdits] = useState<GoogleDocsConfig | null>(null);
+
   const utils = trpc.useUtils();
 
+  // Bots queries
   const { data, isLoading, refetch } = trpc.bots.list.useQuery(undefined, {
     refetchInterval: 5000,
   });
-
   const { data: logsData, isLoading: logsLoading } = trpc.bots.logs.useQuery(
     { botId: logsBot!, lines: 200 },
     { enabled: logsBot !== null && logsOpen, refetchInterval: logsOpen ? 3000 : false }
   );
 
+  // Proxies query
+  const { data: proxiesData, isLoading: proxiesLoading, refetch: refetchProxies } = trpc.bots.proxyList.useQuery(undefined, {
+    enabled: tab === 'proxies',
+  });
+
+  // Google Docs query
+  const { data: googleDocsData } = trpc.bots.googleDocs.useQuery(undefined, {
+    enabled: tab === 'docs',
+  });
+  useEffect(() => {
+    if (googleDocsData && !docsEdits) setDocsEdits(googleDocsData);
+  }, [googleDocsData]);
+
+  // Bots mutations
   const start = trpc.bots.start.useMutation({
     onSuccess: (d) => { toast.success(`Bot started (PID ${d.pid})`); utils.bots.list.invalidate(); setStartOpen(false); setNewBotId(''); },
     onError: (e) => toast.error(e.message),
   });
-
   const stop = trpc.bots.stop.useMutation({
     onSuccess: () => { toast.success('Bot stopped'); utils.bots.list.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
-
   const clearCache = trpc.bots.clearCache.useMutation({
     onSuccess: () => { toast.success('Proxy cache cleared'); utils.bots.list.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
-
   const clearBlacklist = trpc.bots.clearBlacklist.useMutation({
-    onSuccess: () => { toast.success('Proxy blacklist cleared'); utils.bots.list.invalidate(); },
+    onSuccess: () => { toast.success('Proxy blacklist cleared'); utils.bots.list.invalidate(); utils.bots.proxyList.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Proxy mutations
+  const proxyAdd = trpc.bots.proxyAdd.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Added ${r.added} proxies (skipped ${r.skipped} duplicates). Total: ${r.total}`);
+      setProxyInput('');
+      utils.bots.proxyList.invalidate();
+      utils.bots.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const proxyReplace = trpc.bots.proxyReplace.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Replaced. Total: ${r.total} proxies`);
+      setProxyInput('');
+      setReplaceConfirm(false);
+      utils.bots.proxyList.invalidate();
+      utils.bots.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const proxyDelete = trpc.bots.proxyDelete.useMutation({
+    onSuccess: (r) => { toast.success(`Deleted. Total: ${r.total}`); utils.bots.proxyList.invalidate(); utils.bots.list.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Google Docs mutation
+  const saveDocs = trpc.bots.setGoogleDocs.useMutation({
+    onSuccess: () => { toast.success('Google Docs сохранены'); utils.bots.googleDocs.invalidate(); },
     onError: (e) => toast.error(e.message),
   });
 
   const bots: BotEntry[] = data?.bots ?? [];
   const proxyStats = data?.proxyStats;
+  const proxies: ProxyEntry[] = proxiesData ?? [];
+  const filteredProxies = proxies.filter(p =>
+    !proxySearch || p.proxy.toLowerCase().includes(proxySearch.toLowerCase())
+  );
 
   const handleStart = () => {
     const id = parseInt(newBotId);
@@ -80,12 +150,23 @@ export default function Bots() {
     start.mutate({ botId: id, mode: newMode, website: newWebsite });
   };
 
+  const handleAdd = () => {
+    if (!proxyInput.trim()) return toast.error('Paste proxies first');
+    proxyAdd.mutate({ text: proxyInput });
+  };
+
+  const handleReplace = () => {
+    if (!proxyInput.trim()) return toast.error('Paste proxies first');
+    if (!replaceConfirm) { setReplaceConfirm(true); return; }
+    proxyReplace.mutate({ text: proxyInput });
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
       <div className="max-w-6xl mx-auto">
 
         {/* Header */}
-        <div className="mb-8 flex items-start justify-between">
+        <div className="mb-6 flex items-start justify-between">
           <div>
             <h1 className="text-4xl font-bold text-slate-900 mb-2 flex items-center gap-3">
               <Bot className="w-9 h-9" /> Yandex Bots
@@ -93,196 +174,359 @@ export default function Bots() {
             <p className="text-slate-600">Управление поисковыми ботами</p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => refetch()}>
+            <Button variant="outline" size="sm" onClick={() => { refetch(); refetchProxies(); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Refresh
             </Button>
-            <Button onClick={() => setStartOpen(true)}>
-              <Plus className="w-4 h-4 mr-1" /> New Bot
-            </Button>
+            {tab === 'bots' && (
+              <Button onClick={() => setStartOpen(true)}>
+                <Plus className="w-4 h-4 mr-1" /> New Bot
+              </Button>
+            )}
           </div>
         </div>
 
-        {/* Proxy Stats */}
-        {proxyStats && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> Working Proxies
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-green-600">{proxyStats.workingCount}</div>
-                {proxyStats.cacheAgeMin !== null && (
-                  <p className="text-xs text-slate-500 mt-1">Cached {proxyStats.cacheAgeMin} min ago</p>
-                )}
-                {proxyStats.cacheAgeMin === null && (
-                  <p className="text-xs text-slate-500 mt-1">No cache</p>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-2 text-xs text-red-500 hover:text-red-600 p-0 h-auto"
-                  onClick={() => clearCache.mutate()}
-                  disabled={clearCache.isPending}
-                >
-                  Clear cache
-                </Button>
-              </CardContent>
-            </Card>
+        <Tabs value={tab} onValueChange={v => setTab(v as 'bots' | 'proxies' | 'docs')}>
+          <TabsList className="mb-6">
+            <TabsTrigger value="bots">Боты</TabsTrigger>
+            <TabsTrigger value="proxies">
+              Прокси {proxies.length > 0 && <Badge className="ml-2 bg-slate-200 text-slate-700 text-xs">{proxies.length}</Badge>}
+            </TabsTrigger>
+            <TabsTrigger value="docs">
+              <FileText className="w-3.5 h-3.5 mr-1.5" />Google Docs
+            </TabsTrigger>
+          </TabsList>
 
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600">Banned Proxies</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className={`text-3xl font-bold ${proxyStats.bannedCount > 0 ? 'text-red-600' : 'text-slate-400'}`}>
-                  {proxyStats.bannedCount}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">Banned after CAPTCHA</p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-2 text-xs text-red-500 hover:text-red-600 p-0 h-auto"
-                  onClick={() => clearBlacklist.mutate()}
-                  disabled={clearBlacklist.isPending || proxyStats.bannedCount === 0}
-                >
-                  Clear blacklist
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600">Running Bots</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold text-blue-600">
-                  {bots.filter(b => b.status === 'running').length}
-                </div>
-                <p className="text-xs text-slate-500 mt-1">of {bots.length} total</p>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Bots list */}
-        {isLoading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          </div>
-        ) : bots.length === 0 ? (
-          <Card>
-            <CardContent className="py-16 text-center">
-              <Bot className="w-12 h-12 text-slate-300 mx-auto mb-4" />
-              <p className="text-slate-500 text-lg">No bots yet</p>
-              <p className="text-slate-400 text-sm mt-1">Click "New Bot" to start one</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {bots.map(bot => (
-              <Card key={bot.botId} className={`border-l-4 ${bot.status === 'running' ? 'border-l-green-500' : 'border-l-slate-300'}`}>
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Bot className="w-5 h-5" />
-                      Bot #{bot.botId}
+          {/* ===== BOTS TAB ===== */}
+          <TabsContent value="bots">
+            {/* Proxy Stats */}
+            {proxyStats && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <Shield className="w-4 h-4" /> Working Proxies
                     </CardTitle>
-                    <Badge className={bot.status === 'running'
-                      ? 'bg-green-100 text-green-800'
-                      : 'bg-slate-100 text-slate-600'
-                    }>
-                      {bot.status === 'running' ? '● Running' : '○ Stopped'}
-                    </Badge>
-                  </div>
-                  {bot.status === 'running' && (
-                    <CardDescription className="text-xs space-y-0.5">
-                      <div><span className="font-medium">Mode:</span> {bot.mode}</div>
-                      <div className="truncate"><span className="font-medium">Site:</span> {bot.website}</div>
-                      <div><span className="font-medium">PID:</span> {bot.pid} · Started {bot.startedAt ? formatDistanceToNow(new Date(bot.startedAt), { addSuffix: true }) : '—'}</div>
-                    </CardDescription>
-                  )}
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {/* State info */}
-                  {bot.state && (
-                    <div className="text-xs text-slate-500 bg-slate-50 rounded p-2 space-y-1">
-                      <div>Warmup days: <span className="font-medium text-slate-700">{bot.state.warmup_days ?? 0}</span></div>
-                      {bot.state.last_run && (
-                        <div>Last run: <span className="font-medium text-slate-700">{formatDistanceToNow(new Date(bot.state.last_run), { addSuffix: true })}</span></div>
-                      )}
-                      {bot.state.used_queries && (
-                        <div>Queries used: <span className="font-medium text-slate-700">{bot.state.used_queries.length}</span></div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="flex gap-2">
-                    {bot.status === 'stopped' ? (
-                      <Button
-                        size="sm"
-                        className="flex-1 bg-green-600 hover:bg-green-700"
-                        onClick={() => {
-                          setNewBotId(String(bot.botId));
-                          setStartOpen(true);
-                        }}
-                      >
-                        <Play className="w-4 h-4 mr-1" /> Start
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="flex-1"
-                        onClick={() => stop.mutate({ botId: bot.botId })}
-                        disabled={stop.isPending}
-                      >
-                        {stop.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Square className="w-4 h-4 mr-1" />}
-                        Stop
-                      </Button>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => { setLogsBot(bot.botId); setLogsOpen(true); }}
-                    >
-                      <Terminal className="w-4 h-4" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold text-green-600">{proxyStats.workingCount}</div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {proxyStats.cacheAgeMin !== null ? `Cached ${proxyStats.cacheAgeMin} min ago` : 'No cache'}
+                    </p>
+                    <Button variant="ghost" size="sm" className="mt-2 text-xs text-red-500 p-0 h-auto"
+                      onClick={() => clearCache.mutate()} disabled={clearCache.isPending}>
+                      Clear cache
                     </Button>
-                  </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-slate-600">Banned Proxies</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className={`text-3xl font-bold ${proxyStats.bannedCount > 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                      {proxyStats.bannedCount}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">Banned after CAPTCHA</p>
+                    <Button variant="ghost" size="sm" className="mt-2 text-xs text-red-500 p-0 h-auto"
+                      onClick={() => clearBlacklist.mutate()}
+                      disabled={clearBlacklist.isPending || proxyStats.bannedCount === 0}>
+                      Clear blacklist
+                    </Button>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-slate-600">Running Bots</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold text-blue-600">
+                      {bots.filter(b => b.status === 'running').length}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">of {bots.length} total</p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>
+            ) : bots.length === 0 ? (
+              <Card>
+                <CardContent className="py-16 text-center">
+                  <Bot className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                  <p className="text-slate-500 text-lg">No bots yet</p>
+                  <p className="text-slate-400 text-sm mt-1">Click "New Bot" to start one</p>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )}
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {bots.map(bot => (
+                  <Card key={bot.botId} className={`border-l-4 ${bot.status === 'running' ? 'border-l-green-500' : 'border-l-slate-300'}`}>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-lg flex items-center gap-2">
+                          <Bot className="w-5 h-5" /> Bot #{bot.botId}
+                        </CardTitle>
+                        <Badge className={bot.status === 'running' ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}>
+                          {bot.status === 'running' ? '● Running' : '○ Stopped'}
+                        </Badge>
+                      </div>
+                      {bot.status === 'running' && (
+                        <CardDescription className="text-xs space-y-0.5 mt-1">
+                          <div><span className="font-medium">Mode:</span> {bot.mode}</div>
+                          <div className="truncate"><span className="font-medium">Site:</span> {bot.website}</div>
+                          <div><span className="font-medium">PID:</span> {bot.pid} · {bot.startedAt ? formatDistanceToNow(new Date(bot.startedAt), { addSuffix: true }) : '—'}</div>
+                        </CardDescription>
+                      )}
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {bot.state && (
+                        <div className="text-xs text-slate-500 bg-slate-50 rounded p-2 space-y-1">
+                          <div>Warmup days: <span className="font-medium text-slate-700">{bot.state.warmup_days ?? 0}</span></div>
+                          {bot.state.last_run && (
+                            <div>Last run: <span className="font-medium text-slate-700">{formatDistanceToNow(new Date(bot.state.last_run), { addSuffix: true })}</span></div>
+                          )}
+                          {bot.state.used_queries && (
+                            <div>Queries used: <span className="font-medium text-slate-700">{bot.state.used_queries.length}</span></div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        {bot.status === 'stopped' ? (
+                          <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700"
+                            onClick={() => { setNewBotId(String(bot.botId)); setStartOpen(true); }}>
+                            <Play className="w-4 h-4 mr-1" /> Start
+                          </Button>
+                        ) : (
+                          <Button size="sm" variant="destructive" className="flex-1"
+                            onClick={() => stop.mutate({ botId: bot.botId })} disabled={stop.isPending}>
+                            {stop.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Square className="w-4 h-4 mr-1" />}
+                            Stop
+                          </Button>
+                        )}
+                        <Button size="sm" variant="outline"
+                          onClick={() => { setLogsBot(bot.botId); setLogsOpen(true); }}>
+                          <Terminal className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ===== PROXIES TAB ===== */}
+          <TabsContent value="proxies">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+              {/* Left: input panel */}
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Добавить / Заменить прокси</CardTitle>
+                    <CardDescription>
+                      Формат: <code className="bg-slate-100 px-1 rounded text-xs">user:pass@host:port</code> — по одному на строку
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Textarea
+                      className="font-mono text-xs min-h-64 resize-y"
+                      placeholder={'no2L5n:9ZOrkzA3QP@45.86.1.180:3000\nno2L5n:9ZOrkzA3QP@109.248.14.8:3000\n...'}
+                      value={proxyInput}
+                      onChange={e => { setProxyInput(e.target.value); setReplaceConfirm(false); }}
+                    />
+                    <div className="text-xs text-slate-500">
+                      {proxyInput.split('\n').filter(l => l.trim()).length} строк вставлено
+                    </div>
+                    <div className="flex gap-2">
+                      <Button className="flex-1" onClick={handleAdd} disabled={proxyAdd.isPending}>
+                        {proxyAdd.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Upload className="w-4 h-4 mr-1" />}
+                        Добавить
+                      </Button>
+                      <Button
+                        variant={replaceConfirm ? 'destructive' : 'outline'}
+                        className="flex-1"
+                        onClick={handleReplace}
+                        disabled={proxyReplace.isPending}
+                      >
+                        {proxyReplace.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                        {replaceConfirm ? 'Подтвердить замену?' : 'Заменить всё'}
+                      </Button>
+                    </div>
+                    {replaceConfirm && (
+                      <p className="text-xs text-red-600">Нажми ещё раз — текущий список будет удалён!</p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Stats mini card */}
+                <Card>
+                  <CardContent className="pt-4 grid grid-cols-3 gap-3 text-center">
+                    <div>
+                      <div className="text-2xl font-bold text-slate-800">{proxies.length}</div>
+                      <div className="text-xs text-slate-500">Всего</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-green-600">
+                        {proxies.filter(p => !p.banned).length}
+                      </div>
+                      <div className="text-xs text-slate-500">Активных</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold text-red-500">
+                        {proxies.filter(p => p.banned).length}
+                      </div>
+                      <div className="text-xs text-slate-500">Забанено</div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Right: proxy list */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Список прокси</CardTitle>
+                    <Button variant="ghost" size="sm" onClick={() => refetchProxies()}>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  <Input
+                    placeholder="Поиск по IP или логину..."
+                    value={proxySearch}
+                    onChange={e => setProxySearch(e.target.value)}
+                    className="mt-2"
+                  />
+                </CardHeader>
+                <CardContent className="p-0">
+                  {proxiesLoading ? (
+                    <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                  ) : filteredProxies.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-sm">Нет прокси</div>
+                  ) : (
+                    <div className="max-h-[480px] overflow-y-auto divide-y">
+                      {filteredProxies.map(p => (
+                        <div key={p.proxy} className={`flex items-center justify-between px-4 py-2 text-xs hover:bg-slate-50 ${p.banned ? 'bg-red-50' : ''}`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${p.banned ? 'bg-red-500' : 'bg-green-500'}`} />
+                            <span className="font-mono truncate text-slate-700">{p.proxy}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0 ml-2">
+                            {p.banned && (
+                              <span className="text-red-500 text-[10px]">ban</span>
+                            )}
+                            <button
+                              className="text-slate-400 hover:text-red-500 transition-colors"
+                              onClick={() => proxyDelete.mutate({ proxy: p.proxy })}
+                              disabled={proxyDelete.isPending}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          {/* ===== GOOGLE DOCS TAB ===== */}
+          <TabsContent value="docs">
+            {!docsEdits ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>
+            ) : (
+              <div className="space-y-6 max-w-3xl">
+                {/* Global docs */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <FileText className="w-4 h-4" /> Глобальные документы
+                    </CardTitle>
+                    <CardDescription>Общие для всех сайтов</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {(['proxies', 'queries', 'warmup_queries'] as const).map(key => (
+                      <div key={key}>
+                        <label className="text-sm font-medium text-slate-700 capitalize">
+                          {key === 'proxies' ? 'Прокси' : key === 'queries' ? 'Запросы' : 'Warmup запросы'}
+                        </label>
+                        <div className="flex gap-2 mt-1">
+                          <Input
+                            className="font-mono text-xs"
+                            value={docsEdits.global[key]}
+                            onChange={e => setDocsEdits(d => d ? {
+                              ...d, global: { ...d.global, [key]: e.target.value }
+                            } : d)}
+                          />
+                          <Button variant="ghost" size="sm" className="shrink-0" asChild>
+                            <a href={docsEdits.global[key]} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                {/* Per-website docs */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <FileText className="w-4 h-4" /> Запросы по сайтам
+                    </CardTitle>
+                    <CardDescription>Документ с поисковыми запросами для каждого сайта</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {Object.entries(docsEdits.websites).map(([site, url]) => (
+                      <div key={site}>
+                        <label className="text-sm font-medium text-slate-700">{site}</label>
+                        <div className="flex gap-2 mt-1">
+                          <Input
+                            className="font-mono text-xs"
+                            value={url}
+                            onChange={e => setDocsEdits(d => d ? {
+                              ...d, websites: { ...d.websites, [site]: e.target.value }
+                            } : d)}
+                          />
+                          <Button variant="ghost" size="sm" className="shrink-0" asChild>
+                            <a href={url} target="_blank" rel="noopener noreferrer">
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Button onClick={() => docsEdits && saveDocs.mutate(docsEdits)} disabled={saveDocs.isPending}>
+                  {saveDocs.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
+                  Сохранить
+                </Button>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Start Bot Dialog */}
       <Dialog open={startOpen} onOpenChange={setStartOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Start Bot</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Start Bot</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
               <label className="text-sm font-medium">Bot ID</label>
-              <Input
-                className="mt-1"
-                type="number"
-                min={1}
-                max={100}
-                placeholder="e.g. 1"
-                value={newBotId}
-                onChange={e => setNewBotId(e.target.value)}
-              />
+              <Input className="mt-1" type="number" min={1} max={100} placeholder="e.g. 1"
+                value={newBotId} onChange={e => setNewBotId(e.target.value)} />
             </div>
             <div>
               <label className="text-sm font-medium">Mode</label>
               <Select value={newMode} onValueChange={v => setNewMode(v as 'warmup' | 'target')}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="warmup">warmup — прогрев профиля</SelectItem>
                   <SelectItem value="target">target — целевые запросы</SelectItem>
@@ -292,13 +536,9 @@ export default function Bots() {
             <div>
               <label className="text-sm font-medium">Website</label>
               <Select value={newWebsite} onValueChange={setNewWebsite}>
-                <SelectTrigger className="mt-1">
-                  <SelectValue />
-                </SelectTrigger>
+                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {WEBSITES.map(w => (
-                    <SelectItem key={w} value={w}>{w}</SelectItem>
-                  ))}
+                  {WEBSITES.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -318,8 +558,7 @@ export default function Bots() {
         <DialogContent className="max-w-3xl max-h-[80vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Terminal className="w-5 h-5" />
-              Bot #{logsBot} logs
+              <Terminal className="w-5 h-5" /> Bot #{logsBot} logs
               {logsLoading && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
             </DialogTitle>
           </DialogHeader>

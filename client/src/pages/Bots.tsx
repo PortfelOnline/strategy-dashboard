@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText } from 'lucide-react';
+import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -45,8 +45,17 @@ interface GoogleDocsConfig {
   websites: Record<string, string>;
 }
 
+interface OrchestratorConfig {
+  enabled: boolean;
+  maxConcurrent: number;
+  restartDelayMin: number;
+  dailyStartHour: number;
+  dailyEndHour: number;
+  bots: Array<{ botId: number; website: string; enabled: boolean }>;
+}
+
 export default function Bots() {
-  const [tab, setTab] = useState<'bots' | 'proxies' | 'docs'>('bots');
+  const [tab, setTab] = useState<'bots' | 'proxies' | 'docs' | 'autopilot'>('bots');
 
   // Bots state
   const [logsOpen, setLogsOpen] = useState(false);
@@ -63,6 +72,11 @@ export default function Bots() {
 
   // Google Docs state
   const [docsEdits, setDocsEdits] = useState<GoogleDocsConfig | null>(null);
+
+  // Orchestrator state
+  const [orchEdits, setOrchEdits] = useState<OrchestratorConfig | null>(null);
+  const [newPilotBotId, setNewPilotBotId] = useState('');
+  const [newPilotWebsite, setNewPilotWebsite] = useState(WEBSITES[0]);
 
   const utils = trpc.useUtils();
 
@@ -87,6 +101,18 @@ export default function Bots() {
   useEffect(() => {
     if (googleDocsData && !docsEdits) setDocsEdits(googleDocsData);
   }, [googleDocsData]);
+
+  // Orchestrator queries
+  const { data: orchConfig } = trpc.bots.orchestratorConfig.useQuery(undefined, {
+    enabled: tab === 'autopilot',
+  });
+  const { data: orchStatus, refetch: refetchOrchStatus } = trpc.bots.orchestratorStatus.useQuery(undefined, {
+    enabled: tab === 'autopilot',
+    refetchInterval: tab === 'autopilot' ? 10_000 : false,
+  });
+  useEffect(() => {
+    if (orchConfig && !orchEdits) setOrchEdits(orchConfig);
+  }, [orchConfig]);
 
   // Bots mutations
   const start = trpc.bots.start.useMutation({
@@ -134,6 +160,16 @@ export default function Bots() {
   // Google Docs mutation
   const saveDocs = trpc.bots.setGoogleDocs.useMutation({
     onSuccess: () => { toast.success('Google Docs сохранены'); utils.bots.googleDocs.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Orchestrator mutation
+  const saveOrch = trpc.bots.setOrchestratorConfig.useMutation({
+    onSuccess: () => {
+      toast.success('Автопилот сохранён');
+      utils.bots.orchestratorConfig.invalidate();
+      utils.bots.orchestratorStatus.invalidate();
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -185,7 +221,7 @@ export default function Bots() {
           </div>
         </div>
 
-        <Tabs value={tab} onValueChange={v => setTab(v as 'bots' | 'proxies' | 'docs')}>
+        <Tabs value={tab} onValueChange={v => setTab(v as 'bots' | 'proxies' | 'docs' | 'autopilot')}>
           <TabsList className="mb-6">
             <TabsTrigger value="bots">Боты</TabsTrigger>
             <TabsTrigger value="proxies">
@@ -193,6 +229,10 @@ export default function Bots() {
             </TabsTrigger>
             <TabsTrigger value="docs">
               <FileText className="w-3.5 h-3.5 mr-1.5" />Google Docs
+            </TabsTrigger>
+            <TabsTrigger value="autopilot">
+              <Zap className="w-3.5 h-3.5 mr-1.5" />Автопилот
+              {orchStatus?.active && <span className="ml-1.5 w-2 h-2 rounded-full bg-green-500 inline-block" />}
             </TabsTrigger>
           </TabsList>
 
@@ -507,6 +547,236 @@ export default function Bots() {
                   {saveDocs.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
                   Сохранить
                 </Button>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* ===== AUTOPILOT TAB ===== */}
+          <TabsContent value="autopilot">
+            {!orchEdits ? (
+              <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                {/* Left: settings + bot list */}
+                <div className="lg:col-span-2 space-y-6">
+
+                  {/* Settings */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <Zap className="w-4 h-4" /> Настройки автопилота
+                        </CardTitle>
+                        {/* Enable toggle */}
+                        <button
+                          onClick={() => setOrchEdits(o => o ? { ...o, enabled: !o.enabled } : o)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${orchEdits.enabled ? 'bg-green-500' : 'bg-slate-300'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${orchEdits.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                      <CardDescription>
+                        {orchEdits.enabled ? 'Автопилот включён — боты запускаются автоматически' : 'Автопилот выключен'}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Макс. одновременно</label>
+                        <Input
+                          type="number" min={1} max={20} className="mt-1"
+                          value={orchEdits.maxConcurrent}
+                          onChange={e => setOrchEdits(o => o ? { ...o, maxConcurrent: parseInt(e.target.value) || 1 } : o)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Задержка перезапуска (мин)</label>
+                        <Input
+                          type="number" min={1} max={1440} className="mt-1"
+                          value={orchEdits.restartDelayMin}
+                          onChange={e => setOrchEdits(o => o ? { ...o, restartDelayMin: parseInt(e.target.value) || 30 } : o)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Суточное окно — с (час)</label>
+                        <Input
+                          type="number" min={0} max={23} className="mt-1"
+                          value={orchEdits.dailyStartHour}
+                          onChange={e => setOrchEdits(o => o ? { ...o, dailyStartHour: parseInt(e.target.value) || 0 } : o)}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-slate-700">Суточное окно — до (час)</label>
+                        <Input
+                          type="number" min={1} max={24} className="mt-1"
+                          value={orchEdits.dailyEndHour}
+                          onChange={e => setOrchEdits(o => o ? { ...o, dailyEndHour: parseInt(e.target.value) || 22 } : o)}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Bot list */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Боты в ротации</CardTitle>
+                      <CardDescription>warmup → target переключается автоматически по warmup_days ≥ 14</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {orchEdits.bots.length === 0 ? (
+                        <p className="text-sm text-slate-400 text-center py-4">Нет ботов. Добавь ниже.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {orchEdits.bots.map((b, i) => {
+                            const state = data?.bots.find(rb => rb.botId === b.botId)?.state;
+                            const warmupDays = state?.warmup_days ?? 0;
+                            const autoMode = (warmupDays as number) >= 14 ? 'target' : 'warmup';
+                            return (
+                              <div key={b.botId} className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${b.enabled ? 'bg-white' : 'bg-slate-50 opacity-60'}`}>
+                                <span className="font-mono font-bold text-slate-700 w-12">#{b.botId}</span>
+                                <span className="flex-1 truncate text-xs text-slate-600">{b.website}</span>
+                                <Badge className={`text-xs shrink-0 ${autoMode === 'target' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                                  {autoMode}
+                                </Badge>
+                                <span className="text-xs text-slate-400 shrink-0">w:{warmupDays as number}</span>
+                                {/* toggle */}
+                                <button
+                                  onClick={() => setOrchEdits(o => {
+                                    if (!o) return o;
+                                    const bots = [...o.bots];
+                                    bots[i] = { ...bots[i], enabled: !bots[i].enabled };
+                                    return { ...o, bots };
+                                  })}
+                                  className={`shrink-0 relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${b.enabled ? 'bg-green-500' : 'bg-slate-300'}`}
+                                >
+                                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${b.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                                </button>
+                                <button
+                                  onClick={() => setOrchEdits(o => o ? { ...o, bots: o.bots.filter((_, j) => j !== i) } : o)}
+                                  className="text-slate-400 hover:text-red-500 transition-colors shrink-0"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Add bot */}
+                      <div className="flex gap-2 mt-3 pt-3 border-t">
+                        <Input
+                          type="number" min={1} max={100} placeholder="Bot ID"
+                          className="w-24 font-mono"
+                          value={newPilotBotId}
+                          onChange={e => setNewPilotBotId(e.target.value)}
+                        />
+                        <Select value={newPilotWebsite} onValueChange={setNewPilotWebsite}>
+                          <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {WEBSITES.map(w => <SelectItem key={w} value={w}>{w}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                        <Button variant="outline" size="sm" onClick={() => {
+                          const id = parseInt(newPilotBotId);
+                          if (!id || id < 1) return toast.error('Введи Bot ID');
+                          if (orchEdits.bots.some(b => b.botId === id)) return toast.error('Бот уже в списке');
+                          setOrchEdits(o => o ? { ...o, bots: [...o.bots, { botId: id, website: newPilotWebsite, enabled: true }] } : o);
+                          setNewPilotBotId('');
+                        }}>
+                          <Plus className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Button onClick={() => orchEdits && saveOrch.mutate(orchEdits)} disabled={saveOrch.isPending}>
+                    {saveOrch.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
+                    Сохранить конфиг
+                  </Button>
+                </div>
+
+                {/* Right: live status */}
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-sm font-medium">Статус оркестратора</CardTitle>
+                        <Button variant="ghost" size="sm" onClick={() => refetchOrchStatus()}>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        {orchStatus?.active
+                          ? <CheckCircle className="w-4 h-4 text-green-500" />
+                          : <XCircle className="w-4 h-4 text-slate-400" />}
+                        <span className="text-sm">{orchStatus?.active ? 'Активен' : 'Неактивен'}</span>
+                      </div>
+
+                      {/* Managed bots */}
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 mb-1.5">
+                          Запущено автопилотом ({orchStatus?.managedBots.length ?? 0})
+                        </p>
+                        {orchStatus?.managedBots.length === 0 ? (
+                          <p className="text-xs text-slate-400">—</p>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {orchStatus?.managedBots.map(id => (
+                              <Badge key={id} className="bg-green-100 text-green-700 text-xs">#{id}</Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Queue */}
+                      <div>
+                        <p className="text-xs font-medium text-slate-500 mb-1.5">
+                          Очередь ({orchStatus?.queue.length ?? 0})
+                        </p>
+                        {orchStatus?.queue.length === 0 ? (
+                          <p className="text-xs text-slate-400">Пусто</p>
+                        ) : (
+                          <div className="space-y-1">
+                            {orchStatus?.queue.map(q => (
+                              <div key={q.botId} className="text-xs text-slate-600 flex items-center gap-1">
+                                <Bot className="w-3 h-3" /> #{q.botId} · {q.website.replace('https://', '')}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pending restart */}
+                      {(orchStatus?.pending.length ?? 0) > 0 && (
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 mb-1.5 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Ожидают перезапуска
+                          </p>
+                          <div className="space-y-1">
+                            {orchStatus?.pending.map(p => (
+                              <div key={p.botId} className="text-xs text-amber-600 flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3 shrink-0" />
+                                #{p.botId} · {formatDistanceToNow(new Date(p.restartAt), { addSuffix: true })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card className="bg-slate-50 border-slate-200">
+                    <CardContent className="pt-4 text-xs text-slate-500 space-y-1.5">
+                      <p><span className="font-medium">Тик:</span> каждые 30 сек</p>
+                      <p><span className="font-medium">Режим:</span> warmup_days &lt; 14 → warmup, иначе target</p>
+                      <p><span className="font-medium">Окно:</span> {orchEdits.dailyStartHour}:00 – {orchEdits.dailyEndHour}:00</p>
+                      <p><span className="font-medium">Перезапуск:</span> через {orchEdits.restartDelayMin} мин после завершения</p>
+                    </CardContent>
+                  </Card>
+                </div>
               </div>
             )}
           </TabsContent>

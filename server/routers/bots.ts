@@ -1,6 +1,22 @@
 import { router, protectedProcedure } from '../_core/trpc';
 import { z } from 'zod';
 import * as botManager from '../bots';
+import * as orch from '../orchestrator';
+
+const botEntrySchema = z.object({
+  botId: z.number().int().min(1).max(100),
+  website: z.string().url(),
+  enabled: z.boolean(),
+});
+
+const orchestratorConfigSchema = z.object({
+  enabled: z.boolean(),
+  maxConcurrent: z.number().int().min(1).max(20),
+  restartDelayMin: z.number().int().min(1).max(1440),
+  dailyStartHour: z.number().int().min(0).max(23),
+  dailyEndHour: z.number().int().min(1).max(24),
+  bots: z.array(botEntrySchema),
+});
 
 const googleDocsSchema = z.object({
   global: z.object({
@@ -88,4 +104,13 @@ export const botsRouter = router({
   setGoogleDocs: protectedProcedure
     .input(googleDocsSchema)
     .mutation(({ input }) => { botManager.setGoogleDocs(input); return { success: true }; }),
+
+  // --- Orchestrator ---
+  orchestratorConfig: protectedProcedure.query(() => orch.getOrchestratorConfig()),
+
+  orchestratorStatus: protectedProcedure.query(() => orch.getOrchestratorStatus()),
+
+  setOrchestratorConfig: protectedProcedure
+    .input(orchestratorConfigSchema)
+    .mutation(({ input }) => { orch.saveOrchestratorConfig(input); return { success: true }; }),
 });

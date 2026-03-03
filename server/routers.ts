@@ -6,10 +6,12 @@ import { z } from "zod";
 import { invokeLLM } from "./_core/llm";
 import { createContentPost, getUserContentPosts, getContentTemplates, createContentTemplate, updateContentPost, deleteContentPost } from "./db";
 import { metaRouter } from "./routers/meta";
+import { botsRouter } from "./routers/bots";
 
 export const appRouter = router({
   system: systemRouter,
   meta: metaRouter,
+  bots: botsRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {

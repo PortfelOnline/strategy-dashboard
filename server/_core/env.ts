@@ -10,4 +10,5 @@ export const ENV = {
   metaAppId: process.env.META_APP_ID ?? "",
   metaAppSecret: process.env.META_APP_SECRET ?? "",
   metaRedirectUri: process.env.META_REDIRECT_URI ?? "",
+  botDir: process.env.BOT_DIR ?? "",
 };

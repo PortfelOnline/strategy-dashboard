@@ -82,6 +82,12 @@ export default function Home() {
                 >
                   Calendar
                 </Button>
+                <Button
+                  onClick={() => navigate('/bots')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  Bots
+                </Button>
               </div>
             )}
           </div>

@@ -1,8 +1,22 @@
 import { spawn, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 
-const BOT_DIR = process.env.BOT_DIR || path.join(process.cwd(), '..', 'yandex_bot');
+function findBotDir(): string {
+  if (process.env.BOT_DIR) return process.env.BOT_DIR;
+  const candidates = [
+    path.join(os.homedir(), 'yandex_bot'),
+    path.join(process.cwd(), '..', '..', 'yandex_bot'),
+    path.join(process.cwd(), '..', 'yandex_bot'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0]; // ~/yandex_bot fallback
+}
+
+const BOT_DIR = findBotDir();
 
 export function getBotDir() { return BOT_DIR; }
 

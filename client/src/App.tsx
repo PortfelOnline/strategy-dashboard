@@ -8,6 +8,8 @@ import Home from "./pages/Home";
 import ContentGenerator from "./pages/ContentGenerator";
 import ContentLibrary from "./pages/ContentLibrary";
 import MetaAccounts from "./pages/MetaAccounts";
+import WordPressAccounts from "./pages/WordPressAccounts";
+import ArticleAnalyzer from "./pages/ArticleAnalyzer";
 import ContentCalendar from "@/pages/ContentCalendar";
 import Bots from "@/pages/Bots";
 
@@ -19,6 +21,8 @@ function Router() {
       <Route path="/generator" component={ContentGenerator} />
       <Route path="/library" component={ContentLibrary} />
       <Route path="/accounts" component={MetaAccounts} />
+      <Route path="/wordpress" component={WordPressAccounts} />
+      <Route path="/articles" component={ArticleAnalyzer} />
       <Route path="/calendar" component={ContentCalendar} />
       <Route path="/bots" component={Bots} />
       <Route path="/404" component={NotFound} />

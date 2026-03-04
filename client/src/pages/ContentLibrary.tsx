@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Loader2, Trash2, Edit2, Archive, Send, Sparkles, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { PublishToMeta } from '@/components/PublishToMeta';
+import { PublishToWordPress } from '@/components/PublishToWordPress';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
 
@@ -49,6 +50,8 @@ export default function ContentLibrary() {
   const [searchQuery, setSearchQuery] = useState('');
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [wpDialogOpen, setWpDialogOpen] = useState(false);
+  const [selectedPostForWp, setSelectedPostForWp] = useState<Post | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -240,18 +243,32 @@ export default function ContentLibrary() {
                       Vary
                     </Button>
                     {post.status === 'draft' && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-blue-600 hover:text-blue-700"
-                        onClick={() => {
-                          setSelectedPost(post);
-                          setPublishDialogOpen(true);
-                        }}
-                      >
-                        <Send className="w-4 h-4 mr-1" />
-                        Publish
-                      </Button>
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1 text-blue-600 hover:text-blue-700"
+                          onClick={() => {
+                            setSelectedPost(post);
+                            setPublishDialogOpen(true);
+                          }}
+                        >
+                          <Send className="w-4 h-4 mr-1" />
+                          Publish
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-orange-600 hover:text-orange-700"
+                          title="Publish to WordPress"
+                          onClick={() => {
+                            setSelectedPostForWp(post);
+                            setWpDialogOpen(true);
+                          }}
+                        >
+                          WP
+                        </Button>
+                      </>
                     )}
                     {post.status !== 'archived' && (
                       <Button
@@ -364,6 +381,16 @@ export default function ContentLibrary() {
           content={selectedPost.content}
           platform={selectedPost.platform}
           imageUrl={selectedPost.mediaUrl ?? undefined}
+        />
+      )}
+
+      {selectedPostForWp && (
+        <PublishToWordPress
+          open={wpDialogOpen}
+          onOpenChange={setWpDialogOpen}
+          postId={selectedPostForWp.id}
+          title={selectedPostForWp.title}
+          content={selectedPostForWp.content}
         />
       )}
     </div>

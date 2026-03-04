@@ -22,6 +22,20 @@
       "when": 1770628229728,
       "tag": "0002_mighty_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1772609107959,
+      "tag": "0003_sweet_tag",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1772609958799,
+      "tag": "0004_short_madripoor",
+      "breakpoints": true
     }
   ]
 }

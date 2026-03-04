@@ -87,3 +87,45 @@ export const metaAccounts = mysqlTable("metaAccounts", {
 
 export type MetaAccount = typeof metaAccounts.$inferSelect;
 export type InsertMetaAccount = typeof metaAccounts.$inferInsert;
+
+/**
+ * WordPress site credentials (Application Password auth)
+ */
+export const wordpressAccounts = mysqlTable("wordpressAccounts", {
+  id:          int("id").autoincrement().primaryKey(),
+  userId:      int("userId").notNull().references(() => users.id),
+  siteUrl:     varchar("siteUrl", { length: 512 }).notNull(),
+  siteName:    varchar("siteName", { length: 255 }).notNull(),
+  username:    varchar("username", { length: 255 }).notNull(),
+  appPassword: text("appPassword").notNull(),
+  isActive:    int("isActive").default(1).notNull(),
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type WordpressAccount = typeof wordpressAccounts.$inferSelect;
+export type InsertWordpressAccount = typeof wordpressAccounts.$inferInsert;
+
+/**
+ * History of AI article analyses
+ */
+export const articleAnalyses = mysqlTable("articleAnalyses", {
+  id:                  int("id").autoincrement().primaryKey(),
+  userId:              int("userId").notNull().references(() => users.id),
+  url:                 varchar("url", { length: 512 }).notNull(),
+  originalTitle:       varchar("originalTitle", { length: 512 }).notNull(),
+  originalContent:     text("originalContent").notNull(),
+  wordCount:           int("wordCount").default(0).notNull(),
+  improvedTitle:       varchar("improvedTitle", { length: 512 }).notNull(),
+  improvedContent:     text("improvedContent").notNull(),
+  metaTitle:           varchar("metaTitle", { length: 512 }),
+  metaDescription:     text("metaDescription"),
+  keywords:            text("keywords"),         // JSON array string
+  generalSuggestions:  text("generalSuggestions"), // JSON array string
+  headings:            text("headings"),           // JSON array string
+  seoScore:            int("seoScore").default(0).notNull(),
+  createdAt:           timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ArticleAnalysis = typeof articleAnalyses.$inferSelect;
+export type InsertArticleAnalysis = typeof articleAnalyses.$inferInsert;

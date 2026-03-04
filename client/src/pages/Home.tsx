@@ -88,6 +88,18 @@ export default function Home() {
                 >
                   Bots
                 </Button>
+                <Button
+                  onClick={() => navigate('/wordpress')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  WordPress
+                </Button>
+                <Button
+                  onClick={() => navigate('/articles')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  Статьи
+                </Button>
               </div>
             )}
           </div>

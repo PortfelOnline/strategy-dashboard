@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -62,7 +62,38 @@ export function stopBot(botId: number) {
 }
 
 export function getRunningBots() {
-  return Array.from(runningBots.values()).map(({ proc: _proc, ...b }) => b);
+  // Start with processes spawned by this dashboard instance
+  const result = new Map<number, Record<string, unknown>>();
+  for (const [botId, { proc: _proc, ...b }] of runningBots) {
+    result.set(botId, b);
+  }
+
+  // Also detect externally started bots (CLI, start.sh, etc.)
+  try {
+    const output = execSync('ps -ax -o pid= -o args=', { encoding: 'utf8' });
+    for (const line of output.split('\n')) {
+      if (!line.includes('yandex_bot.py') || !line.includes('--bot-id')) continue;
+      const pidMatch = line.match(/^\s*(\d+)/);
+      const botIdMatch = line.match(/--bot-id\s+(\d+)/);
+      if (!pidMatch || !botIdMatch) continue;
+      const botId = parseInt(botIdMatch[1]);
+      if (result.has(botId)) continue; // already tracked
+      const websiteMatch = line.match(/--website\s+(\S+)/);
+      const modeMatch = line.match(/--mode\s+(warmup|target)/);
+      result.set(botId, {
+        pid: parseInt(pidMatch[1]),
+        botId,
+        mode: (modeMatch?.[1] as 'warmup' | 'target') ?? 'warmup',
+        website: websiteMatch?.[1] ?? 'unknown',
+        startedAt: new Date().toISOString(),
+        external: true,
+      });
+    }
+  } catch {
+    // Ignore — ps failed or no external bots
+  }
+
+  return Array.from(result.values());
 }
 
 export function getBotState(botId: number): Record<string, unknown> | null {

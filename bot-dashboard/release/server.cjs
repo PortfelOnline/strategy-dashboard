@@ -39620,7 +39620,33 @@ function stopBot(botId) {
   return { success: true };
 }
 function getRunningBots() {
-  return Array.from(runningBots.values()).map(({ proc: _proc, ...b }) => b);
+  const result = /* @__PURE__ */ new Map();
+  for (const [botId, { proc: _proc, ...b }] of runningBots) {
+    result.set(botId, b);
+  }
+  try {
+    const output = (0, import_child_process.execSync)("ps -ax -o pid= -o args=", { encoding: "utf8" });
+    for (const line of output.split("\n")) {
+      if (!line.includes("yandex_bot.py") || !line.includes("--bot-id")) continue;
+      const pidMatch = line.match(/^\s*(\d+)/);
+      const botIdMatch = line.match(/--bot-id\s+(\d+)/);
+      if (!pidMatch || !botIdMatch) continue;
+      const botId = parseInt(botIdMatch[1]);
+      if (result.has(botId)) continue;
+      const websiteMatch = line.match(/--website\s+(\S+)/);
+      const modeMatch = line.match(/--mode\s+(warmup|target)/);
+      result.set(botId, {
+        pid: parseInt(pidMatch[1]),
+        botId,
+        mode: modeMatch?.[1] ?? "warmup",
+        website: websiteMatch?.[1] ?? "unknown",
+        startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        external: true
+      });
+    }
+  } catch {
+  }
+  return Array.from(result.values());
 }
 function getBotState(botId) {
   const stateFile = import_path.default.join(BOT_DIR, "outputs", "bot_states", `bot_${botId}_state.json`);

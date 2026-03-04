@@ -5,20 +5,26 @@ import { getBotDir, startBot, getRunningBots, getBotState } from './bots';
 
 // RAM per bot: ~500MB Firefox + ~80MB Python
 const RAM_PER_BOT_BYTES = 580 * 1024 * 1024;
-// Reserve: 2GB on Linux, 4GB on macOS (heavier OS overhead)
-const OS_RESERVE_BYTES = os.platform() === 'darwin'
-  ? 4 * 1024 * 1024 * 1024
-  : 2 * 1024 * 1024 * 1024;
 
 export function detectMaxConcurrent(): number {
   const totalRam = os.totalmem();
   const cpuCount = os.cpus().length;
-  const ramBased = Math.floor((totalRam - OS_RESERVE_BYTES) / RAM_PER_BOT_BYTES);
-  // On macOS cap at cpuCount/4 — multiple Firefox instances are heavy
-  const cpuBased = os.platform() === 'darwin'
-    ? Math.max(1, Math.floor(cpuCount / 4))
-    : Math.max(1, Math.floor(cpuCount / 2));
-  return Math.max(1, Math.min(ramBased, cpuBased));
+  const isMac = os.platform() === 'darwin';
+
+  // Leave headroom for the user/OS:
+  //   macOS: reserve 4GB + 25% of remaining → bots get ~60% of RAM
+  //   Linux: reserve 2GB + 10% of remaining → bots get ~85% of RAM
+  const hardReserve = isMac ? 4 * 1024 ** 3 : 2 * 1024 ** 3;
+  const softReserve = isMac ? 0.25 : 0.10;
+  const available = (totalRam - hardReserve) * (1 - softReserve);
+  const ramBased = Math.floor(available / RAM_PER_BOT_BYTES);
+
+  // CPU: leave 25% of cores free on macOS, 10% on Linux
+  const cpuForBots = isMac
+    ? Math.max(1, Math.floor(cpuCount * 0.75 / 2))   // each bot ~2 threads
+    : Math.max(1, Math.floor(cpuCount * 0.90 / 2));
+
+  return Math.max(1, Math.min(ramBased, cpuForBots));
 }
 
 export interface BotEntry {

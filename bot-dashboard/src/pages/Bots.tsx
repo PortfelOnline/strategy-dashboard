@@ -110,6 +110,9 @@ export default function Bots() {
     enabled: tab === 'autopilot',
     refetchInterval: tab === 'autopilot' ? 10_000 : false,
   });
+  const { data: detectedResources } = trpc.detectedResources.useQuery(undefined, {
+    enabled: tab === 'autopilot',
+  });
   useEffect(() => {
     if (orchConfig && !orchEdits) setOrchEdits(orchConfig);
   }, [orchConfig]);
@@ -580,7 +583,40 @@ export default function Bots() {
                         {orchEdits.enabled ? 'Автопилот включён — боты запускаются автоматически' : 'Автопилот выключен'}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-4">
+                    <CardContent className="space-y-4">
+                      {/* Resource detection panel */}
+                      {detectedResources && (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-slate-700">Ресурсы машины</span>
+                            <button
+                              onClick={() => setOrchEdits(o => o ? { ...o, maxConcurrent: detectedResources.recommended } : o)}
+                              className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-md transition-colors"
+                            >
+                              Применить рекомендацию ({detectedResources.recommended} бота)
+                            </button>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-white rounded border border-slate-200 p-2 text-center">
+                              <div className="text-lg font-bold text-slate-800">{detectedResources.cpuCount}</div>
+                              <div className="text-xs text-slate-500">CPU ядер</div>
+                            </div>
+                            <div className="bg-white rounded border border-slate-200 p-2 text-center">
+                              <div className="text-lg font-bold text-slate-800">{detectedResources.totalRamGb} GB</div>
+                              <div className="text-xs text-slate-500">RAM всего</div>
+                            </div>
+                            <div className="bg-white rounded border border-slate-200 p-2 text-center">
+                              <div className="text-lg font-bold text-blue-600">{detectedResources.recommended}</div>
+                              <div className="text-xs text-slate-500">Рекомендовано</div>
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-2">
+                            {detectedResources.platform === 'darwin' ? 'macOS' : 'Linux'} · резерв: 25% CPU + {detectedResources.platform === 'darwin' ? '4' : '2'} GB RAM для системы
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium text-slate-700">Макс. одновременно</label>
                         <Input
@@ -613,6 +649,7 @@ export default function Bots() {
                           onChange={e => setOrchEdits(o => o ? { ...o, dailyEndHour: parseInt(e.target.value) || 22 } : o)}
                         />
                       </div>
+                      </div>{/* /grid-cols-2 */}
                     </CardContent>
                   </Card>
 

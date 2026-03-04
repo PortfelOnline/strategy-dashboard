@@ -39782,13 +39782,16 @@ var fs2 = __toESM(require("fs"), 1);
 var path2 = __toESM(require("path"), 1);
 var os2 = __toESM(require("os"), 1);
 var RAM_PER_BOT_BYTES = 580 * 1024 * 1024;
-var OS_RESERVE_BYTES = os2.platform() === "darwin" ? 4 * 1024 * 1024 * 1024 : 2 * 1024 * 1024 * 1024;
 function detectMaxConcurrent() {
   const totalRam = os2.totalmem();
   const cpuCount = os2.cpus().length;
-  const ramBased = Math.floor((totalRam - OS_RESERVE_BYTES) / RAM_PER_BOT_BYTES);
-  const cpuBased = os2.platform() === "darwin" ? Math.max(1, Math.floor(cpuCount / 4)) : Math.max(1, Math.floor(cpuCount / 2));
-  return Math.max(1, Math.min(ramBased, cpuBased));
+  const isMac = os2.platform() === "darwin";
+  const hardReserve = isMac ? 4 * 1024 ** 3 : 2 * 1024 ** 3;
+  const softReserve = isMac ? 0.25 : 0.1;
+  const available = (totalRam - hardReserve) * (1 - softReserve);
+  const ramBased = Math.floor(available / RAM_PER_BOT_BYTES);
+  const cpuForBots = isMac ? Math.max(1, Math.floor(cpuCount * 0.75 / 2)) : Math.max(1, Math.floor(cpuCount * 0.9 / 2));
+  return Math.max(1, Math.min(ramBased, cpuForBots));
 }
 var DEFAULT_CONFIG = {
   enabled: false,

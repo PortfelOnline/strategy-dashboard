@@ -1253,6 +1253,359 @@ function CatalogScanner({
   );
 }
 
+// ── SerpMonitor ─────────────────────────────────────────────────────────────
+
+const SERP_CACHE_KEY = 'serp_positions_cache';
+
+type SerpCacheEntry = {
+  keyword:        string;
+  googlePos:      number | null;
+  yandexPos:      number | null;
+  googleError:    string | null;
+  yandexError:    string | null;
+  topCompetitors: { title: string; domain: string; snippet: string }[];
+  checkedAt:      string;
+};
+type SerpCache = Record<string, SerpCacheEntry>;
+
+function loadSerpCache(): SerpCache {
+  try { return JSON.parse(localStorage.getItem(SERP_CACHE_KEY) || '{}'); } catch { return {}; }
+}
+function saveSerpCache(c: SerpCache) {
+  try { localStorage.setItem(SERP_CACHE_KEY, JSON.stringify(c)); } catch {}
+}
+
+function PosBadge({ pos, error }: { pos: number | null; error: string | null }) {
+  if (error) return <span className="text-xs text-slate-400">ошибка</span>;
+  if (pos === null) return <Badge variant="outline" className="text-xs text-slate-400">не в топ</Badge>;
+  const cls = pos <= 3 ? 'bg-green-100 text-green-800' : pos <= 10 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
+  return <Badge className={`text-xs ${cls}`}>#{pos}</Badge>;
+}
+
+type SerpPosFilter = 'all' | 'top3' | 'top10' | 'out' | 'unchecked';
+
+function NewArticleDialog({ open, onOpenChange, keyword, competitors, onCreated }: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  keyword: string;
+  competitors: { title: string; domain: string; snippet: string }[];
+  onCreated?: (content: string, title: string) => void;
+}) {
+  const [title, setTitle] = useState('');
+
+  const { mutate: generate, isPending } = trpc.articles.generateNewArticle.useMutation({
+    onSuccess: (d) => {
+      toast.success(`Статья создана и сохранена в библиотеку (${d.content.split(/\s+/).length} слов)`);
+      onCreated?.(d.content, d.title);
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return open ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+        <h2 className="text-lg font-semibold">Новая статья</h2>
+        <div>
+          <label className="text-sm font-medium text-slate-700 block mb-1">Заголовок статьи</label>
+          <input
+            className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+            placeholder={`Например: ${keyword}...`}
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+          />
+        </div>
+        <div className="text-xs text-slate-500">
+          Ключевое слово: <strong>{keyword}</strong> · Конкурентов: {competitors.length}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Отмена</Button>
+          <Button
+            disabled={!title.trim() || isPending}
+            onClick={() => generate({ title: title.trim(), keyword, competitors })}
+            className="gap-2"
+          >
+            {isPending ? <><Loader2 className="w-4 h-4 animate-spin" />Генерирую...</> : <><ArrowRight className="w-4 h-4" />Создать статью</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+}
+
+function SerpMonitor({ onAnalyze }: { onAnalyze: (url: string) => void }) {
+  const [cache, setCache]         = useState<SerpCache>(() => loadSerpCache());
+  const [filter, setFilter]       = useState<SerpPosFilter>('all');
+  const [search, setSearch]       = useState('');
+  const [page, setPage]           = useState(1);
+  const [isRunning, setIsRunning] = useState(false);
+  const [done, setDone]           = useState(0);
+  const [total, setTotal]         = useState(0);
+  const [newArticleKw, setNewArticleKw]       = useState('');
+  const [newArticleComps, setNewArticleComps] = useState<{ title: string; domain: string; snippet: string }[]>([]);
+  const [newArticleOpen, setNewArticleOpen]   = useState(false);
+  const queueRef     = useRef<{ url: string; title: string }[]>([]);
+  const isRunRef     = useRef(false);
+  const PAGE = 50;
+
+  const articles = loadCachedArticles();
+
+  const { mutate: checkPos } = trpc.articles.checkPosition.useMutation({
+    onSuccess: (d, vars) => {
+      const url = queueRef.current[0]?.url || '';
+      setCache(prev => {
+        const next = { ...prev, [url]: { ...d, checkedAt: new Date().toISOString() } };
+        saveSerpCache(next);
+        return next;
+      });
+      advanceQueue();
+    },
+    onError: () => advanceQueue(),
+  });
+
+  function advanceQueue() {
+    queueRef.current = queueRef.current.slice(1);
+    setDone(d => d + 1);
+    if (queueRef.current.length > 0) {
+      const next = queueRef.current[0];
+      checkPos({ keyword: extractKeyword(next.title) });
+    } else {
+      isRunRef.current = false;
+      setIsRunning(false);
+      toast.success('Мониторинг позиций завершён');
+    }
+  }
+
+  function startMonitoring(onlyUnchecked: boolean) {
+    const toCheck = articles.filter(a => !onlyUnchecked || !cache[a.url]);
+    if (toCheck.length === 0) { toast.info('Все статьи уже проверены'); return; }
+    queueRef.current = toCheck;
+    isRunRef.current = true;
+    setIsRunning(true);
+    setDone(0);
+    setTotal(toCheck.length);
+    checkPos({ keyword: extractKeyword(toCheck[0].title) });
+  }
+
+  function stopMonitoring() {
+    queueRef.current = [];
+    isRunRef.current = false;
+    setIsRunning(false);
+  }
+
+  function clearCache() {
+    if (!confirm('Очистить все сохранённые позиции?')) return;
+    setCache({});
+    saveSerpCache({});
+  }
+
+  // Build rows
+  const rows = articles.map(a => ({ ...a, cached: cache[a.url] ?? null }));
+
+  const filtered = rows.filter(r => {
+    if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
+    const pos = r.cached ? Math.min(r.cached.googlePos ?? 999, r.cached.yandexPos ?? 999) : 999;
+    if (filter === 'unchecked') return !r.cached;
+    if (filter === 'top3')  return r.cached && pos <= 3;
+    if (filter === 'top10') return r.cached && pos > 3 && pos <= 10;
+    if (filter === 'out')   return r.cached && pos > 10;
+    return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    const pa = a.cached ? Math.min(a.cached.googlePos ?? 999, a.cached.yandexPos ?? 999) : 1000;
+    const pb = b.cached ? Math.min(b.cached.googlePos ?? 999, b.cached.yandexPos ?? 999) : 1000;
+    return pa - pb;
+  });
+
+  const totalPages = Math.ceil(sorted.length / PAGE);
+  const visible = sorted.slice((page - 1) * PAGE, page * PAGE);
+
+  const checkedCount  = articles.filter(a => cache[a.url]).length;
+  const top3Count     = articles.filter(a => { const c = cache[a.url]; return c && Math.min(c.googlePos ?? 999, c.yandexPos ?? 999) <= 3; }).length;
+  const top10Count    = articles.filter(a => { const c = cache[a.url]; return c && Math.min(c.googlePos ?? 999, c.yandexPos ?? 999) <= 10 && Math.min(c.googlePos ?? 999, c.yandexPos ?? 999) > 3; }).length;
+  const outCount      = articles.filter(a => { const c = cache[a.url]; return c && Math.min(c.googlePos ?? 999, c.yandexPos ?? 999) > 10; }).length;
+  const uncheckedCount = articles.length - checkedCount;
+
+  if (articles.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center justify-center py-16 text-center gap-3">
+          <TrendingUp className="w-10 h-10 text-slate-300" />
+          <p className="text-slate-500">Сначала загрузите каталог на вкладке «Каталог»</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <Card>
+        <CardContent className="pt-4 pb-3 space-y-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="font-medium text-slate-800">{articles.length} статей · проверено {checkedCount}</p>
+              <p className="text-xs text-slate-500 mt-0.5">Проверяет позиции в Google и Яндекс по ключевому слову из заголовка</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {isRunning ? (
+                <Button size="sm" variant="outline" onClick={stopMonitoring} className="gap-1.5 text-red-600 border-red-200">
+                  <Square className="w-3.5 h-3.5" />Стоп
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => startMonitoring(true)} disabled={uncheckedCount === 0} className="gap-1.5">
+                    <Play className="w-3.5 h-3.5" />Новые ({uncheckedCount})
+                  </Button>
+                  <Button size="sm" onClick={() => startMonitoring(false)} className="gap-1.5">
+                    <Play className="w-3.5 h-3.5" />Все заново
+                  </Button>
+                  {checkedCount > 0 && (
+                    <Button size="sm" variant="ghost" onClick={clearCache} className="text-slate-400">Сбросить</Button>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+
+          {isRunning && (
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs text-blue-600">
+                <span><Loader2 className="w-3.5 h-3.5 inline animate-spin mr-1" />Проверяю: {queueRef.current[0]?.title?.slice(0, 60)}...</span>
+                <span>{done} / {total}</span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-1.5">
+                <div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{ width: `${Math.round((done / total) * 100)}%` }} />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Stats */}
+      {checkedCount > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          {[
+            { label: 'Все', value: articles.length, f: 'all' as SerpPosFilter, color: 'bg-slate-50 text-slate-700' },
+            { label: 'ТОП-3', value: top3Count, f: 'top3' as SerpPosFilter, color: 'bg-green-50 text-green-700' },
+            { label: 'ТОП-10', value: top10Count, f: 'top10' as SerpPosFilter, color: 'bg-yellow-50 text-yellow-700' },
+            { label: 'Вне ТОП', value: outCount, f: 'out' as SerpPosFilter, color: 'bg-red-50 text-red-700' },
+            { label: 'Не проверены', value: uncheckedCount, f: 'unchecked' as SerpPosFilter, color: 'bg-slate-100 text-slate-500' },
+          ].map(({ label, value, f, color }) => (
+            <button key={f} onClick={() => { setFilter(f); setPage(1); }}
+              className={`flex-1 min-w-[100px] rounded-xl p-3 border-2 transition-all text-left
+                ${filter === f ? `border-current ${color}` : 'border-transparent bg-slate-50 hover:bg-slate-100'}`}>
+              <div className="text-2xl font-bold text-slate-700">{value}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Table */}
+      <Card>
+        <CardContent className="pt-4 pb-2">
+          <div className="flex gap-2 mb-3 flex-wrap">
+            <div className="relative flex-1 min-w-[180px]">
+              <Filter className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300"
+                placeholder="Поиск по заголовку..."
+                value={search}
+                onChange={e => { setSearch(e.target.value); setPage(1); }}
+              />
+            </div>
+            <span className="text-xs text-slate-500 self-center">{sorted.length} статей</span>
+            <Button size="sm" variant="outline" className="gap-1.5"
+              onClick={() => {
+                const csv = ['URL,Keyword,Google,Yandex,Checked',
+                  ...sorted.filter(r => r.cached).map(r =>
+                    [r.url, `"${r.cached!.keyword}"`, r.cached!.googlePos ?? '', r.cached!.yandexPos ?? '', r.cached!.checkedAt].join(',')
+                  )].join('\n');
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv' }));
+                a.download = `serp_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+              }}>
+              ↓ CSV
+            </Button>
+          </div>
+
+          <div className="divide-y text-sm">
+            {visible.map(r => (
+              <div key={r.url} className="flex items-start gap-3 py-2.5 hover:bg-slate-50 -mx-2 px-2 rounded group">
+                <div className="flex-1 min-w-0">
+                  <button className="text-blue-700 hover:underline font-medium line-clamp-1 text-left w-full" onClick={() => onAnalyze(r.url)}>
+                    {r.title}
+                  </button>
+                  {r.cached && (
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      ключ: <span className="text-slate-600">{r.cached.keyword}</span>
+                      {r.cached.topCompetitors.length > 0 && (
+                        <span className="ml-2 text-slate-400">· конкуренты: {r.cached.topCompetitors.map(c => c.domain).join(', ')}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {r.cached ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-slate-400">G:</span>
+                    <PosBadge pos={r.cached.googlePos} error={r.cached.googleError} />
+                    <span className="text-xs text-slate-400">Я:</span>
+                    <PosBadge pos={r.cached.yandexPos} error={r.cached.yandexError} />
+                  </div>
+                ) : (
+                  <span className="text-xs text-slate-300 shrink-0">не проверено</span>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    title="Улучшить статью"
+                    className="p-1 rounded hover:bg-blue-50 text-blue-600"
+                    onClick={() => onAnalyze(r.url)}
+                  ><ArrowRight className="w-3.5 h-3.5" /></button>
+                  {r.cached && r.cached.topCompetitors.length > 0 && (
+                    <button
+                      title="Написать новую статью по этой теме"
+                      className="p-1 rounded hover:bg-green-50 text-green-600"
+                      onClick={() => {
+                        setNewArticleKw(r.cached!.keyword);
+                        setNewArticleComps(r.cached!.topCompetitors);
+                        setNewArticleOpen(true);
+                      }}
+                    ><BookOpen className="w-3.5 h-3.5" /></button>
+                  )}
+                  <a href={r.url} target="_blank" rel="noopener noreferrer" className="p-1 rounded hover:bg-slate-100">
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex justify-center gap-2 mt-3 pt-3 border-t">
+              <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>←</Button>
+              <span className="text-sm self-center text-slate-600">{page} / {totalPages}</span>
+              <Button size="sm" variant="outline" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>→</Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <NewArticleDialog
+        open={newArticleOpen}
+        onOpenChange={setNewArticleOpen}
+        keyword={newArticleKw}
+        competitors={newArticleComps}
+      />
+    </div>
+  );
+}
+
 // ── CatalogAudit ────────────────────────────────────────────────────────────
 
 type AuditIssueFilter = 'all' | 'issues' | 'ok' | 'tooShort' | 'noMeta' | 'noH1' | 'multiH1' | 'duplicates' | 'errors';
@@ -1616,7 +1969,7 @@ function CatalogAudit({ onAnalyze, onBatchAnalyze }: {
 }
 
 export default function ArticleAnalyzer() {
-  const [activeTab, setActiveTab] = useState<'analyze' | 'catalog' | 'ideas' | 'audit'>('catalog');
+  const [activeTab, setActiveTab] = useState<'analyze' | 'catalog' | 'ideas' | 'audit' | 'serp'>('catalog');
   const [url, setUrl] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [savedPostId, setSavedPostId] = useState<number | null>(null);
@@ -1742,22 +2095,21 @@ export default function ArticleAnalyzer() {
           {/* Main area */}
           <div>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="catalog">
-                  <List className="w-4 h-4 mr-2" />
-                  Каталог
+                  <List className="w-4 h-4 mr-1.5" />Каталог
                 </TabsTrigger>
                 <TabsTrigger value="analyze">
-                  <Search className="w-4 h-4 mr-2" />
-                  Анализ по URL
+                  <Search className="w-4 h-4 mr-1.5" />Анализ
                 </TabsTrigger>
-                <TabsTrigger value="ideas">
-                  <TrendingUp className="w-4 h-4 mr-2" />
-                  Идеи статей
+                <TabsTrigger value="serp">
+                  <TrendingUp className="w-4 h-4 mr-1.5" />SERP
                 </TabsTrigger>
                 <TabsTrigger value="audit">
-                  <ClipboardList className="w-4 h-4 mr-2" />
-                  Аудит
+                  <ClipboardList className="w-4 h-4 mr-1.5" />Аудит
+                </TabsTrigger>
+                <TabsTrigger value="ideas">
+                  <BookOpen className="w-4 h-4 mr-1.5" />Идеи
                 </TabsTrigger>
               </TabsList>
 
@@ -1772,6 +2124,11 @@ export default function ArticleAnalyzer() {
                   batchTotal={batchTotal}
                   onStopBatch={stopBatch}
                 />
+              </TabsContent>
+
+              {/* SERP tab */}
+              <TabsContent value="serp">
+                <SerpMonitor onAnalyze={(url) => { setUrl(url); setActiveTab('analyze'); }} />
               </TabsContent>
 
               {/* Ideas tab */}

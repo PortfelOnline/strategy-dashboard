@@ -24,6 +24,7 @@ export interface InstagramAccount {
   biography?: string;
   website?: string;
   profile_picture_url?: string;
+  pageAccessToken: string;
 }
 
 export interface FacebookPage {
@@ -44,7 +45,7 @@ export function getMetaOAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: ENV.metaAppId,
     redirect_uri: ENV.metaRedirectUri,
-    scope: 'instagram_business_management,pages_manage_metadata,pages_read_engagement,instagram_manage_messages',
+    scope: 'pages_show_list,pages_manage_posts,pages_read_engagement,instagram_basic,instagram_content_publish',
     state,
     response_type: 'code',
   });
@@ -94,34 +95,49 @@ export async function getMetaUser(accessToken: string): Promise<MetaUser> {
 }
 
 /**
- * Get Instagram business accounts connected to user
+ * Get Instagram business accounts linked to Facebook pages
+ * Correct approach: each FB Page may have a linked instagram_business_account
+ */
+export async function getInstagramAccountsFromPages(
+  userAccessToken: string,
+  pages: FacebookPage[]
+): Promise<InstagramAccount[]> {
+  const accounts: InstagramAccount[] = [];
+
+  for (const page of pages) {
+    try {
+      const response = await axios.get(
+        `${META_FACEBOOK_API_URL}/${page.id}`,
+        {
+          params: {
+            fields: 'instagram_business_account{id,username,name,profile_picture_url,biography,website}',
+            access_token: page.access_token,
+          },
+        }
+      );
+
+      const igAccount = response.data?.instagram_business_account;
+      if (igAccount?.id) {
+        accounts.push({
+          ...igAccount,
+          username: igAccount.username || igAccount.name || page.name,
+          name: igAccount.name || igAccount.username || page.name,
+          pageAccessToken: page.access_token,
+        });
+      }
+    } catch (error) {
+      console.error(`[Meta API] Failed to get Instagram for page ${page.id}:`, error);
+    }
+  }
+
+  return accounts;
+}
+
+/**
+ * @deprecated Use getInstagramAccountsFromPages instead
  */
 export async function getInstagramAccounts(accessToken: string): Promise<InstagramAccount[]> {
-  try {
-    const userResponse = await axios.get(`${META_FACEBOOK_API_URL}/me`, {
-      params: {
-        fields: 'id',
-        access_token: accessToken,
-      },
-    });
-
-    const userId = userResponse.data.id;
-
-    const igResponse = await axios.get(
-      `${META_FACEBOOK_API_URL}/${userId}/ig_user_search`,
-      {
-        params: {
-          user_id: userId,
-          access_token: accessToken,
-        },
-      }
-    );
-
-    return igResponse.data.data || [];
-  } catch (error) {
-    console.error('[Meta API] Failed to get Instagram accounts:', error);
-    return [];
-  }
+  return [];
 }
 
 /**
@@ -231,3 +247,4 @@ export async function validateMetaToken(accessToken: string): Promise<boolean> {
     return false;
   }
 }
+

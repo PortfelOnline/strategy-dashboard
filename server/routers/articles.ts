@@ -633,6 +633,92 @@ ${competitorSection}
         });
       }
     }),
+
+  /**
+   * Lightweight SERP position check for one keyword — no AI
+   */
+  checkPosition: protectedProcedure
+    .input(z.object({
+      keyword: z.string().min(1),
+      domain:  z.string().default('kadastrmap.info'),
+    }))
+    .mutation(async ({ input }) => {
+      const [google, yandex] = await Promise.all([
+        fetchGoogleSerp(input.keyword),
+        fetchYandexSerp(input.keyword),
+      ]);
+
+      const findPos = (results: { domain: string }[]) => {
+        const idx = results.findIndex(r => r.domain.includes(input.domain));
+        return idx >= 0 ? idx + 1 : null;
+      };
+
+      return {
+        keyword:        input.keyword,
+        googlePos:      findPos(google.results),
+        yandexPos:      findPos(yandex.results),
+        googleError:    google.error  ?? null,
+        yandexError:    yandex.error  ?? null,
+        topCompetitors: google.results
+          .filter(r => !r.domain.includes(input.domain))
+          .slice(0, 5)
+          .map(r => ({ title: r.title, domain: r.domain, snippet: r.snippet })),
+      };
+    }),
+
+  /**
+   * Generate a new full article from title + keyword, auto-save to Content Library
+   */
+  generateNewArticle: protectedProcedure
+    .input(z.object({
+      title:       z.string().min(3),
+      keyword:     z.string().min(1),
+      competitors: z.array(z.object({
+        title:   z.string(),
+        domain:  z.string(),
+        snippet: z.string(),
+      })).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const competitorSection = input.competitors && input.competitors.length > 0
+        ? `\nКонкуренты в топе поиска по этой теме:\n${input.competitors.map((c, i) => `${i + 1}. ${c.title} (${c.domain})\n   ${c.snippet}`).join('\n')}`
+        : '';
+
+      const response = await invokeLLM({
+        messages: [
+          { role: 'system', content: 'Ты эксперт-копирайтер и SEO-специалист. Пишешь полные, подробные статьи на русском языке.' },
+          { role: 'user', content: `Напиши полную SEO-статью.
+
+Заголовок: ${input.title}
+Ключевое слово: ${input.keyword}${competitorSection}
+
+Требования:
+1. Структура: вводный абзац (ответ на вопрос) → 5-7 разделов H2 → заключение
+2. Объём: 900-1500 слов
+3. Форматирование: ## для H2, ### для H3, списки с - или 1.
+4. Конкретные практические советы, реальные цифры и сроки если применимо
+5. Таблица сравнения где уместно
+6. Заключение с призывом к действию
+
+Верни ТОЛЬКО текст статьи без комментариев, преамбулы и послесловий.` },
+        ],
+      });
+
+      const content = typeof response.choices[0]?.message.content === 'string'
+        ? response.choices[0].message.content.trim()
+        : '';
+
+      const result = await createContentPost(ctx.user.id, {
+        title:    input.title,
+        content,
+        platform: 'facebook',
+        language: 'russian',
+        status:   'draft',
+      });
+      const postId = (result as any)?.[0]?.insertId ?? (result as any)?.insertId ?? null;
+
+      return { title: input.title, content, postId: postId as number | null };
+    }),
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────

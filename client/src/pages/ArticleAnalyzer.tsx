@@ -29,6 +29,7 @@ type AnalysisResult = {
     keywords: string[];
     headingsSuggestions: { level: string; current: string; suggested: string }[];
     generalSuggestions: string[];
+    competitorInsights?: string[];
     score: number;
   };
 };
@@ -649,6 +650,25 @@ function AnalysisPanel({
                   {result.seo.generalSuggestions.map((s, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
                       <span className="text-blue-500 mt-0.5 shrink-0">•</span>{s}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {result.seo.competitorInsights && result.seo.competitorInsights.length > 0 && (
+            <Card className="border-orange-200 bg-orange-50">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <span>🏆</span> Анализ конкурентов из SERP
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ul className="space-y-2">
+                  {result.seo.competitorInsights.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-orange-800">
+                      <span className="text-orange-500 mt-0.5 shrink-0">▲</span>{s}
                     </li>
                   ))}
                 </ul>

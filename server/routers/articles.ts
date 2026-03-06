@@ -16,6 +16,7 @@ export interface SeoAnalysis {
   keywords: string[];
   headingsSuggestions: { level: string; current: string; suggested: string }[];
   generalSuggestions: string[];
+  competitorInsights?: string[];
   score: number;
 }
 
@@ -50,18 +51,73 @@ function extractKeywordFromTitle(title: string): string {
   return short.split(/\s+/).slice(0, 5).join(' ');
 }
 
+// Fetch top-3 competitor articles from SERP results
+async function fetchCompetitorArticles(
+  serpResults: { url: string; domain: string; title: string }[],
+  ourDomain: string,
+  maxCompetitors = 3,
+): Promise<{ position: number; domain: string; title: string; headings: string; content: string }[]> {
+  const competitors = serpResults
+    .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
+    .slice(0, maxCompetitors);
+
+  const fetched = await Promise.allSettled(
+    competitors.map(async (r, i) => {
+      const parsed = await Promise.race([
+        parseArticleFromUrl(r.url),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 12000)),
+      ]);
+      return {
+        position: i + 1,
+        domain: r.domain,
+        title: parsed.title,
+        headings: parsed.headings.map(h => `${h.level}: ${h.text}`).join(' | '),
+        content: parsed.content.slice(0, 2500),
+      };
+    }),
+  );
+
+  return fetched
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+    .map(r => r.value);
+}
+
 async function analyzeAndSaveArticle(userId: number, url: string): Promise<void> {
   const parsed = await parseArticleFromUrl(url);
   const contentForLLM = parsed.content.slice(0, 6000);
   const serpKeyword = extractKeywordFromTitle(parsed.title);
+  const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
 
-  const seoPrompt = `Ты SEO-эксперт. Проанализируй статью и верни JSON.
+  // Step 1: fetch SERP + our article in parallel
+  const [googleSerp, yandexSerp] = await Promise.all([
+    fetchGoogleSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
+    fetchYandexSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
+  ]);
 
+  // Step 2: fetch top-3 competitor articles from best SERP
+  const bestSerp = (googleSerp.results.length >= yandexSerp.results.length ? googleSerp : yandexSerp).results;
+  const competitors = await fetchCompetitorArticles(bestSerp, ourDomain);
+
+  // Step 3: build competitor context for prompts
+  const competitorContext = competitors.length > 0
+    ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}):
+  Заголовок: ${c.title}
+  Структура: ${c.headings || '—'}
+  Текст (фрагмент): ${c.content}`).join('\n\n')
+    : '(конкуренты недоступны)';
+
+  const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
+
+  const seoPrompt = `Ты SEO-эксперт. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
+
+Наша статья:
 Заголовок: ${parsed.title}
 Мета-описание: ${parsed.metaDescription || '(отсутствует)'}
-Структура заголовков: ${parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ')}
-Текст статьи (фрагмент):
-${contentForLLM}
+Структура заголовков: ${ourHeadings}
+Текст (фрагмент): ${contentForLLM}
+
+Топ конкуренты из SERP:
+${competitorContext}
 
 Верни ТОЛЬКО валидный JSON без markdown-блоков:
 {
@@ -70,23 +126,33 @@ ${contentForLLM}
   "keywords": ["ключевое1", "ключевое2", ...до 8 штук],
   "headingsSuggestions": [{ "level": "H1", "current": "текущий", "suggested": "улучшенный" }],
   "generalSuggestions": ["совет1", "совет2", ...до 5 советов],
+  "competitorInsights": ["что есть у конкурентов, чего нет у нас — до 3 пунктов"],
   "score": 75
 }`;
 
-  const improvePrompt = `Ты редактор-копирайтер. Улучши статью: сделай текст более читаемым, информативным, добавь структуру если нужно. Сохрани смысл и язык оригинала. Верни ТОЛЬКО улучшенный текст без комментариев.
+  const improvePrompt = `Ты редактор-копирайтер и SEO-специалист. Улучши нашу статью на основе анализа конкурентов из топа поисковой выдачи.
 
-Оригинальный заголовок: ${parsed.title}
+НАША СТАТЬЯ:
+Заголовок: ${parsed.title}
+Структура: ${ourHeadings}
 Текст:
-${contentForLLM}`;
+${contentForLLM}
 
-  // Run LLM (SEO + improve) and SERP checks all in parallel
-  const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+КОНКУРЕНТЫ ИЗ SERP (топ-${competitors.length || 'нет данных'}):
+${competitorContext}
 
-  const [seoResponse, improvedResponse, googleSerp, yandexSerp] = await Promise.all([
+ЗАДАЧА:
+1. Добавь важные подтемы которые есть у конкурентов, но отсутствуют у нас
+2. Улучши структуру заголовков (H2/H3) по образцу лучших конкурентов
+3. Добавь практические детали, пошаговые инструкции, факты — если конкуренты их дают
+4. Сделай статью более полной и исчерпывающей по теме
+5. Сохрани язык, стиль и тональность оригинала
+
+Верни ТОЛЬКО улучшенный текст без пояснений и комментариев.`;
+
+  const [seoResponse, improvedResponse] = await Promise.all([
     invokeLLM({ messages: [{ role: 'system', content: 'Ты SEO-эксперт. Отвечай только валидным JSON.' }, { role: 'user', content: seoPrompt }] }),
-    invokeLLM({ messages: [{ role: 'system', content: 'Ты редактор-копирайтер. Улучшай тексты.' }, { role: 'user', content: improvePrompt }] }),
-    fetchGoogleSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
-    fetchYandexSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
+    invokeLLM({ messages: [{ role: 'system', content: 'Ты редактор-копирайтер. Улучшай тексты на основе анализа конкурентов.' }, { role: 'user', content: improvePrompt }] }),
   ]);
 
   let seo: SeoAnalysis;
@@ -203,15 +269,38 @@ export const articlesRouter = router({
       }
 
       const contentForLLM = parsed.content.slice(0, 6000);
+      const serpKeyword = extractKeywordFromTitle(parsed.title);
+      const ourDomain = (() => { try { return new URL(input.url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
 
-      // 2. SEO analysis + improved text — parallel
-      const seoPrompt = `Ты SEO-эксперт. Проанализируй статью и верни JSON.
+      // 2. Fetch SERP + competitors in parallel with SEO analysis
+      const [googleSerp, yandexSerp] = await Promise.all([
+        fetchGoogleSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
+        fetchYandexSerp(serpKeyword).catch(() => ({ results: [], error: 'fetch failed' })),
+      ]);
 
+      const bestSerp = (googleSerp.results.length >= yandexSerp.results.length ? googleSerp : yandexSerp).results;
+      const competitors = await fetchCompetitorArticles(bestSerp, ourDomain);
+
+      const competitorContext = competitors.length > 0
+        ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}):
+  Заголовок: ${c.title}
+  Структура: ${c.headings || '—'}
+  Текст (фрагмент): ${c.content}`).join('\n\n')
+        : '(конкуренты недоступны)';
+
+      const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
+
+      // 3. SEO analysis + improved text — parallel, with competitor context
+      const seoPrompt = `Ты SEO-эксперт. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
+
+Наша статья:
 Заголовок: ${parsed.title}
 Мета-описание: ${parsed.metaDescription || '(отсутствует)'}
-Структура заголовков: ${parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ')}
-Текст статьи (фрагмент):
-${contentForLLM}
+Структура заголовков: ${ourHeadings}
+Текст (фрагмент): ${contentForLLM}
+
+Топ конкуренты из SERP:
+${competitorContext}
 
 Верни ТОЛЬКО валидный JSON без markdown-блоков:
 {
@@ -222,14 +311,29 @@ ${contentForLLM}
     { "level": "H1", "current": "текущий заголовок", "suggested": "улучшенный заголовок" }
   ],
   "generalSuggestions": ["совет1", "совет2", ...до 5 советов],
+  "competitorInsights": ["что есть у конкурентов, чего нет у нас — до 3 пунктов"],
   "score": 75
 }`;
 
-      const improvePrompt = `Ты редактор-копирайтер. Улучши статью: сделай текст более читаемым, информативным, добавь структуру если нужно. Сохрани смысл и язык оригинала. Верни ТОЛЬКО улучшенный текст без комментариев.
+      const improvePrompt = `Ты редактор-копирайтер и SEO-специалист. Улучши нашу статью на основе анализа конкурентов из топа поисковой выдачи.
 
-Оригинальный заголовок: ${parsed.title}
+НАША СТАТЬЯ:
+Заголовок: ${parsed.title}
+Структура: ${ourHeadings}
 Текст:
-${contentForLLM}`;
+${contentForLLM}
+
+КОНКУРЕНТЫ ИЗ SERP (топ-${competitors.length || 'нет данных'}):
+${competitorContext}
+
+ЗАДАЧА:
+1. Добавь важные подтемы которые есть у конкурентов, но отсутствуют у нас
+2. Улучши структуру заголовков (H2/H3) по образцу лучших конкурентов
+3. Добавь практические детали, пошаговые инструкции, факты — если конкуренты их дают
+4. Сделай статью более полной и исчерпывающей по теме
+5. Сохрани язык, стиль и тональность оригинала
+
+Верни ТОЛЬКО улучшенный текст без пояснений и комментариев.`;
 
       const [seoResponse, improvedResponse] = await Promise.all([
         invokeLLM({
@@ -240,7 +344,7 @@ ${contentForLLM}`;
         }),
         invokeLLM({
           messages: [
-            { role: "system", content: "Ты редактор-копирайтер. Улучшай тексты." },
+            { role: "system", content: "Ты редактор-копирайтер. Улучшай тексты на основе анализа конкурентов." },
             { role: "user", content: improvePrompt },
           ],
         }),
@@ -272,6 +376,11 @@ ${contentForLLM}`;
       // 3. Auto-save to history
       let analysisId: number | null = null;
       try {
+        const findPos = (results: { domain: string }[]) => {
+          if (!ourDomain) return null;
+          const idx = results.findIndex(r => r.domain.includes(ourDomain) || ourDomain.includes(r.domain));
+          return idx >= 0 ? idx + 1 : null;
+        };
         analysisId = await articlesDb.saveArticleAnalysis(ctx.user.id, {
           url: input.url,
           originalTitle: parsed.title,
@@ -285,6 +394,9 @@ ${contentForLLM}`;
           generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
           headings: JSON.stringify(parsed.headings || []),
           seoScore: seo.score || 0,
+          serpKeyword: serpKeyword || null,
+          googlePos: findPos(googleSerp.results),
+          yandexPos: findPos(yandexSerp.results),
         });
       } catch (err) {
         console.error('[Articles] Failed to save to history:', err);

@@ -16,7 +16,7 @@ const googleDocsSchema = z.object({
 });
 
 const botEntrySchema = z.object({
-  botId: z.number().int().min(1).max(100),
+  botId: z.number().int().min(1).max(1000),
   website: z.string().url(),
   enabled: z.boolean(),
 });
@@ -34,9 +34,13 @@ export const botsRouter = t.router({
   list: procedure.query(() => {
     const running = botManager.getRunningBots();
     const runningIds = new Set(running.map((b) => b.botId));
-    const knownIds = botManager.listKnownBotIds();
 
-    const stopped = knownIds
+    // Collect all known bot IDs: state files + orchestrator config
+    const knownIds = new Set(botManager.listKnownBotIds());
+    const orchBots = orch.getOrchestratorConfig().bots;
+    for (const b of orchBots) knownIds.add(b.botId);
+
+    const stopped = [...knownIds]
       .filter((id) => !runningIds.has(id))
       .map((id) => ({ botId: id, status: "stopped" as const, state: botManager.getBotState(id) }));
 
@@ -53,7 +57,7 @@ export const botsRouter = t.router({
   }),
 
   start: procedure
-    .input(z.object({ botId: z.number().int().min(1).max(100), mode: z.enum(["warmup", "target"]), website: z.string().url() }))
+    .input(z.object({ botId: z.number().int().min(1).max(1000), mode: z.enum(["warmup", "target"]), website: z.string().url() }))
     .mutation(({ input }) => botManager.startBot(input.botId, input.mode, input.website)),
 
   stop: procedure

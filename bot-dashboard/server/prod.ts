@@ -40,11 +40,13 @@ app.use("/api/trpc", requireAuth, createExpressMiddleware({
   createContext: () => ({}),
 }));
 
+// Static assets are public (JS/CSS needed to render the login page itself)
+app.use(express.static(STATIC, { index: false }));
+
 // Login page is public
 app.get("/login", (_req, res) => res.sendFile(path.join(STATIC, "index.html")));
 
-// All other routes require auth
-app.use(requireAuth, express.static(STATIC));
+// All HTML routes require auth (SPA)
 app.use("*", requireAuth, (_req, res) => res.sendFile(path.join(STATIC, "index.html")));
 
 app.listen(PORT, () => {

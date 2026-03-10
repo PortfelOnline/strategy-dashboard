@@ -51,12 +51,12 @@ function extractKeywordFromTitle(title: string): string {
   return short.split(/\s+/).slice(0, 5).join(' ');
 }
 
-// Fetch top-3 competitor articles from SERP results
+// Fetch top competitor articles from SERP results
 async function fetchCompetitorArticles(
   serpResults: { url: string; domain: string; title: string }[],
   ourDomain: string,
-  maxCompetitors = 3,
-): Promise<{ position: number; domain: string; title: string; headings: string; content: string }[]> {
+  maxCompetitors = 5,
+): Promise<{ position: number; domain: string; title: string; headings: string; content: string; wordCount: number }[]> {
   const competitors = serpResults
     .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
     .slice(0, maxCompetitors);
@@ -65,14 +65,15 @@ async function fetchCompetitorArticles(
     competitors.map(async (r, i) => {
       const parsed = await Promise.race([
         parseArticleFromUrl(r.url),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 12000)),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]);
       return {
         position: i + 1,
         domain: r.domain,
         title: parsed.title,
         headings: parsed.headings.map(h => `${h.level}: ${h.text}`).join(' | '),
-        content: parsed.content.slice(0, 2500),
+        content: parsed.content.slice(0, 4000),
+        wordCount: parsed.wordCount,
       };
     }),
   );
@@ -99,8 +100,13 @@ async function analyzeAndSaveArticle(userId: number, url: string): Promise<void>
   const competitors = await fetchCompetitorArticles(bestSerp, ourDomain);
 
   // Step 3: build competitor context for prompts
+  const avgCompetitorWords = competitors.length > 0
+    ? Math.round(competitors.reduce((s, c) => s + (c.wordCount || 0), 0) / competitors.length)
+    : 1500;
+  const targetWords = Math.max(1500, avgCompetitorWords + 300);
+
   const competitorContext = competitors.length > 0
-    ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}):
+    ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
   Заголовок: ${c.title}
   Структура: ${c.headings || '—'}
   Текст (фрагмент): ${c.content}`).join('\n\n')
@@ -108,51 +114,59 @@ async function analyzeAndSaveArticle(userId: number, url: string): Promise<void>
 
   const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
 
-  const seoPrompt = `Ты SEO-эксперт. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
+  const seoPrompt = `Ты SEO-эксперт по российскому рынку. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
 
 Наша статья:
 Заголовок: ${parsed.title}
+Ключевой запрос: ${serpKeyword}
 Мета-описание: ${parsed.metaDescription || '(отсутствует)'}
 Структура заголовков: ${ourHeadings}
+Объём: ${parsed.wordCount} слов
 Текст (фрагмент): ${contentForLLM}
 
-Топ конкуренты из SERP:
+Топ конкуренты из SERP (средний объём: ${avgCompetitorWords} слов):
 ${competitorContext}
 
 Верни ТОЛЬКО валидный JSON без markdown-блоков:
 {
-  "metaTitle": "оптимизированный title (до 60 символов)",
-  "metaDescription": "оптимизированное мета-описание (до 160 символов)",
-  "keywords": ["ключевое1", "ключевое2", ...до 8 штук],
-  "headingsSuggestions": [{ "level": "H1", "current": "текущий", "suggested": "улучшенный" }],
-  "generalSuggestions": ["совет1", "совет2", ...до 5 советов],
-  "competitorInsights": ["что есть у конкурентов, чего нет у нас — до 3 пунктов"],
+  "metaTitle": "оптимизированный title с ключом в начале (до 60 символов)",
+  "metaDescription": "мета-описание с призывом к действию и ключом (до 160 символов)",
+  "keywords": ["ключевое1", "LSI-термин2", ...до 10 штук],
+  "headingsSuggestions": [{ "level": "H1", "current": "текущий", "suggested": "улучшенный с ключом" }],
+  "generalSuggestions": ["конкретный совет с примером", ...до 7 советов],
+  "competitorInsights": ["тема/раздел у конкурентов которого нет у нас", ...до 5 пунктов],
+  "missingFaqQuestions": ["Вопрос из блока Люди также спрашивают?", ...до 5],
+  "conversionTips": ["как усилить конверсию в заказ справки", ...до 3],
   "score": 75
 }`;
 
-  const improvePrompt = `Ты редактор-копирайтер и SEO-специалист. Улучши нашу статью на основе анализа конкурентов из топа поисковой выдачи.
+  const improvePrompt = `Ты SEO-копирайтер экстра-класса для русскоязычного поиска. Цель: переписать статью так, чтобы она вышла в ТОП-3 Яндекса и Google по запросу "${serpKeyword}".
 
-НАША СТАТЬЯ:
+НАША СТАТЬЯ (${parsed.wordCount} слов):
 Заголовок: ${parsed.title}
 Структура: ${ourHeadings}
 Текст:
 ${contentForLLM}
 
-КОНКУРЕНТЫ ИЗ SERP (топ-${competitors.length || 'нет данных'}):
+КОНКУРЕНТЫ В ТОП-${competitors.length} (средний объём: ${avgCompetitorWords} слов):
 ${competitorContext}
 
-ЗАДАЧА:
-1. Добавь важные подтемы которые есть у конкурентов, но отсутствуют у нас
-2. Улучши структуру заголовков (H2/H3) по образцу лучших конкурентов
-3. Добавь практические детали, пошаговые инструкции, факты — если конкуренты их дают
-4. Сделай статью более полной и исчерпывающей по теме
-5. Сохрани язык, стиль и тональность оригинала
+ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+1. Объём: минимум ${targetWords} слов (конкуренты пишут в среднем ${avgCompetitorWords} слов — нужно превзойти)
+2. Структура HTML: один H1, 6-10 подзаголовков H2, H3 где уместно, списки <ul>/<ol>, таблицы <table> где есть данные для сравнения
+3. Начало: прямой ответ на запрос "${serpKeyword}" в первых 2-3 предложениях (featured snippet)
+4. Охват тем: включи ВСЕ темы конкурентов которых нет у нас
+5. FAQ-раздел: добавь H2 "Часто задаваемые вопросы" с минимум 5 вопросами-ответами (важно для блока "Люди также спрашивают" в Яндексе)
+6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно
+7. Пошаговые инструкции: нумерованные списки для процессов
+8. Сохрани тематику: статья про кадастр/недвижимость — упоминай возможность заказать справку онлайн
+9. Сохрани язык и стиль оригинала
 
-Верни ТОЛЬКО улучшенный текст без пояснений и комментариев.`;
+Верни ТОЛЬКО готовый HTML-текст статьи используя теги: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <tr>, <td>, <th>, <strong>, <em>. Без <html>/<body>/<head> тегов.`;
 
   const [seoResponse, improvedResponse] = await Promise.all([
-    invokeLLM({ messages: [{ role: 'system', content: 'Ты SEO-эксперт. Отвечай только валидным JSON.' }, { role: 'user', content: seoPrompt }] }),
-    invokeLLM({ messages: [{ role: 'system', content: 'Ты редактор-копирайтер. Улучшай тексты на основе анализа конкурентов.' }, { role: 'user', content: improvePrompt }] }),
+    invokeLLM({ messages: [{ role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON.' }, { role: 'user', content: seoPrompt }] }),
+    invokeLLM({ messages: [{ role: 'system', content: 'Ты SEO-копирайтер. Пишешь длинные полные статьи для топа поиска. Всегда пиши HTML.' }, { role: 'user', content: improvePrompt }], maxTokens: 8192 }),
   ]);
 
   let seo: SeoAnalysis;
@@ -281,8 +295,13 @@ export const articlesRouter = router({
       const bestSerp = (googleSerp.results.length >= yandexSerp.results.length ? googleSerp : yandexSerp).results;
       const competitors = await fetchCompetitorArticles(bestSerp, ourDomain);
 
+      const avgCompetitorWords = competitors.length > 0
+        ? Math.round(competitors.reduce((s, c) => s + (c.wordCount || 0), 0) / competitors.length)
+        : 1500;
+      const targetWords = Math.max(1500, avgCompetitorWords + 300);
+
       const competitorContext = competitors.length > 0
-        ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}):
+        ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
   Заголовок: ${c.title}
   Структура: ${c.headings || '—'}
   Текст (фрагмент): ${c.content}`).join('\n\n')
@@ -291,62 +310,71 @@ export const articlesRouter = router({
       const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
 
       // 3. SEO analysis + improved text — parallel, with competitor context
-      const seoPrompt = `Ты SEO-эксперт. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
+      const seoPrompt = `Ты SEO-эксперт по российскому рынку. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
 
 Наша статья:
 Заголовок: ${parsed.title}
+Ключевой запрос: ${serpKeyword}
 Мета-описание: ${parsed.metaDescription || '(отсутствует)'}
 Структура заголовков: ${ourHeadings}
+Объём: ${parsed.wordCount} слов
 Текст (фрагмент): ${contentForLLM}
 
-Топ конкуренты из SERP:
+Топ конкуренты из SERP (средний объём: ${avgCompetitorWords} слов):
 ${competitorContext}
 
 Верни ТОЛЬКО валидный JSON без markdown-блоков:
 {
-  "metaTitle": "оптимизированный title (до 60 символов)",
-  "metaDescription": "оптимизированное мета-описание (до 160 символов)",
-  "keywords": ["ключевое1", "ключевое2", ...до 8 штук],
+  "metaTitle": "оптимизированный title с ключом в начале (до 60 символов)",
+  "metaDescription": "мета-описание с призывом к действию и ключом (до 160 символов)",
+  "keywords": ["ключевое1", "LSI-термин2", ...до 10 штук],
   "headingsSuggestions": [
-    { "level": "H1", "current": "текущий заголовок", "suggested": "улучшенный заголовок" }
+    { "level": "H1", "current": "текущий заголовок", "suggested": "улучшенный с ключом" }
   ],
-  "generalSuggestions": ["совет1", "совет2", ...до 5 советов],
-  "competitorInsights": ["что есть у конкурентов, чего нет у нас — до 3 пунктов"],
+  "generalSuggestions": ["конкретный совет с примером", ...до 7 советов],
+  "competitorInsights": ["тема/раздел у конкурентов которого нет у нас", ...до 5 пунктов],
+  "missingFaqQuestions": ["Вопрос из блока Люди также спрашивают?", ...до 5],
+  "conversionTips": ["как усилить конверсию в заказ справки", ...до 3],
   "score": 75
 }`;
 
-      const improvePrompt = `Ты редактор-копирайтер и SEO-специалист. Улучши нашу статью на основе анализа конкурентов из топа поисковой выдачи.
+      const improvePrompt = `Ты SEO-копирайтер экстра-класса для русскоязычного поиска. Цель: переписать статью так, чтобы она вышла в ТОП-3 Яндекса и Google по запросу "${serpKeyword}".
 
-НАША СТАТЬЯ:
+НАША СТАТЬЯ (${parsed.wordCount} слов):
 Заголовок: ${parsed.title}
 Структура: ${ourHeadings}
 Текст:
 ${contentForLLM}
 
-КОНКУРЕНТЫ ИЗ SERP (топ-${competitors.length || 'нет данных'}):
+КОНКУРЕНТЫ В ТОП-${competitors.length} (средний объём: ${avgCompetitorWords} слов):
 ${competitorContext}
 
-ЗАДАЧА:
-1. Добавь важные подтемы которые есть у конкурентов, но отсутствуют у нас
-2. Улучши структуру заголовков (H2/H3) по образцу лучших конкурентов
-3. Добавь практические детали, пошаговые инструкции, факты — если конкуренты их дают
-4. Сделай статью более полной и исчерпывающей по теме
-5. Сохрани язык, стиль и тональность оригинала
+ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+1. Объём: минимум ${targetWords} слов (конкуренты пишут в среднем ${avgCompetitorWords} слов — нужно превзойти)
+2. Структура HTML: один H1, 6-10 подзаголовков H2, H3 где уместно, списки <ul>/<ol>, таблицы <table> где есть данные для сравнения
+3. Начало: прямой ответ на запрос "${serpKeyword}" в первых 2-3 предложениях (featured snippet)
+4. Охват тем: включи ВСЕ темы конкурентов которых нет у нас
+5. FAQ-раздел: добавь H2 "Часто задаваемые вопросы" с минимум 5 вопросами-ответами (важно для блока "Люди также спрашивают" в Яндексе)
+6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно
+7. Пошаговые инструкции: нумерованные списки для процессов
+8. CTA: упомяни что на kadastrmap.info можно заказать справку на объект (данные из ЕГРН, подходят для проверки при сделках и юридического анализа — это не выписка ЕГРН, но содержит все реальные сведения)
+9. Сохрани язык и стиль оригинала
 
-Верни ТОЛЬКО улучшенный текст без пояснений и комментариев.`;
+Верни ТОЛЬКО готовый HTML-текст статьи используя теги: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <tr>, <td>, <th>, <strong>, <em>. Без <html>/<body>/<head> тегов.`;
 
       const [seoResponse, improvedResponse] = await Promise.all([
         invokeLLM({
           messages: [
-            { role: "system", content: "Ты SEO-эксперт. Отвечай только валидным JSON." },
+            { role: "system", content: "Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON." },
             { role: "user", content: seoPrompt },
           ],
         }),
         invokeLLM({
           messages: [
-            { role: "system", content: "Ты редактор-копирайтер. Улучшай тексты на основе анализа конкурентов." },
+            { role: "system", content: "Ты SEO-копирайтер. Пишешь длинные полные статьи для топа поиска. Всегда пиши HTML." },
             { role: "user", content: improvePrompt },
           ],
+          maxTokens: 8192,
         }),
       ]);
 
@@ -651,26 +679,33 @@ ${competitorList}
 
       const response = await invokeLLM({
         messages: [
-          { role: 'system', content: 'Ты эксперт-копирайтер и SEO-специалист. Пишешь полные, структурированные статьи.' },
+          { role: 'system', content: 'Ты SEO-копирайтер экстра-класса. Пишешь статьи для топа Яндекса и Google. Всегда возвращаешь HTML.' },
           { role: 'user', content: `Ключевое слово: "${input.keyword}"
 
 Наша текущая статья:
 Заголовок: ${input.originalTitle}
 Текст:
-${input.originalContent.slice(0, 4000)}
+${input.originalContent.slice(0, 5000)}
 
-Конкуренты в ТОП-10 поиска:
+Конкуренты в ТОП-10 поиска (заголовки и сниппеты):
 ${competitorList}
 
-Задача: перепиши нашу статью так, чтобы она:
-1. Покрывала ВСЕ темы и аспекты которые есть у конкурентов (судя по заголовкам и сниппетам)
-2. Была лучше структурирована (подзаголовки H2/H3, списки, таблицы где уместно)
-3. Была более полной и информативной чем каждый из конкурентов по отдельности
-4. Сохраняла язык и стиль оригинала
-5. Начиналась с краткого вводного абзаца отвечающего на главный вопрос пользователя
+ЗАДАЧА: Перепиши нашу статью чтобы она вышла в ТОП-3 по запросу "${input.keyword}".
 
-Верни ТОЛЬКО готовый текст статьи без комментариев и пояснений.` },
+ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+1. Объём: минимум 1800 слов (конкуренты в топе пишут именно столько)
+2. Начало: прямой ответ на запрос "${input.keyword}" в первых 2-3 предложениях
+3. Структура: H1 (один), 6-10 H2, H3 где уместно, списки, таблицы где уместно
+4. Покрой ВСЕ темы конкурентов (судя по их заголовкам и сниппетам)
+5. FAQ-раздел: H2 "Часто задаваемые вопросы" с минимум 5 вопросами-ответами
+6. E-E-A-T: конкретные факты, числа, сроки, стоимости, нормативные акты
+7. Пошаговые нумерованные инструкции для любых процессов
+8. Тема кадастр/недвижимость: упомяни возможность заказать справку онлайн
+9. Сохрани язык и стиль оригинала
+
+Верни ТОЛЬКО HTML-текст: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <strong>, <em>. Без <html>/<body> тегов.` },
         ],
+        maxTokens: 8192,
       });
 
       const improvedContent = typeof response.choices[0]?.message.content === 'string'
@@ -743,6 +778,110 @@ ${competitorSection}
       }
 
       return { ideas, ourCount: input.ourTitles.length };
+    }),
+
+  /**
+   * Generate a brand-new article from scratch targeting top-3 for a keyword.
+   * Fetches live SERP, reads competitor content, then writes a full article.
+   */
+  generateTopArticle: protectedProcedure
+    .input(z.object({
+      keyword:  z.string().min(2),
+      niche:    z.string().default('кадастр и недвижимость'),
+      ctaHint:  z.string().default('Вы можете заказать справку на объект недвижимости онлайн — данные реальные из ЕГРН, подходят для проверки объекта, сделок и юридического анализа. Заказать на kadastrmap.info'),
+    }))
+    .mutation(async ({ input }) => {
+      // 1. SERP
+      const [googleSerp, yandexSerp] = await Promise.all([
+        fetchGoogleSerp(input.keyword).catch(() => ({ results: [] as any[], error: 'fetch failed' })),
+        fetchYandexSerp(input.keyword).catch(() => ({ results: [] as any[], error: 'fetch failed' })),
+      ]);
+
+      const bestSerp = (googleSerp.results.length >= yandexSerp.results.length ? googleSerp : yandexSerp).results;
+
+      // 2. Read competitor content
+      const competitors = await fetchCompetitorArticles(bestSerp, '', 5);
+      const avgWords = competitors.length > 0
+        ? Math.round(competitors.reduce((s, c) => s + (c.wordCount || 0), 0) / competitors.length)
+        : 1500;
+      const targetWords = Math.max(1800, avgWords + 400);
+
+      const competitorContext = competitors.length > 0
+        ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
+  Заголовок: ${c.title}
+  Структура H2/H3: ${c.headings || '—'}
+  Фрагмент текста: ${c.content}`).join('\n\n')
+        : '(данные конкурентов недоступны)';
+
+      // 3. Generate article
+      const prompt = `Ты SEO-копирайтер экстра-класса для русскоязычного поиска. Напиши НОВУЮ статью для ТОП-3 Яндекса и Google.
+
+Ключевой запрос: "${input.keyword}"
+Ниша: ${input.niche}
+
+АНАЛИЗ КОНКУРЕНТОВ В ТОП-5 (средний объём: ${avgWords} слов):
+${competitorContext}
+
+ТРЕБОВАНИЯ К СТАТЬЕ:
+1. Объём: минимум ${targetWords} слов — превзойди конкурентов по полноте
+2. H1: точно под запрос "${input.keyword}" + дополнительный контекст
+3. Структура: 7-12 H2, H3 где уместно; не менее 3 нумерованных или маркированных списков
+4. Вступление: прямой ответ на запрос в первых 2-3 предложениях (попадание в featured snippet)
+5. Покрой ВСЕ темы которые есть у конкурентов — сделай статью исчерпывающей
+6. Таблицы: добавь хотя бы одну сравнительную таблицу где уместно
+7. FAQ: H2 "Часто задаваемые вопросы" → минимум 6 вопросов-ответов (для блока "Люди также спрашивают")
+8. E-E-A-T: конкретные цифры, сроки, стоимости, ссылки на законы/постановления где уместно
+9. CTA: в конце статьи и в одном-двух местах по тексту добавь призыв — ${input.ctaHint}
+10. Стиль: информационный, деловой, без воды
+
+Верни ТОЛЬКО HTML-текст используя: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <td>, <th>, <strong>, <em>. Без <html>/<body> тегов.`;
+
+      const response = await invokeLLM({
+        messages: [
+          { role: 'system', content: 'Ты SEO-копирайтер. Пишешь длинные экспертные статьи для топа поиска. Всегда возвращаешь только HTML.' },
+          { role: 'user', content: prompt },
+        ],
+        maxTokens: 8192,
+      });
+
+      const articleHtml = typeof response.choices[0]?.message.content === 'string'
+        ? response.choices[0].message.content.trim()
+        : '';
+
+      // 4. SEO meta
+      const metaResponse = await invokeLLM({
+        messages: [
+          { role: 'system', content: 'Ты SEO-эксперт. Отвечай только валидным JSON.' },
+          { role: 'user', content: `Для статьи по запросу "${input.keyword}" сгенерируй SEO-мету. Верни только JSON:
+{
+  "metaTitle": "title до 60 символов с ключом в начале",
+  "metaDescription": "мета-описание до 160 символов с призывом к действию",
+  "keywords": ["ключ1", "LSI2", ...до 10 штук],
+  "faqQuestions": ["вопрос1?", ...до 6]
+}` },
+        ],
+      });
+
+      let meta = { metaTitle: input.keyword, metaDescription: '', keywords: [] as string[], faqQuestions: [] as string[] };
+      try {
+        const raw = typeof metaResponse.choices[0]?.message.content === 'string'
+          ? metaResponse.choices[0].message.content.trim().replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim()
+          : '{}';
+        meta = { ...meta, ...JSON.parse(raw) };
+      } catch { /* keep defaults */ }
+
+      return {
+        keyword: input.keyword,
+        articleHtml,
+        metaTitle: meta.metaTitle,
+        metaDescription: meta.metaDescription,
+        keywords: meta.keywords,
+        faqQuestions: meta.faqQuestions,
+        competitorCount: competitors.length,
+        avgCompetitorWords: avgWords,
+        targetWords,
+        serpResults: bestSerp.slice(0, 10),
+      };
     }),
 
   /**
@@ -1138,7 +1277,105 @@ ${groupsSummary}
 
       return { success: true, redirectId: redirect.id, postDeleted };
     }),
+
+  /**
+   * Suggest best keywords for kadastrmap.info ranked by traffic × conversion potential.
+   * Conversion = likelihood the user will order a document (справка) after reading the article.
+   */
+  suggestConversionKeywords: protectedProcedure
+    .input(z.object({
+      seedKeywords: z.array(z.string()).default([]),
+      ourTitles:    z.array(z.string()).default([]),
+      count:        z.number().min(10).max(150).default(60),
+    }))
+    .mutation(async ({ input }) => {
+      const seedSection = input.seedKeywords.length > 0
+        ? `\nСтартовые ключевые слова для расширения:\n${input.seedKeywords.join(', ')}`
+        : '';
+
+      const titlesSection = input.ourTitles.length > 0
+        ? `\nСтатьи уже есть на нашем сайте (НЕ предлагай эти темы):\n${input.ourTitles.slice(0, 100).join('\n')}`
+        : '';
+
+      const prompt = `Ты эксперт по SEO и контент-маркетингу для российского рынка. Анализируй ключевые запросы для сайта kadastrmap.info.
+
+О САЙТЕ:
+kadastrmap.info — сервис справок о недвижимости. Пользователь вводит адрес или кадастровый номер и получает справку с данными из ЕГРН:
+- кадастровая стоимость объекта
+- история владельцев, переходы прав
+- обременения, аресты, залоги
+- характеристики объекта (площадь, этаж, назначение)
+ВАЖНО: это не официальная выписка ЕГРН (её выдаёт только Росреестр), но данные реальные из ЕГРН, пригодны для проверки перед покупкой, сделками, юридическим анализом.
+
+АУДИТОРИЯ: люди, которые:
+- покупают/продают недвижимость и хотят проверить объект
+- хотят узнать кадастровую стоимость
+- проверяют обременения и аресты
+- хотят узнать историю собственников
+- оформляют ипотеку, наследство, дарение
+${seedSection}
+${titlesSection}
+
+ЗАДАЧА: придумай ${input.count} ключевых запросов. Для каждого оцени:
+- trafficScore (1-10): относительный объём поиска в Яндексе/Google (10 = очень высокий)
+- conversionScore (1-10): насколько пользователь с этим запросом скорее всего ЗАКАЖЕТ справку (10 = почти точно закажет: например "кто владелец квартиры узнать онлайн")
+- difficulty (1-5): сложность попасть в топ-3 (1 = легко, 5 = очень сложно)
+- intent: "transactional" (хочет что-то сделать/заказать) | "informational" (хочет узнать) | "commercial" (сравнивает варианты)
+- articleTitle: конкретный заголовок статьи под этот запрос
+- reason: 1 предложение — почему высокая конверсия или трафик
+
+Приоритизируй запросы с ВЫСОКОЙ конверсией (conversionScore >= 7):
+- "проверить квартиру перед покупкой"
+- "узнать владельца недвижимости"
+- "кадастровая стоимость онлайн"
+- "проверить обременение на квартиру"
+- подобные…
+
+Верни ТОЛЬКО валидный JSON-массив без markdown:
+[
+  {
+    "keyword": "проверить квартиру перед покупкой",
+    "trafficScore": 9,
+    "conversionScore": 10,
+    "difficulty": 3,
+    "intent": "transactional",
+    "articleTitle": "Как проверить квартиру перед покупкой: полная инструкция 2024",
+    "reason": "Пользователь готов заказать справку прямо сейчас — ему нужна проверка"
+  }
+]
+
+Сортируй по убыванию: (trafficScore * 0.35 + conversionScore * 0.65) / difficulty`;
+
+      const response = await invokeLLM({
+        messages: [
+          { role: 'system', content: 'Ты SEO-эксперт. Отвечай только валидным JSON-массивом.' },
+          { role: 'user', content: prompt },
+        ],
+        maxTokens: 8192,
+      });
+
+      let keywords: any[] = [];
+      try {
+        const raw = typeof response.choices[0]?.message.content === 'string'
+          ? response.choices[0].message.content.trim().replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim()
+          : '[]';
+        keywords = JSON.parse(raw);
+        if (!Array.isArray(keywords)) keywords = [];
+      } catch {
+        throw new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Не удалось разобрать ответ AI' });
+      }
+
+      // Compute combined score and re-sort
+      keywords = keywords.map(k => ({
+        ...k,
+        combinedScore: Math.round(((k.trafficScore * 0.35 + k.conversionScore * 0.65) / Math.max(1, k.difficulty)) * 10) / 10,
+      })).sort((a, b) => b.combinedScore - a.combinedScore);
+
+      return { keywords, count: keywords.length };
+    }),
+
 });
+// ROUTER_END — do not remove this marker
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 

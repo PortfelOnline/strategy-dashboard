@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { trpc } from '@/lib/trpc';
 import { PublishToWordPress } from '@/components/PublishToWordPress';
@@ -11,6 +12,7 @@ import {
   ChevronDown, ChevronUp, History, Trash2, ExternalLink,
   List, ArrowRight, Users, Play, Square, Eye, ClipboardList,
   AlertTriangle, CheckCircle, XCircle, Filter,
+  Shield, Upload, RotateCcw, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -2468,8 +2470,647 @@ function CatalogAudit({ onAnalyze, onBatchAnalyze, history, onServerBatch }: {
   );
 }
 
+// ── KeywordResearch ─────────────────────────────────────────────────────────
+
+type ConversionKeyword = {
+  keyword: string;
+  trafficScore: number;
+  conversionScore: number;
+  difficulty: number;
+  combinedScore: number;
+  intent: 'transactional' | 'informational' | 'commercial';
+  articleTitle: string;
+  reason: string;
+};
+
+const INTENT_BADGE: Record<string, { label: string; color: string }> = {
+  transactional: { label: 'Заказ',   color: 'bg-green-100 text-green-800' },
+  informational: { label: 'Инфо',    color: 'bg-blue-100 text-blue-800' },
+  commercial:    { label: 'Сравнение', color: 'bg-purple-100 text-purple-800' },
+};
+
+function ScoreBar({ value, max = 10, color }: { value: number; max?: number; color: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="w-16 bg-slate-100 rounded-full h-1.5">
+        <div className={`h-1.5 rounded-full ${color}`} style={{ width: `${(value / max) * 100}%` }} />
+      </div>
+      <span className="text-xs tabular-nums text-slate-500">{value}</span>
+    </div>
+  );
+}
+
+function KeywordResearch({ onGenerate }: { onGenerate: (keyword: string) => void }) {
+  const [keywords, setKeywords]     = useState<ConversionKeyword[]>([]);
+  const [seedInput, setSeedInput]   = useState('');
+  const [count, setCount]           = useState(60);
+  const [filterIntent, setFilterIntent] = useState<'all' | 'transactional' | 'informational' | 'commercial'>('all');
+  const [filterConv, setFilterConv] = useState(0); // min conversionScore
+  const [search, setSearch]         = useState('');
+  const [sortBy, setSortBy]         = useState<'combinedScore' | 'trafficScore' | 'conversionScore' | 'difficulty'>('combinedScore');
+
+  // Load cached article titles for deduplication
+  const ourTitles = loadCachedArticles().map(a => a.title);
+
+  const { mutate: suggest, isPending } = trpc.articles.suggestConversionKeywords.useMutation({
+    onSuccess: (d) => {
+      setKeywords(d.keywords as ConversionKeyword[]);
+      toast.success(`Найдено ${d.count} ключевых запросов`);
+    },
+    onError: (e: any) => toast.error(e?.message || 'Ошибка генерации'),
+  });
+
+  const handleSuggest = () => {
+    const seeds = seedInput.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean);
+    suggest({ seedKeywords: seeds, ourTitles, count });
+  };
+
+  const filtered = keywords
+    .filter(k => {
+      if (filterIntent !== 'all' && k.intent !== filterIntent) return false;
+      if (k.conversionScore < filterConv) return false;
+      if (search && !k.keyword.toLowerCase().includes(search.toLowerCase()) && !k.articleTitle.toLowerCase().includes(search.toLowerCase())) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'difficulty') return a.difficulty - b.difficulty;
+      return b[sortBy] - a[sortBy];
+    });
+
+  const top5 = keywords.filter(k => k.conversionScore >= 8).slice(0, 5);
+
+  return (
+    <div className="space-y-4">
+      {/* Form */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-purple-600" />
+            Анализ ключевых запросов по конверсии
+          </CardTitle>
+          <p className="text-sm text-slate-500">
+            AI подбирает запросы с максимальным трафиком и вероятностью заказа справки
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Стартовые ключевые слова (необязательно)</label>
+            <Textarea
+              placeholder={"кадастровая стоимость\nвыписка ЕГРН\nпроверить квартиру"}
+              value={seedInput}
+              onChange={(e) => setSeedInput(e.target.value)}
+              className="text-sm min-h-[80px] resize-none"
+            />
+            <p className="text-xs text-slate-400 mt-1">По одному на строку или через запятую. Оставьте пустым для автоматического подбора.</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-slate-500 whitespace-nowrap">Количество запросов:</label>
+            <Input
+              type="number" min={10} max={150} value={count}
+              onChange={(e) => setCount(Math.min(150, Math.max(10, parseInt(e.target.value) || 60)))}
+              className="w-24"
+            />
+            <Button
+              onClick={handleSuggest}
+              disabled={isPending}
+              className="gap-2 flex-1 bg-purple-600 hover:bg-purple-700"
+            >
+              {isPending
+                ? <><Loader2 className="w-4 h-4 animate-spin" />Анализирую...</>
+                : <><Search className="w-4 h-4" />Найти прибыльные запросы</>}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Loading */}
+      {isPending && (
+        <Card>
+          <CardContent className="flex flex-col items-center py-12 gap-3">
+            <Loader2 className="w-10 h-10 animate-spin text-purple-500" />
+            <p className="font-medium text-slate-700">Анализирую запросы по трафику и конверсии...</p>
+            <p className="text-sm text-slate-400">AI оценивает каждый запрос по двум метрикам. Обычно 20–40 сек.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Top conversion picks */}
+      {top5.length > 0 && !isPending && (
+        <Card className="border-green-200 bg-green-50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base text-green-800 flex items-center gap-2">
+              🏆 ТОП-5 по конверсии в заказ справки
+            </CardTitle>
+            <p className="text-xs text-green-600">Эти запросы приводят людей, которые почти наверняка закажут документ</p>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {top5.map((k, i) => (
+              <div key={i} className="flex items-center justify-between gap-3 bg-white rounded-lg px-3 py-2 border border-green-100">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-800 truncate">{k.keyword}</p>
+                  <p className="text-xs text-slate-500 truncate mt-0.5">{k.reason}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Badge className="bg-green-100 text-green-800 text-xs">{k.conversionScore}/10</Badge>
+                  <Button
+                    size="sm"
+                    className="h-7 px-2 text-xs gap-1 bg-green-600 hover:bg-green-700"
+                    onClick={() => onGenerate(k.keyword)}
+                  >
+                    <ArrowRight className="w-3 h-3" />Написать статью
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Full results */}
+      {keywords.length > 0 && !isPending && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-base">
+                Все запросы ({filtered.length} / {keywords.length})
+              </CardTitle>
+            </div>
+            {/* Filters */}
+            <div className="flex flex-wrap gap-2 mt-2">
+              <Input
+                placeholder="Поиск..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-7 text-xs w-36"
+              />
+              <select
+                value={filterIntent}
+                onChange={(e) => setFilterIntent(e.target.value as any)}
+                className="h-7 border rounded px-2 text-xs text-slate-600"
+              >
+                <option value="all">Все типы</option>
+                <option value="transactional">Заказ (transactional)</option>
+                <option value="informational">Информационные</option>
+                <option value="commercial">Коммерческие</option>
+              </select>
+              <select
+                value={filterConv}
+                onChange={(e) => setFilterConv(Number(e.target.value))}
+                className="h-7 border rounded px-2 text-xs text-slate-600"
+              >
+                <option value={0}>Любая конверсия</option>
+                <option value={7}>Конверсия ≥ 7</option>
+                <option value={8}>Конверсия ≥ 8</option>
+                <option value={9}>Конверсия ≥ 9</option>
+              </select>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="h-7 border rounded px-2 text-xs text-slate-600"
+              >
+                <option value="combinedScore">По рейтингу</option>
+                <option value="conversionScore">По конверсии</option>
+                <option value="trafficScore">По трафику</option>
+                <option value="difficulty">По сложности ↑</option>
+              </select>
+            </div>
+          </CardHeader>
+
+          {/* Header row */}
+          <div className="grid grid-cols-[1fr_80px_80px_60px_50px_120px] gap-2 px-4 py-2 border-b bg-slate-50 text-xs text-slate-400 font-medium">
+            <span>Запрос / Заголовок статьи</span>
+            <span>Трафик</span>
+            <span>Конверсия</span>
+            <span>Слож.</span>
+            <span>Рейтинг</span>
+            <span></span>
+          </div>
+
+          <CardContent className="p-0">
+            <div className="divide-y max-h-[600px] overflow-y-auto">
+              {filtered.map((k, i) => {
+                const intentBadge = INTENT_BADGE[k.intent] || INTENT_BADGE.informational;
+                return (
+                  <div key={i} className="grid grid-cols-[1fr_80px_80px_60px_50px_120px] gap-2 px-4 py-3 hover:bg-slate-50 items-center group">
+                    {/* Keyword + title */}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${intentBadge.color}`}>
+                          {intentBadge.label}
+                        </span>
+                        <span className="text-sm font-medium text-slate-800 truncate">{k.keyword}</span>
+                      </div>
+                      <p className="text-xs text-slate-400 truncate mt-0.5">{k.articleTitle}</p>
+                      <p className="text-xs text-slate-300 truncate mt-0.5 italic group-hover:text-slate-500 transition-colors">{k.reason}</p>
+                    </div>
+                    {/* Traffic */}
+                    <ScoreBar value={k.trafficScore} color="bg-blue-400" />
+                    {/* Conversion */}
+                    <ScoreBar
+                      value={k.conversionScore}
+                      color={k.conversionScore >= 8 ? 'bg-green-500' : k.conversionScore >= 6 ? 'bg-yellow-400' : 'bg-slate-300'}
+                    />
+                    {/* Difficulty */}
+                    <div className="text-xs text-center">
+                      <span className={`font-semibold ${k.difficulty <= 2 ? 'text-green-600' : k.difficulty <= 3 ? 'text-yellow-600' : 'text-red-500'}`}>
+                        {k.difficulty}/5
+                      </span>
+                    </div>
+                    {/* Combined */}
+                    <div className="text-xs font-bold text-center">
+                      <span className={k.combinedScore >= 15 ? 'text-green-600' : k.combinedScore >= 10 ? 'text-blue-600' : 'text-slate-400'}>
+                        {k.combinedScore}
+                      </span>
+                    </div>
+                    {/* Actions */}
+                    <div className="flex gap-1 justify-end">
+                      <Button
+                        size="sm"
+                        className="h-7 px-2 text-xs gap-1 bg-green-600 hover:bg-green-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => onGenerate(k.keyword)}
+                      >
+                        <TrendingUp className="w-3 h-3" />Написать
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!keywords.length && !isPending && (
+        <Card>
+          <CardContent className="flex flex-col items-center py-14 text-center gap-3">
+            <Search className="w-12 h-12 text-slate-200" />
+            <p className="text-slate-500 font-medium">Нажмите «Найти прибыльные запросы»</p>
+            <p className="text-sm text-slate-400 max-w-md">
+              AI проанализирует тематику kadastrmap.info и предложит {count} ключевых запросов,
+              отсортированных по сочетанию трафика и вероятности заказа справки
+            </p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── GenerateTopArticle ───────────────────────────────────────────────────────
+
+type TopArticleResult = {
+  keyword: string;
+  articleHtml: string;
+  metaTitle: string;
+  metaDescription: string;
+  keywords: string[];
+  faqQuestions: string[];
+  competitorCount: number;
+  avgCompetitorWords: number;
+  targetWords: number;
+  serpResults: { position: number; title: string; url: string; domain: string; snippet: string }[];
+};
+
+function buildArticlePreviewHtml(html: string, ctaUrl: string): string {
+  const ctaBlock = `<div style="text-align:center;margin:2em 0 2.5em;">
+    <a href="${ctaUrl || 'https://kadastrmap.info/spravki/'}"
+       style="display:inline-block;background:#4CAF50;color:#fff;padding:14px 40px;
+              border-radius:8px;font-size:15px;font-weight:500;text-decoration:none;">
+      Заказать справку на объект недвижимости →
+    </a>
+  </div>`;
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+  body { font-family: Georgia, serif; max-width: 780px; margin: 0 auto; padding: 32px 24px;
+         color: #1a1a1a; line-height: 1.8; font-size: 17px; background: #fff; }
+  h1 { font-size: 2em; line-height: 1.3; margin-bottom: 0.5em; color: #111; }
+  h2 { font-size: 1.4em; margin-top: 2em; margin-bottom: 0.5em; color: #111; border-bottom: 2px solid #e5e7eb; padding-bottom: 6px; }
+  h3 { font-size: 1.15em; margin-top: 1.5em; color: #222; }
+  p  { margin: 0 0 1.2em; }
+  ul, ol { padding-left: 1.5em; margin: 0 0 1.2em; }
+  li { margin-bottom: 0.4em; }
+  table { width: 100%; border-collapse: collapse; margin: 1.5em 0; font-size: 0.95em; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; }
+  th { background: #f8fafc; font-weight: 600; }
+  a  { color: #1a73e8; }
+  strong { color: #111; }
+</style></head><body>
+${html}
+${ctaBlock}
+</body></html>`;
+}
+
+function GenerateTopArticle({ initialKeyword }: { initialKeyword?: string }) {
+  const [keyword, setKeyword] = useState(initialKeyword || '');
+  const [niche, setNiche]     = useState('кадастр и недвижимость');
+
+  // Sync when parent passes a new keyword (from Keywords tab)
+  const prevInitial = useRef(initialKeyword);
+  useEffect(() => {
+    if (initialKeyword && initialKeyword !== prevInitial.current) {
+      prevInitial.current = initialKeyword;
+      setKeyword(initialKeyword);
+    }
+  }, [initialKeyword]);
+  const [result, setResult]   = useState<TopArticleResult | null>(null);
+  const [copied, setCopied]   = useState(false);
+  const [previewTab, setPreviewTab] = useState<'preview' | 'html' | 'seo' | 'serp'>('preview');
+
+  const utils = trpc.useUtils();
+
+  const { mutate: generate, isPending } = trpc.articles.generateTopArticle.useMutation({
+    onSuccess: (d) => {
+      setResult(d as TopArticleResult);
+      setPreviewTab('preview');
+      toast.success(`Статья готова! ~${d.targetWords} слов, обошли ${d.competitorCount} конкурентов`);
+    },
+    onError: (e: any) => toast.error(e?.message || 'Ошибка генерации'),
+  });
+
+  const { mutate: saveToLib, isPending: isSaving } = trpc.articles.saveToLibrary.useMutation({
+    onSuccess: () => {
+      utils.content.listPosts.invalidate();
+      toast.success('Сохранено в библиотеку контента');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Ошибка сохранения'),
+  });
+
+  function handleCopy() {
+    if (!result) return;
+    navigator.clipboard.writeText(result.articleHtml);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Form */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-green-600" />
+            Генератор статей для ТОП-3
+          </CardTitle>
+          <p className="text-sm text-slate-500">
+            Введите ключевой запрос — AI спарсит топ-5 конкурентов и напишет статью, которая их превзойдёт
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Ключевой запрос</label>
+            <div className="flex gap-3">
+              <Input
+                placeholder="Например: кадастровая стоимость квартиры"
+                value={keyword}
+                onChange={(e) => setKeyword(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && keyword.trim() && generate({ keyword: keyword.trim(), niche })}
+                className="flex-1"
+              />
+              <Button
+                onClick={() => generate({ keyword: keyword.trim(), niche })}
+                disabled={isPending || !keyword.trim()}
+                className="gap-2 min-w-[180px] bg-green-600 hover:bg-green-700"
+              >
+                {isPending
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Генерирую...</>
+                  : <><TrendingUp className="w-4 h-4" />Написать для ТОП-3</>}
+              </Button>
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-slate-500 mb-1 block">Ниша / тематика</label>
+            <Input
+              value={niche}
+              onChange={(e) => setNiche(e.target.value)}
+              placeholder="кадастр и недвижимость"
+            />
+          </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 space-y-1">
+            <p><strong>Процесс:</strong></p>
+            <p>1. Парсинг Google + Яндекс по запросу (через прокси)</p>
+            <p>2. Чтение полного контента топ-5 конкурентов</p>
+            <p>3. Генерация статьи: ≥1800 слов, HTML, FAQ, таблицы, E-E-A-T</p>
+            <p>4. Генерация мета-тегов и ключевых слов</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Loading */}
+      {isPending && (
+        <Card>
+          <CardContent className="flex flex-col items-center py-14 gap-4">
+            <Loader2 className="w-10 h-10 animate-spin text-green-500" />
+            <p className="font-medium text-slate-700">Генерирую статью для ТОП-3...</p>
+            <div className="text-sm text-slate-500 space-y-1 text-center">
+              <p>· Парсинг Google и Яндекс по запросу "{keyword}"</p>
+              <p>· Читаю контент топ-5 конкурентов</p>
+              <p>· AI пишет статью 1800+ слов с HTML-разметкой</p>
+            </div>
+            <p className="text-xs text-slate-400">Обычно занимает 30–60 сек</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Result */}
+      {result && !isPending && (
+        <div className="space-y-4">
+          {/* Stats bar */}
+          <Card className="border-green-200 bg-green-50">
+            <CardContent className="pt-4">
+              <div className="flex flex-wrap gap-4 items-center justify-between">
+                <div className="flex flex-wrap gap-3">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-green-700">{result.competitorCount}</p>
+                    <p className="text-xs text-green-600">конкурентов</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-slate-700">{result.avgCompetitorWords}</p>
+                    <p className="text-xs text-slate-500">слов у конкурентов</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-blue-700">{result.targetWords}+</p>
+                    <p className="text-xs text-blue-600">слов в нашей статье</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopy}
+                    className="gap-1.5"
+                  >
+                    {copied ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Upload className="w-4 h-4" />}
+                    {copied ? 'Скопировано!' : 'Копировать HTML'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isSaving}
+                    onClick={() => saveToLib({ title: result.metaTitle || result.keyword, content: result.articleHtml })}
+                    className="gap-1.5"
+                  >
+                    {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    В библиотеку
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => generate({ keyword: result.keyword, niche })}
+                    disabled={isPending}
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Повторить
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Content tabs */}
+          <Tabs value={previewTab} onValueChange={(v) => setPreviewTab(v as any)}>
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="preview"><Eye className="w-4 h-4 mr-1" />Предпросмотр</TabsTrigger>
+              <TabsTrigger value="html"><BookOpen className="w-4 h-4 mr-1" />HTML</TabsTrigger>
+              <TabsTrigger value="seo"><TrendingUp className="w-4 h-4 mr-1" />SEO-мета</TabsTrigger>
+              <TabsTrigger value="serp"><Search className="w-4 h-4 mr-1" />Конкуренты</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="preview">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-slate-600 flex items-center justify-between">
+                    <span>Предпросмотр с кнопками заказа</span>
+                    <Badge variant="outline" className="text-xs">kadastrmap.info/spravki/</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <iframe
+                    srcDoc={buildArticlePreviewHtml(result.articleHtml, 'https://kadastrmap.info/spravki/')}
+                    className="w-full rounded-b-lg border-0"
+                    style={{ height: '75vh', minHeight: 500 }}
+                    sandbox="allow-same-origin"
+                    title="Предпросмотр статьи"
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="html">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-slate-600 flex items-center justify-between">
+                    <span>Исходный HTML</span>
+                    <Button size="sm" variant="outline" onClick={handleCopy} className="gap-1.5 h-7 text-xs">
+                      {copied ? '✓ Скопировано' : 'Копировать'}
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <pre className="bg-slate-50 p-4 rounded-lg text-xs text-slate-700 whitespace-pre-wrap leading-relaxed max-h-[60vh] overflow-y-auto font-mono">
+                    {result.articleHtml}
+                  </pre>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="seo" className="space-y-3">
+              <Card>
+                <CardHeader className="pb-2"><CardTitle className="text-base">Мета-теги</CardTitle></CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Title ({result.metaTitle?.length || 0} симв.)</p>
+                    <div className="bg-slate-50 p-3 rounded text-sm font-medium">{result.metaTitle}</div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-400 mb-1">Meta Description ({result.metaDescription?.length || 0} симв.)</p>
+                    <div className="bg-slate-50 p-3 rounded text-sm">{result.metaDescription}</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {result.keywords?.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2"><CardTitle className="text-base">Ключевые слова и LSI</CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2">
+                      {result.keywords.map((kw, i) => <Badge key={i} variant="secondary">{kw}</Badge>)}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {result.faqQuestions?.length > 0 && (
+                <Card className="border-blue-200 bg-blue-50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <span>❓</span> FAQ-вопросы (блок "Люди также спрашивают")
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2">
+                      {result.faqQuestions.map((q, i) => (
+                        <li key={i} className="flex items-start gap-2 text-sm text-blue-800">
+                          <span className="shrink-0 font-bold text-blue-400">{i + 1}.</span>{q}
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              )}
+            </TabsContent>
+
+            <TabsContent value="serp">
+              <div className="space-y-3">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">Конкуренты по запросу "{result.keyword}"</CardTitle>
+                    <p className="text-xs text-slate-400">По их контенту была написана статья</p>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="divide-y">
+                      {result.serpResults.map((r) => (
+                        <div key={r.position} className="flex gap-3 px-4 py-3 hover:bg-slate-50">
+                          <span className="text-lg font-bold text-slate-200 w-6 shrink-0 text-center mt-0.5">{r.position}</span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-2">
+                              <a href={r.url} target="_blank" rel="noopener noreferrer"
+                                className="text-sm font-medium text-blue-700 hover:underline line-clamp-1 flex-1">{r.title}</a>
+                              <ExternalLink className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                            </div>
+                            <p className="text-xs text-green-700 truncate">{r.domain}</p>
+                            {r.snippet && <p className="text-xs text-slate-500 line-clamp-2 mt-0.5">{r.snippet}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
+
+      {!result && !isPending && (
+        <Card>
+          <CardContent className="flex flex-col items-center py-14 text-center gap-3">
+            <TrendingUp className="w-12 h-12 text-slate-200" />
+            <p className="text-slate-500 font-medium">Введите ключевой запрос и нажмите «Написать для ТОП-3»</p>
+            <p className="text-sm text-slate-400 max-w-md">
+              Инструмент спарсит Google + Яндекс, прочитает контент топ-5 конкурентов и напишет статью
+              которая их превзойдёт по объёму, структуре и покрытию тем
+            </p>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function ArticleAnalyzer() {
-  const [activeTab, setActiveTab] = useState<'analyze' | 'catalog' | 'ideas' | 'audit' | 'serp'>('catalog');
+  const [activeTab, setActiveTab] = useState<'analyze' | 'catalog' | 'ideas' | 'audit' | 'serp' | 'proxies' | 'generate' | 'keywords'>('catalog');
+  const [generateKeyword, setGenerateKeyword] = useState('');
   const [url, setUrl] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [savedPostId, setSavedPostId] = useState<number | null>(null);
@@ -2485,6 +3126,39 @@ export default function ArticleAnalyzer() {
   const [batchDone, setBatchDone] = useState(0);
 
   const utils = trpc.useUtils();
+
+  // Proxy state
+  const [proxyInput, setProxyInput] = useState('');
+  const [proxySearch, setProxySearch] = useState('');
+  const [replaceConfirm, setReplaceConfirm] = useState(false);
+
+  const { data: proxiesData, isLoading: proxiesLoading, refetch: refetchProxies } = trpc.bots.proxyList.useQuery(undefined, {
+    enabled: activeTab === 'proxies',
+  });
+  const proxyAdd = trpc.bots.proxyAdd.useMutation({
+    onSuccess: (r) => { toast.success(`Added. Total: ${r.total}`); setProxyInput(''); utils.bots.proxyList.invalidate(); },
+  });
+  const proxyReplace = trpc.bots.proxyReplace.useMutation({
+    onSuccess: (r) => { toast.success(`Replaced. Total: ${r.total}`); setProxyInput(''); setReplaceConfirm(false); utils.bots.proxyList.invalidate(); },
+  });
+  const proxyDelete = trpc.bots.proxyDelete.useMutation({
+    onSuccess: (r) => { toast.success(`Deleted. Total: ${r.total}`); utils.bots.proxyList.invalidate(); },
+  });
+
+  const proxies = proxiesData ?? [];
+  const filteredProxies = proxies.filter(
+    p => !proxySearch || p.proxy.toLowerCase().includes(proxySearch.toLowerCase())
+  );
+
+  function handleProxyAdd() {
+    if (!proxyInput.trim()) return toast.error('Вставьте прокси');
+    proxyAdd.mutate({ text: proxyInput });
+  }
+  function handleProxyReplace() {
+    if (!proxyInput.trim()) return toast.error('Вставьте прокси');
+    if (!replaceConfirm) { setReplaceConfirm(true); return; }
+    proxyReplace.mutate({ text: proxyInput });
+  }
 
   const { data: history = [], isLoading: historyLoading } = trpc.articles.getHistory.useQuery();
   const analyzedUrls = new Set(history.map(h => h.url));
@@ -2612,21 +3286,30 @@ export default function ArticleAnalyzer() {
           {/* Main area */}
           <div>
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="space-y-4">
-              <TabsList className="grid w-full grid-cols-5">
-                <TabsTrigger value="catalog">
-                  <List className="w-4 h-4 mr-1.5" />Каталог
+              <TabsList className="grid w-full grid-cols-8">
+                <TabsTrigger value="catalog" className="text-xs">
+                  <List className="w-3.5 h-3.5 mr-1" />Каталог
                 </TabsTrigger>
-                <TabsTrigger value="analyze">
-                  <Search className="w-4 h-4 mr-1.5" />Анализ
+                <TabsTrigger value="analyze" className="text-xs">
+                  <Search className="w-3.5 h-3.5 mr-1" />Анализ
                 </TabsTrigger>
-                <TabsTrigger value="serp">
-                  <TrendingUp className="w-4 h-4 mr-1.5" />SERP
+                <TabsTrigger value="keywords" className="text-xs data-[state=active]:bg-purple-600 data-[state=active]:text-white">
+                  <TrendingUp className="w-3.5 h-3.5 mr-1" />Запросы
                 </TabsTrigger>
-                <TabsTrigger value="audit">
-                  <ClipboardList className="w-4 h-4 mr-1.5" />Аудит
+                <TabsTrigger value="generate" className="text-xs data-[state=active]:bg-green-600 data-[state=active]:text-white">
+                  <BookOpen className="w-3.5 h-3.5 mr-1" />Генератор
                 </TabsTrigger>
-                <TabsTrigger value="ideas">
-                  <BookOpen className="w-4 h-4 mr-1.5" />Идеи
+                <TabsTrigger value="serp" className="text-xs">
+                  <TrendingUp className="w-3.5 h-3.5 mr-1" />SERP
+                </TabsTrigger>
+                <TabsTrigger value="audit" className="text-xs">
+                  <ClipboardList className="w-3.5 h-3.5 mr-1" />Аудит
+                </TabsTrigger>
+                <TabsTrigger value="ideas" className="text-xs">
+                  <BookOpen className="w-3.5 h-3.5 mr-1" />Идеи
+                </TabsTrigger>
+                <TabsTrigger value="proxies" className="text-xs">
+                  <Shield className="w-3.5 h-3.5 mr-1" />Прокси
                 </TabsTrigger>
               </TabsList>
 
@@ -2644,6 +3327,22 @@ export default function ArticleAnalyzer() {
                   serverBatch={serverBatch}
                   onStopServerBatch={() => stopServerBatch()}
                 />
+              </TabsContent>
+
+              {/* Keywords tab */}
+              <TabsContent value="keywords">
+                <KeywordResearch
+                  onGenerate={(kw) => {
+                    setGenerateKeyword(kw);
+                    setActiveTab('generate');
+                    toast.success(`Запрос "${kw}" передан в Генератор`);
+                  }}
+                />
+              </TabsContent>
+
+              {/* Generate tab */}
+              <TabsContent value="generate">
+                <GenerateTopArticle initialKeyword={generateKeyword} />
               </TabsContent>
 
               {/* SERP tab */}
@@ -2737,6 +3436,116 @@ export default function ArticleAnalyzer() {
                     </CardContent>
                   </Card>
                 )}
+              </TabsContent>
+
+              {/* Proxies tab */}
+              <TabsContent value="proxies">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Left: input panel */}
+                  <div className="space-y-4">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base">Добавить / Заменить прокси</CardTitle>
+                        <p className="text-sm text-slate-500">
+                          Формат: <code className="bg-slate-100 px-1 rounded text-xs">user:pass@host:port</code> — по одному на строку
+                        </p>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <Textarea
+                          className="font-mono text-xs min-h-64 resize-y"
+                          placeholder={'no2L5n:9ZOrkzA3QP@45.86.1.180:3000\nno2L5n:9ZOrkzA3QP@109.248.14.8:3000\n...'}
+                          value={proxyInput}
+                          onChange={e => { setProxyInput(e.target.value); setReplaceConfirm(false); }}
+                        />
+                        <div className="text-xs text-slate-500">
+                          {proxyInput.split('\n').filter(l => l.trim()).length} строк вставлено
+                        </div>
+                        <div className="flex gap-2">
+                          <Button className="flex-1" onClick={handleProxyAdd} disabled={proxyAdd.isPending}>
+                            {proxyAdd.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Upload className="w-4 h-4 mr-1" />}
+                            Добавить
+                          </Button>
+                          <Button
+                            variant={replaceConfirm ? 'destructive' : 'outline'}
+                            className="flex-1"
+                            onClick={handleProxyReplace}
+                            disabled={proxyReplace.isPending}
+                          >
+                            {proxyReplace.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <RotateCcw className="w-4 h-4 mr-1" />}
+                            {replaceConfirm ? 'Подтвердить замену?' : 'Заменить всё'}
+                          </Button>
+                        </div>
+                        {replaceConfirm && (
+                          <p className="text-xs text-red-600">Нажми ещё раз — текущий список будет удалён!</p>
+                        )}
+                      </CardContent>
+                    </Card>
+
+                    {/* Stats */}
+                    <Card>
+                      <CardContent className="pt-4 grid grid-cols-3 gap-3 text-center">
+                        <div>
+                          <div className="text-2xl font-bold text-slate-800">{proxies.length}</div>
+                          <div className="text-xs text-slate-500">Всего</div>
+                        </div>
+                        <div>
+                          <div className="text-2xl font-bold text-green-600">{proxies.filter(p => !p.banned).length}</div>
+                          <div className="text-xs text-slate-500">Активных</div>
+                        </div>
+                        <div>
+                          <div className="text-2xl font-bold text-red-500">{proxies.filter(p => p.banned).length}</div>
+                          <div className="text-xs text-slate-500">Забанено</div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Right: proxy list */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-center justify-between">
+                        <CardTitle className="text-base">Список прокси</CardTitle>
+                        <Button variant="ghost" size="sm" onClick={() => refetchProxies()}>
+                          <RefreshCw className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      <Input
+                        placeholder="Поиск по IP или логину..."
+                        value={proxySearch}
+                        onChange={e => setProxySearch(e.target.value)}
+                        className="mt-2"
+                      />
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      {proxiesLoading ? (
+                        <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                      ) : filteredProxies.length === 0 ? (
+                        <div className="py-8 text-center text-slate-400 text-sm">Нет прокси</div>
+                      ) : (
+                        <div className="max-h-[480px] overflow-y-auto divide-y">
+                          {filteredProxies.map(p => (
+                            <div key={p.proxy} className={`flex items-center justify-between px-4 py-2 text-xs hover:bg-slate-50 ${p.banned ? 'bg-red-50' : ''}`}>
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${p.banned ? 'bg-red-500' : 'bg-green-500'}`} />
+                                <span className="font-mono truncate text-slate-700">{p.proxy}</span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0 ml-2">
+                                {p.banned && <span className="text-red-500 text-[10px]">ban</span>}
+                                <button
+                                  className="text-slate-400 hover:text-red-500 transition-colors"
+                                  onClick={() => proxyDelete.mutate({ proxy: p.proxy })}
+                                  disabled={proxyDelete.isPending}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               </TabsContent>
             </Tabs>
           </div>

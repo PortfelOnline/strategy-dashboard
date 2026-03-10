@@ -12,7 +12,7 @@ import {
   ChevronDown, ChevronUp, History, Trash2, ExternalLink,
   List, ArrowRight, Users, Play, Square, Eye, ClipboardList,
   AlertTriangle, CheckCircle, XCircle, Filter,
-  Shield, Upload, RotateCcw, RefreshCw,
+  Shield, Upload, RotateCcw, RefreshCw, Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -1003,6 +1003,7 @@ function saveCachedArticles(articles: CatalogArticle[]) {
 function CatalogScanner({
   onAnalyze, onBatchAnalyze, analyzedUrls, isBatching, batchDone, batchTotal, onStopBatch,
   onServerBatch, serverBatch, onStopServerBatch,
+  onBatchRewrite, batchRewrite, onStopBatchRewrite,
 }: {
   onAnalyze: (url: string) => void;
   onBatchAnalyze: (urls: string[]) => void;
@@ -1014,6 +1015,9 @@ function CatalogScanner({
   onServerBatch: (urls: string[]) => void;
   serverBatch?: { running: boolean; done: number; total: number; errors: number } | null;
   onStopServerBatch: () => void;
+  onBatchRewrite: (urls: string[]) => void;
+  batchRewrite?: { running: boolean; done: number; total: number; errors: number; current: string } | null;
+  onStopBatchRewrite: () => void;
 }) {
   const [catalogUrl, setCatalogUrl] = useState('https://kadastrmap.info/kadastr/');
   const [articles, setArticles]     = useState<CatalogArticle[]>(() => loadCachedArticles());
@@ -1023,6 +1027,20 @@ function CatalogScanner({
   const [scanProgress, setScanProgress] = useState(0); // 0-100
   const [search, setSearch]         = useState('');
   const [page, setPage]             = useState(1);     // current UI page
+  const [rewriteCategory, setRewriteCategory] = useState<'egrn' | 'obremen' | 'proverka' | 'stoimost' | 'all'>('egrn');
+  const [rewriteLimit, setRewriteLimit] = useState(30);
+
+  const REWRITE_CATEGORIES = {
+    egrn:     { label: 'Справки ЕГРН',       color: 'bg-purple-100 text-purple-700 border-purple-200', match: /егрн|справк|выписк/i },
+    obremen:  { label: 'Обременение',         color: 'bg-red-100 text-red-700 border-red-200',          match: /обременен|арест|залог|ипотек/i },
+    proverka: { label: 'Проверка перед покупкой', color: 'bg-orange-100 text-orange-700 border-orange-200', match: /проверит|покупк|перед покупк/i },
+    stoimost: { label: 'Кадастровая стоимость', color: 'bg-blue-100 text-blue-700 border-blue-200',     match: /стоимост|кадастров|налог/i },
+    all:      { label: 'Все статьи',          color: 'bg-slate-100 text-slate-700 border-slate-200',    match: /.*/ },
+  } as const;
+
+  const rewriteCandidates = articles
+    .filter(a => REWRITE_CATEGORIES[rewriteCategory].match.test(a.title))
+    .slice(0, rewriteLimit);
 
   const CHUNK = 30; // pages per batch request
 
@@ -1169,6 +1187,107 @@ function CatalogScanner({
               <div className="bg-green-500 h-2 rounded-full transition-all duration-300" style={{ width: `${serverBatch.total > 0 ? Math.round((serverBatch.done / serverBatch.total) * 100) : 0}%` }} />
             </div>
             <p className="text-xs text-green-600">Вкладку можно закрыть — анализ продолжается на сервере</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── Auto-rewrite panel ────────────────────────────────────── */}
+      {articles.length > 0 && (
+        <Card className="border-violet-200">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold text-violet-800 flex items-center gap-2">
+              <Zap className="w-4 h-4" />
+              Авто-улучшение статей
+              <span className="text-xs font-normal text-slate-500">— SERP + конкуренты + 1800+ слов</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Category filter */}
+            <div className="flex flex-wrap gap-1.5">
+              {(Object.entries(REWRITE_CATEGORIES) as [typeof rewriteCategory, typeof REWRITE_CATEGORIES[typeof rewriteCategory]][]).map(([key, cat]) => {
+                const count = articles.filter(a => cat.match.test(a.title)).length;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setRewriteCategory(key)}
+                    className={`px-2.5 py-1 rounded-full text-xs border font-medium transition-all ${
+                      rewriteCategory === key
+                        ? cat.color + ' ring-2 ring-offset-1 ring-violet-400'
+                        : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {cat.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Limit selector */}
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              <span>Взять первые:</span>
+              {[10, 30, 50, 100].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setRewriteLimit(n)}
+                  className={`px-2 py-0.5 rounded border text-xs transition-all ${
+                    rewriteLimit === n
+                      ? 'bg-violet-600 text-white border-violet-600'
+                      : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+              <span className="text-slate-400">статей</span>
+            </div>
+
+            {/* Start button */}
+            <div className="flex items-center gap-2">
+              <Button
+                className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+                disabled={batchRewrite?.running || rewriteCandidates.length === 0}
+                onClick={() => {
+                  if (!confirm(`Авто-улучшение: ${rewriteCandidates.length} статей.\n\nДля каждой:\n• Парсим Google + Яндекс SERP\n• Скачиваем контент 5 конкурентов\n• LLM пишет 1800+ слов + FAQ + E-E-A-T\n\nВкладку можно закрыть. Продолжить?`)) return;
+                  onBatchRewrite(rewriteCandidates.map(a => a.url));
+                }}
+              >
+                {batchRewrite?.running
+                  ? <><Loader2 className="w-4 h-4 animate-spin" />Улучшаю...</>
+                  : <><Zap className="w-4 h-4" />Улучшить {rewriteCandidates.length} статей</>
+                }
+              </Button>
+              {batchRewrite?.running && (
+                <Button size="sm" variant="outline" onClick={onStopBatchRewrite} className="gap-1 text-xs border-red-300 text-red-600 hover:bg-red-50">
+                  <Square className="w-3 h-3" />Стоп
+                </Button>
+              )}
+            </div>
+
+            {/* Progress */}
+            {batchRewrite && (batchRewrite.running || batchRewrite.total > 0) && (
+              <div className="space-y-1.5 pt-1">
+                <div className="flex justify-between text-xs text-violet-700 font-medium">
+                  <span>
+                    {batchRewrite.done} / {batchRewrite.total} улучшено
+                    {batchRewrite.errors > 0 && <span className="text-orange-500 ml-2">({batchRewrite.errors} ошибок)</span>}
+                    {!batchRewrite.running && batchRewrite.done > 0 && <span className="text-green-600 ml-2">✓ Готово</span>}
+                  </span>
+                  <span>{batchRewrite.total > 0 ? Math.round((batchRewrite.done / batchRewrite.total) * 100) : 0}%</span>
+                </div>
+                <div className="w-full bg-violet-100 rounded-full h-2">
+                  <div
+                    className="bg-violet-500 h-2 rounded-full transition-all duration-500"
+                    style={{ width: `${batchRewrite.total > 0 ? Math.round((batchRewrite.done / batchRewrite.total) * 100) : 0}%` }}
+                  />
+                </div>
+                {batchRewrite.current && (
+                  <p className="text-xs text-slate-500 truncate">
+                    Сейчас: <span className="text-slate-700">{batchRewrite.current}</span>
+                  </p>
+                )}
+                <p className="text-xs text-violet-500">Вкладку можно закрыть — улучшение продолжается на сервере</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -3269,6 +3388,22 @@ export default function ArticleAnalyzer() {
     onSuccess: () => { toast.info('Серверный анализ остановлен'); utils.articles.getBatchStatus.invalidate(); },
   });
 
+  // Batch auto-rewrite (server-side, rewrites to 1800+ words using SERP + competitor content)
+  const { data: batchRewrite } = trpc.articles.getBatchRewriteStatus.useQuery(undefined, {
+    refetchInterval: (query) => query.state.data?.running ? 4000 : false,
+  });
+  const { mutate: startBatchRewrite } = trpc.articles.startBatchRewrite.useMutation({
+    onSuccess: (d) => {
+      if (d.started) toast.success(`Авто-улучшение запущено: ${d.total} статей. Вкладку можно закрыть.`);
+      utils.articles.getBatchRewriteStatus.invalidate();
+      utils.articles.getHistory.invalidate();
+    },
+    onError: (e) => toast.error(e?.message || 'Ошибка запуска'),
+  });
+  const { mutate: stopBatchRewrite } = trpc.articles.stopBatchRewrite.useMutation({
+    onSuccess: () => { toast.info('Авто-улучшение остановлено'); utils.articles.getBatchRewriteStatus.invalidate(); },
+  });
+
   const { mutate: analyze, isPending: isAnalyzing } = trpc.articles.analyzeUrl.useMutation({
     onSuccess: (data) => {
       setResult(data as AnalysisResult);
@@ -3415,6 +3550,9 @@ export default function ArticleAnalyzer() {
                   onServerBatch={(urls) => startServerBatch({ urls, skipAnalyzed: false })}
                   serverBatch={serverBatch}
                   onStopServerBatch={() => stopServerBatch()}
+                  onBatchRewrite={(urls) => startBatchRewrite({ urls })}
+                  batchRewrite={batchRewrite}
+                  onStopBatchRewrite={() => stopBatchRewrite()}
                 />
               </TabsContent>
 

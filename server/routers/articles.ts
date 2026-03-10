@@ -44,6 +44,19 @@ interface BatchJobState {
 
 const batchJobs = new Map<number, BatchJobState>();
 
+// ── Server-side Batch Rewrite ─────────────────────────────────────────────────
+
+interface BatchRewriteJobState {
+  total: number;
+  done: number;
+  errors: number;
+  running: boolean;
+  current: string;
+  stop: () => void;
+}
+
+const batchRewriteJobs = new Map<number, BatchRewriteJobState>();
+
 /** Extract short keyword from title (same logic as frontend extractKeyword) */
 function extractKeywordFromTitle(title: string): string {
   if (!title) return '';
@@ -239,6 +252,114 @@ async function runBatchJob(userId: number, urls: string[]): Promise<void> {
   await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
   state.running = false;
   setTimeout(() => { if (!batchJobs.get(userId)?.running) batchJobs.delete(userId); }, 30 * 60 * 1000);
+}
+
+async function rewriteArticle(userId: number, url: string): Promise<void> {
+  const parsed = await parseArticleFromUrl(url);
+  const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+  const keyword = extractKeywordFromTitle(parsed.title);
+
+  const [googleSerp, yandexSerp] = await Promise.all([
+    fetchGoogleSerp(keyword).catch(() => ({ results: [] as any[], error: '' })),
+    fetchYandexSerp(keyword).catch(() => ({ results: [] as any[], error: '' })),
+  ]);
+
+  const mergedSerp = [...googleSerp.results, ...yandexSerp.results]
+    .filter((r, i, arr) => r.url && arr.findIndex(x => x.url === r.url) === i);
+
+  const competitors = await fetchCompetitorArticles(mergedSerp, ourDomain, 5);
+  const avgCompetitorWords = competitors.length
+    ? Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length) : 1200;
+  const targetWords = Math.max(1800, avgCompetitorWords + 200);
+
+  const competitorContext = competitors.length
+    ? competitors.map(c =>
+        `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content}`
+      ).join('\n\n')
+    : 'Данные конкурентов недоступны';
+
+  const [seoResponse, improvedResponse] = await Promise.all([
+    invokeLLM({
+      messages: [
+        { role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON.' },
+        { role: 'user', content: `Ты SEO-эксперт. Проанализируй статью и верни JSON:\nЗаголовок: ${parsed.title}\nКлюч: ${keyword}\nОбъём: ${parsed.wordCount} слов\n\nВерни ТОЛЬКО валидный JSON:\n{"metaTitle":"до 60 симв","metaDescription":"до 160 симв","keywords":["ключ1"],"headingsSuggestions":[],"generalSuggestions":["совет"],"score":75}` },
+      ],
+    }),
+    invokeLLM({
+      messages: [
+        { role: 'system', content: 'Ты SEO-копирайтер. Пишешь длинные полные статьи для топа поиска. Всегда пиши HTML.' },
+        { role: 'user', content: `Ключ: "${keyword}"\n\nНаша статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 3000)}\n\nКОНКУРЕНТЫ (средний объём: ${avgCompetitorWords} слов):\n${competitorContext}\n\nТРЕБОВАНИЯ:\n1. Минимум ${targetWords} слов\n2. HTML: H1, H2 (6-10), H3, p, ul, ol, table\n3. Прямой ответ на "${keyword}" в начале (featured snippet)\n4. Покрой ВСЕ темы конкурентов\n5. FAQ H2 с 5+ вопросами-ответами\n6. E-E-A-T: факты, числа, законы, сроки, стоимости\n7. CTA: упомяни заказ справки онлайн на kadastrmap.info\n\nВерни ТОЛЬКО HTML без <html>/<body>.` },
+      ],
+      maxTokens: 8192,
+    }),
+  ]);
+
+  let seo: SeoAnalysis;
+  try {
+    const seoRaw = typeof seoResponse.choices[0]?.message.content === 'string'
+      ? seoResponse.choices[0].message.content.trim() : '{}';
+    seo = JSON.parse(seoRaw.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim());
+  } catch {
+    seo = { metaTitle: parsed.title, metaDescription: parsed.metaDescription, keywords: [], headingsSuggestions: [], generalSuggestions: [], score: 0 };
+  }
+
+  const improvedContent = typeof improvedResponse.choices[0]?.message.content === 'string'
+    ? improvedResponse.choices[0].message.content.trim() : parsed.content;
+
+  const findPos = (results: { domain: string }[]) => {
+    if (!ourDomain) return null;
+    const idx = results.findIndex(r => r.domain.includes(ourDomain) || ourDomain.includes(r.domain));
+    return idx >= 0 ? idx + 1 : null;
+  };
+
+  await articlesDb.saveArticleAnalysis(userId, {
+    url,
+    originalTitle: parsed.title,
+    originalContent: parsed.content,
+    wordCount: parsed.wordCount,
+    improvedTitle: seo.metaTitle || parsed.title,
+    improvedContent,
+    metaTitle: seo.metaTitle || null,
+    metaDescription: seo.metaDescription || null,
+    keywords: JSON.stringify(seo.keywords || []),
+    generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
+    headings: JSON.stringify(parsed.headings || []),
+    seoScore: seo.score || 0,
+    serpKeyword: keyword || null,
+    googlePos: findPos(googleSerp.results),
+    yandexPos: findPos(yandexSerp.results),
+  });
+}
+
+async function runBatchRewrite(userId: number, urls: string[]): Promise<void> {
+  let stopped = false;
+  const queue = [...urls];
+  const state: BatchRewriteJobState = {
+    total: urls.length,
+    done: 0,
+    errors: 0,
+    running: true,
+    current: '',
+    stop: () => { stopped = true; },
+  };
+  batchRewriteJobs.set(userId, state);
+
+  // Sequential (1 at a time) to avoid hammering SERP proxies
+  while (!stopped && queue.length > 0) {
+    const url = queue.shift()!;
+    state.current = url;
+    try {
+      await rewriteArticle(userId, url);
+    } catch (err) {
+      console.error(`[BatchRewrite] Failed: ${url}`, err);
+      state.errors++;
+    }
+    state.done++;
+  }
+
+  state.running = false;
+  state.current = '';
+  setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1428,6 +1549,43 @@ ${competitorSection}
           ourTitlesAnalyzed: input.ourTitles.length,
         },
       };
+    }),
+
+  /**
+   * Start auto-rewrite batch: fetch SERP, fetch competitor content, rewrite to 1800+ words, save.
+   */
+  startBatchRewrite: protectedProcedure
+    .input(z.object({
+      urls: z.array(z.string().url()).min(1).max(500),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const existing = batchRewriteJobs.get(userId);
+      if (existing?.running) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'Авто-улучшение уже запущено' });
+      }
+
+      runBatchRewrite(userId, input.urls).catch(err => {
+        console.error('[BatchRewrite] Fatal error:', err);
+        const job = batchRewriteJobs.get(userId);
+        if (job) job.running = false;
+      });
+
+      return { started: true, total: input.urls.length };
+    }),
+
+  getBatchRewriteStatus: protectedProcedure
+    .query(async ({ ctx }) => {
+      const job = batchRewriteJobs.get(ctx.user.id);
+      if (!job) return { running: false, done: 0, total: 0, errors: 0, current: '' };
+      return { running: job.running, done: job.done, total: job.total, errors: job.errors, current: job.current };
+    }),
+
+  stopBatchRewrite: protectedProcedure
+    .mutation(async ({ ctx }) => {
+      const job = batchRewriteJobs.get(ctx.user.id);
+      if (job) { job.stop(); job.running = false; }
+      return { stopped: true };
     }),
 
 });

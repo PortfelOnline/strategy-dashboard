@@ -352,7 +352,7 @@ function PublishToSiteDialog({
   });
   const [accountId, setAccountId] = useState<number | null>(null);
   const [generateImage, setGenerateImage] = useState(true);
-  const [result, setResult] = useState<{ link: string; ctaTexts: string[]; imagesUploaded: number } | null>(null);
+  const [result, setResult] = useState<{ link: string; ctaTexts: string[]; imagesUploaded: number; metaDescription?: string } | null>(null);
 
   const { data: accounts = [] } = trpc.wordpress.getAccounts.useQuery();
 
@@ -388,6 +388,7 @@ function PublishToSiteDialog({
               <p className="text-green-800 font-medium mb-1">✓ Статья успешно обновлена</p>
               {result.imagesUploaded > 0 && <p className="text-green-600 text-sm">· Загружено картинок: {result.imagesUploaded}</p>}
               <p className="text-green-600 text-sm">· Добавлено 3 кнопки конверсии</p>
+              {result.metaDescription && <p className="text-green-600 text-sm">· Yoast meta description обновлён</p>}
             </div>
             <div>
               <p className="text-xs text-slate-500 mb-2">Тексты кнопок:</p>
@@ -486,6 +487,30 @@ function AnalysisPanel({
   const [overriddenAt, setOverriddenAt] = useState<Date | null>(null);
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [articleCopied, setArticleCopied] = useState(false);
+  const [draftLink, setDraftLink] = useState<string | null>(null);
+
+  const { data: wpAccounts = [] } = trpc.wordpress.getAccounts.useQuery();
+  const firstAccountId = wpAccounts[0]?.id ?? null;
+
+  const { mutate: createDraft, isPending: isDraftPending } = trpc.articles.createDraftRevision.useMutation({
+    onSuccess: (d) => {
+      setDraftLink(d.editUrl);
+      window.open(d.editUrl, '_blank');
+      toast.success('Черновик создан — открыт в WP Admin');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Ошибка создания черновика'),
+  });
+
+  const handleCreateDraft = () => {
+    if (!firstAccountId) { toast.error('Нет WP аккаунта'); return; }
+    createDraft({
+      accountId: firstAccountId,
+      originalUrl,
+      title: result.improvedTitle,
+      content: displayContent,
+      ctaUrl: localStorage.getItem('publish_cta_url') || 'https://kadastrmap.info/spravki/',
+    });
+  };
 
   const displayContent = overriddenContent ?? result.improvedContent;
 
@@ -521,6 +546,16 @@ function AnalysisPanel({
           <Button variant="outline" size="sm" disabled={!savedPostId} onClick={onWpOpen} className="gap-1">
             <Globe className="w-4 h-4" />
             В WordPress
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1 border-amber-400 text-amber-700 hover:bg-amber-50"
+            onClick={draftLink ? () => window.open(draftLink, '_blank') : handleCreateDraft}
+            disabled={isDraftPending}
+          >
+            {isDraftPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
+            {draftLink ? 'Открыть черновик' : 'Черновик'}
           </Button>
           <Button
             size="sm"

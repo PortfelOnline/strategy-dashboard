@@ -102,7 +102,7 @@ export async function updatePost(
   username: string,
   appPassword: string,
   postId: number,
-  data: { title?: string; content?: string; featured_media?: number }
+  data: { title?: string; content?: string; featured_media?: number; categories?: number[]; meta?: Record<string, string> }
 ): Promise<WpPost> {
   try {
     const response = await axios.post(

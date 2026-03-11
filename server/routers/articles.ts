@@ -1,6 +1,7 @@
 import { router, protectedProcedure } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import * as cheerio from "cheerio";
 import { parseArticleFromUrl, scanCatalog } from "../_core/articleParser";
 import { fetchGoogleSerp, fetchYandexSerp, SerpData } from "../_core/serpParser";
 import { invokeLLM } from "../_core/llm";
@@ -412,7 +413,9 @@ ${competitorContext}
   }
 
   const improvedContent = typeof improvedResponse.choices[0]?.message.content === 'string'
-    ? improvedResponse.choices[0].message.content.trim() : parsed.content;
+    ? improvedResponse.choices[0].message.content.trim()
+        .replace(/^```html?\s*/i, '').replace(/\s*```$/i, '').trim()
+    : parsed.content;
 
   const improvedWordCount = improvedContent
     ? improvedContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length
@@ -1386,7 +1389,7 @@ ${competitorContext}
       accountId:   z.number(),
       originalUrl: z.string().url(),
       title:       z.string(),
-      content:     z.string(),  // plain text (improved)
+      content:     z.string(),  // HTML content (improved)
       ctaUrl:      z.string().url(),
       generateImage: z.boolean().default(true),
     }))
@@ -1405,14 +1408,18 @@ ${competitorContext}
 
       // 4. In parallel: generate CTA texts + 3 DALL-E images
       const noText = `NO text, NO letters, NO words, NO labels, NO watermarks, NO inscriptions anywhere in the image.`;
-      const basePrompt = `Professional photorealistic illustration for an article about "${input.title}". Russian real estate, cadastre, property documents. Wide-format photo. ${noText}`;
+      const imgSubjectPub = input.title
+        .replace(/^Заказать\s+|^Как\s+|^Что\s+такое\s+|^Получить\s+/i, '')
+        .replace(/\s+в\s+Москве$/i, '')
+        .replace(/:\s*.+$/, '')
+        .trim();
       const imagePrompts = [
-        basePrompt,
-        `Aerial top-down view of Russian land plots and cadastral map boundaries, satellite-style photography, clean and detailed. ${noText}`,
-        `Official Russian property documents, certificates with stamps on a desk, business setting, natural lighting. ${noText}`,
+        `Photorealistic wide-format photo: friendly real estate agent and client shaking hands in a bright modern office, large windows, plants, neutral interior. No text, no signs, no screens, no documents visible.`,
+        `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. No text, no labels, no overlays.`,
+        `Photorealistic close-up: a person's hands holding a set of keys over a wooden desk with a blurred laptop and coffee cup in the background, warm natural light. No text, no screens, no signs.`,
       ];
 
-      const [ctaResponse, ...imageResults] = await Promise.all([
+      const [ctaResponse, metaResponse, ...imageResults] = await Promise.all([
         invokeLLM({
           messages: [
             { role: 'system', content: 'Ты копирайтер. Пишешь короткие призывы к действию для кнопок.' },
@@ -1424,6 +1431,17 @@ ${competitorContext}
 ["текст кнопки 1", "текст кнопки 2", "текст кнопки 3"]` },
           ],
         }),
+        invokeLLM({
+          messages: [
+            { role: 'system', content: 'Ты SEO-копирайтер. Пишешь meta description для страниц. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через kadastrmap.info.' },
+            { role: 'user', content: `Заголовок: "${input.title}"
+
+Напиши meta description для этой страницы (130–155 символов).
+Должен содержать ключевой запрос, выгоду и CTA «заказать на kadastrmap.info».
+Верни ТОЛЬКО строку без кавычек и markdown.` },
+          ],
+          maxTokens: 200,
+        }).catch(() => null),
         ...(input.generateImage
           ? imagePrompts.map((p) =>
               generateDallEImage(p).catch((e) => { console.error('[Articles] DALL-E failed:', e.message); return null; })
@@ -1446,6 +1464,17 @@ ${competitorContext}
         if (Array.isArray(parsed) && parsed.length === 3) ctaTexts = parsed;
       } catch { /* use defaults */ }
 
+      // Parse meta description
+      const metaDescription: string | undefined = (() => {
+        try {
+          const raw = typeof metaResponse?.choices[0]?.message.content === 'string'
+            ? metaResponse.choices[0].message.content.trim().replace(/^["']|["']$/g, '')
+            : '';
+          return raw.length > 20 ? raw : undefined;
+        } catch { return undefined; }
+      })();
+      if (metaDescription) console.log(`[Articles] Generated meta: ${metaDescription}`);
+
       // 5. Upload all generated images to WP media
       const imageUrls = imageResults as (string | null)[];
       const uploadedMedia: ({ id: number; url: string } | null)[] = await Promise.all(
@@ -1463,14 +1492,14 @@ ${competitorContext}
         })
       );
 
-      // 6. Convert content → HTML + inject CTAs
+      // 6. Inject CTAs into existing HTML after H2 headings (at ~1/3, ~2/3, and end)
       const ctaBlock = (text: string) =>
         `\n<div style="text-align:center;margin:2em 0 2.5em;">` +
         `<a href="${input.ctaUrl}" style="display:inline-block;background:#4CAF50;color:#fff;` +
         `padding:16px 48px;border-radius:8px;font-size:16px;font-weight:500;text-decoration:none;">` +
         `${text}</a></div>\n`;
 
-      let htmlContent = plainTextToHtmlWithCTAs(input.content, ctaTexts, ctaBlock);
+      let htmlContent = injectCtasIntoHtml(beautifyArticleHtml(input.content), ctaTexts, ctaBlock);
 
       // 7. Inject content images after H2 tags (2nd, 4th, 6th occurrence)
       const validMedia = uploadedMedia.filter(Boolean) as { id: number; url: string }[];
@@ -1495,17 +1524,160 @@ ${competitorContext}
         account.siteUrl, account.username, account.appPassword,
         post.id,
         {
-          title: input.title,
-          content: htmlContent,
+          title:      input.title,
+          content:    htmlContent,
+          categories: detectCategoryIds(input.originalUrl),
           ...(featuredMediaId ? { featured_media: featuredMediaId } : {}),
         }
       );
+
+      // Update Yoast meta via custom endpoint
+      if (metaDescription) {
+        const siteBase = account.siteUrl.replace(/\/$/, '');
+        const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+        const axiosInst2 = (await import('axios')).default;
+        await axiosInst2.post(
+          `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}`,
+          { meta: { _yoast_wpseo_metadesc: metaDescription } },
+          { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
+        ).catch((e: any) => console.warn('[Articles] Yoast meta update failed:', e?.message));
+      }
 
       return {
         success: true,
         link: updated.link,
         imagesUploaded: validMedia.length,
+        metaDescription,
         ctaTexts,
+      };
+    }),
+
+  /**
+   * Create a Revisionize draft copy of an existing post for review before publishing
+   */
+  createDraftRevision: protectedProcedure
+    .input(z.object({
+      accountId:   z.number(),
+      originalUrl: z.string().url(),
+      title:       z.string(),
+      content:     z.string(),  // HTML content (improved)
+      ctaUrl:      z.string().url(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const account = await wordpressDb.getWordpressAccountById(ctx.user.id, input.accountId);
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'WordPress аккаунт не найден' });
+
+      const slug = new URL(input.originalUrl).pathname.replace(/\/$/, '').split('/').pop() || '';
+      if (!slug) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Не удалось извлечь slug из URL' });
+
+      const original = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);
+      if (!original) throw new TRPCError({ code: 'NOT_FOUND', message: `Статья "${slug}" не найдена` });
+
+      // Generate Yoast meta + focus keyword in parallel with draft setup
+      const siteBase = account.siteUrl.replace(/\/$/, '');
+      const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+      const categories = detectCategoryIds(input.originalUrl);
+
+      // Focus keyword: extract from Russian title (strip action verbs and location suffixes)
+      const focusKeyword = input.title
+        .replace(/^Заказать\s+|^Как\s+|^Что\s+такое\s+|^Получить\s+/i, '')
+        .replace(/\s+в\s+Москве$/i, '')
+        .replace(/:\s*.+$/, '')  // remove subtitle after colon
+        .trim();
+
+      // Derive short subject for context-specific prompt
+      const imgSubject = focusKeyword || input.title;
+      const imagePrompts = [
+        `Photorealistic wide-format photo: friendly real estate agent and client shaking hands in a bright modern office, large windows, plants, neutral interior. No text, no signs, no screens, no documents visible.`,
+        `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. No text, no labels, no overlays.`,
+        `Photorealistic close-up: a person's hands holding a set of keys over a wooden desk with a blurred laptop and coffee cup in the background, warm natural light. No text, no screens, no signs.`,
+      ];
+
+      // Run meta LLM + DALL-E images in parallel
+      const [metaResp, ...imageResults] = await Promise.all([
+        invokeLLM({
+          messages: [
+            { role: 'system', content: 'Ты SEO-копирайтер. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через kadastrmap.info.' },
+            { role: 'user', content: `Заголовок: "${input.title}"\nФокусный ключ: "${focusKeyword}"\n\nНапиши meta description (130–155 символов). Включи ключевой запрос и CTA «заказать на kadastrmap.info». Верни ТОЛЬКО строку без кавычек.` },
+          ],
+          maxTokens: 200,
+        }).catch(() => null),
+        ...imagePrompts.map(p =>
+          generateDallEImage(p).catch((e: any) => { console.warn('[Draft] DALL-E failed:', e?.message); return null; })
+        ),
+      ]);
+
+      let metaDesc: string | undefined;
+      try {
+        const raw = metaResp?.choices[0]?.message.content;
+        if (typeof raw === 'string' && raw.trim().length > 20) metaDesc = raw.trim().replace(/^["']|["']$/g, '');
+      } catch { /* ignore */ }
+
+      const axiosInst = (await import('axios')).default;
+      const headers = { Authorization: auth, 'Content-Type': 'application/json' };
+
+      // Upload images to WP media
+      const uploadedMedia: ({ id: number; url: string } | null)[] = await Promise.all(
+        (imageResults as (string | null)[]).map(async (imgUrl, i) => {
+          if (!imgUrl) return null;
+          try { return await wp.uploadMediaFromUrl(account.siteUrl, account.username, account.appPassword, imgUrl, `${slug}-img-${i + 1}.jpg`); }
+          catch (e: any) { console.warn(`[Draft] media upload ${i + 1} failed:`, e?.message); return null; }
+        })
+      );
+      const validMedia = uploadedMedia.filter(Boolean) as { id: number; url: string }[];
+
+      // Inject images after H2 (2nd, 4th, 6th) and CTA at end
+      let html = beautifyArticleHtml(input.content);
+      if (validMedia.length > 0) {
+        let h2count = 0;
+        html = html.replace(/<\/h2>/gi, () => {
+          h2count++;
+          const targets: Record<number, number> = { 2: 0, 4: 1, 6: 2 };
+          const mi = targets[h2count];
+          if (mi !== undefined && validMedia[mi]) {
+            return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${validMedia[mi].url}" alt="${input.title}" style="max-width:100%;height:auto;border-radius:8px;" loading="lazy"></figure>`;
+          }
+          return '</h2>';
+        });
+      }
+      const ctaHtml = `\n<div style="text-align:center;margin:2em 0 2.5em;"><a href="${input.ctaUrl}" style="display:inline-block;background:#4CAF50;color:#fff;padding:16px 48px;border-radius:8px;font-size:16px;font-weight:500;text-decoration:none;">Заказать документ онлайн</a></div>\n`;
+      const finalHtml = html + ctaHtml;
+
+      const featuredMediaId = validMedia[0]?.id;
+
+      const { data: draft } = await axiosInst.post(
+        `${siteBase}/wp-json/wp/v2/posts`,
+        {
+          title:   input.title,
+          slug:    `${slug}-draft-rev`,
+          content: finalHtml,
+          status:  'draft',
+          categories,
+          ...(featuredMediaId ? { featured_media: featuredMediaId } : {}),
+          meta: { _revisionize_revision_for: String(original.id) },
+        },
+        { headers }
+      );
+
+      // Update Yoast meta via custom endpoint
+      const yoastMeta: Record<string, string> = {};
+      if (metaDesc)     yoastMeta._yoast_wpseo_metadesc = metaDesc;
+      if (focusKeyword) yoastMeta._yoast_wpseo_focuskw  = focusKeyword;
+      if (Object.keys(yoastMeta).length > 0) {
+        await axiosInst.post(
+          `${siteBase}/wp-json/kadastrmap/v1/post-meta/${draft.id}`,
+          { meta: yoastMeta },
+          { headers }
+        ).catch((e: any) => console.warn('[Draft] Yoast meta update failed:', e?.message));
+      }
+
+      return {
+        draftId:        draft.id as number,
+        editUrl:        `${siteBase}/wp-admin/post.php?post=${draft.id}&action=edit`,
+        originalId:     original.id,
+        imagesUploaded: validMedia.length,
+        focusKeyword,
+        metaDesc,
       };
     }),
 
@@ -2042,6 +2214,108 @@ ${competitorSection}
 // ROUTER_END — do not remove this marker
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Detect WP category ID based on article URL path
+ * /novosti/ → 1 (Новости)
+ * /kadastr/ → 2 (Кадастр)  — default
+ */
+function detectCategoryIds(url: string): number[] {
+  const path = new URL(url).pathname;
+  if (path.includes('/novosti/')) return [1];
+  return [2]; // kadastr by default
+}
+
+/**
+ * Post-process article HTML to add visual styling:
+ * - <ol> steps → numbered cards with colored step circles
+ * - <ul> with <strong> items → green checkmark cards
+ * - plain <ul> → styled bullet list with accent color
+ * - [!TIP] / "Важно:" patterns → yellow info-box
+ */
+function beautifyArticleHtml(html: string): string {
+  const $ = cheerio.load(html, { xml: { decodeEntities: false } });
+
+  // 1. Styled <ol> — step-by-step cards
+  $('ol').each((_: number, ol: any) => {
+    const items = $(ol).find('> li');
+    if (items.length === 0) return;
+    let stepsHtml = '<div style="margin:1.5em 0;">';
+    items.each((idx: number, li: any) => {
+      const text = $(li).html() || '';
+      stepsHtml +=
+        `<div style="display:flex;align-items:flex-start;gap:14px;padding:12px 16px;` +
+        `margin-bottom:10px;background:#f8fafc;border-radius:10px;border:1px solid #e2e8f0;">` +
+        `<span style="flex-shrink:0;width:32px;height:32px;border-radius:50%;background:#16a34a;` +
+        `color:#fff;font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center;">${idx + 1}</span>` +
+        `<span style="padding-top:5px;font-size:15px;line-height:1.6;">${text}</span>` +
+        `</div>`;
+    });
+    stepsHtml += '</div>';
+    $(ol).replaceWith(stepsHtml);
+  });
+
+  // 2. All <ul> → checkmark benefit cards
+  $('ul').each((_: number, ul: any) => {
+    const items = $(ul).find('> li');
+    if (items.length === 0) return;
+    let cardsHtml = '<div style="margin:1.5em 0;">';
+    items.each((_idx: number, li: any) => {
+      const text = $(li).html() || '';
+      cardsHtml +=
+        `<div style="display:flex;align-items:flex-start;gap:12px;padding:10px 14px;` +
+        `margin-bottom:8px;background:#f0fdf4;border-left:4px solid #22c55e;border-radius:0 8px 8px 0;">` +
+        `<span style="color:#16a34a;font-size:18px;flex-shrink:0;line-height:1.5;">✓</span>` +
+        `<span style="font-size:15px;line-height:1.6;">${text}</span>` +
+        `</div>`;
+    });
+    cardsHtml += '</div>';
+    $(ul).replaceWith(cardsHtml);
+  });
+
+  // 4. Detect "Важно:" / "Обратите внимание" → yellow info-box
+  $('p').each((_: number, p: any) => {
+    const text = $(p).text();
+    if (/^(важно|обратите внимание|примечание|внимание)[:\s!]/i.test(text.trim())) {
+      const inner = $(p).html() || '';
+      const box =
+        `<div style="background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;` +
+        `padding:12px 16px;margin:1.5em 0;font-size:15px;line-height:1.7;">` +
+        `<span style="font-size:18px;margin-right:8px;">⚠️</span>${inner}</div>`;
+      $(p).replaceWith(box);
+    }
+  });
+
+  return ($.root().html() || '').trim();
+}
+
+/**
+ * Inject CTA buttons into existing HTML after H2 tags (at ~1/3, ~2/3, end)
+ */
+function injectCtasIntoHtml(
+  html: string,
+  ctaTexts: string[],
+  ctaBlock: (text: string) => string
+): string {
+  // Split at </h2> to find injection points
+  const parts = html.split('</h2>');
+  if (parts.length <= 2) {
+    // Few headings — inject at end only
+    return html + ctaBlock(ctaTexts[2] || ctaTexts[0]);
+  }
+
+  const total = parts.length - 1; // number of </h2> occurrences
+  const pos1 = Math.max(1, Math.floor(total / 3));
+  const pos2 = Math.max(pos1 + 1, Math.floor((total * 2) / 3));
+
+  return parts.reduce((acc, part, i) => {
+    if (i === parts.length - 1) return acc + part + ctaBlock(ctaTexts[2] || ctaTexts[0]);
+    const closing = '</h2>';
+    if (i === pos1 - 1) return acc + part + closing + ctaBlock(ctaTexts[0]);
+    if (i === pos2 - 1) return acc + part + closing + ctaBlock(ctaTexts[1] || ctaTexts[0]);
+    return acc + part + closing;
+  }, '');
+}
 
 function plainTextToHtmlWithCTAs(
   text: string,

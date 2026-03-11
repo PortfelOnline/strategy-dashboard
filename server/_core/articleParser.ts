@@ -123,17 +123,35 @@ export interface ParsedArticle {
 /**
  * Fetch a URL and extract article content using cheerio
  */
-export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
-  const response = await axios.get(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; ContentAnalyzer/1.0)',
-      'Accept': 'text/html',
-    },
-    timeout: 25000,
-    maxRedirects: 5,
-  });
+const UA_LIST = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (compatible; ContentAnalyzer/1.0)',
+];
 
-  const html: string = response.data;
+export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
+  let lastError: any;
+  for (let attempt = 0; attempt < UA_LIST.length; attempt++) {
+    try {
+      const response = await axios.get(url, {
+        headers: {
+          'User-Agent': UA_LIST[attempt],
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+        },
+        timeout: 45000,
+        maxRedirects: 5,
+      });
+      return parseHtml(url, response.data as string);
+    } catch (err: any) {
+      lastError = err;
+      console.warn(`[articleParser] attempt ${attempt + 1} failed for ${url}: ${err?.message}`);
+    }
+  }
+  throw lastError;
+}
+
+function parseHtml(url: string, html: string): ParsedArticle {
   const $ = cheerio.load(html);
 
   // Remove noise — keep <header> because WP puts <h1 class="entry-title"> inside it

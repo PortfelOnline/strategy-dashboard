@@ -10,6 +10,113 @@ import { botsRouter } from "./routers/bots";
 import { wordpressRouter } from "./routers/wordpress";
 import { articlesRouter } from "./routers/articles";
 
+// ─── Content generation helpers ────────────────────────────────────────────
+
+const CONTENT_SYSTEM_PROMPT = `You are a high-converting social media copywriter for get-my-agent.com.
+Product: AI chatbot for Indian small businesses on WhatsApp, Instagram, and websites.
+Pricing: from ₹999/month. Key features: 24/7 instant replies (<3 seconds), automatic lead capture to CRM.
+Target audience: Indian small business owners — retail shops, e-commerce, real estate, restaurants, service businesses.
+
+Rules:
+- Write ONLY in English. No Hindi, Hinglish, or regional language words.
+- Be direct and conversion-focused. Every word should move the reader toward action.
+- Use specific ₹ amounts and numbers to make benefits tangible.
+- CRITICAL: Respond with valid JSON only. No markdown code fences. No explanation text outside the JSON object.`;
+
+const PILLAR_CONTEXT = {
+  desi_business_owner: {
+    hook: "Your competitor just replied to that customer enquiry. You didn't.",
+    painPoint: "Indian SMBs miss 25-40% of customer messages outside business hours, losing sales to whoever responds first",
+    proof: "78% of customers buy from the first business that responds to their inquiry",
+    solution: "AI agent replies to every WhatsApp/Instagram message in under 3 seconds, 24/7 — even at 3am on Sundays",
+  },
+  five_minute_transformation: {
+    hook: "Set up a 24/7 AI sales agent in less time than it takes to finish your chai",
+    painPoint: "Most business owners think AI is complex, expensive, and requires a tech team — so they delay and keep losing leads",
+    proof: "Average setup takes under 10 minutes. No coding. No IT team. First automated reply the same day.",
+    solution: "Connect WhatsApp or Instagram, customise your responses, go live — one-time setup, runs itself forever",
+  },
+  roi_calculator: {
+    hook: "₹999/month vs ₹15,000-30,000/month. Same job. Which would you choose?",
+    painPoint: "Hiring customer service staff is expensive, unreliable, and still leaves gaps — nights, weekends, holidays",
+    proof: "Customers save an average ₹14,000+/month while handling 3x more customer conversations",
+    solution: "AI handles unlimited conversations for a flat monthly fee — no salary, no benefits, no sick days",
+  },
+} as const;
+
+const FORMAT_SCHEMAS = {
+  carousel: `Create a 6-slide Instagram Carousel. Return exactly this JSON (no other text):
+{
+  "slides": [
+    {"num": 1, "label": "Cover", "headline": "scroll-stopping headline 6 words max", "sub": "compelling subtitle 10 words max"},
+    {"num": 2, "label": "The Problem", "headline": "relatable problem statement", "points": ["specific pain point 1", "specific pain point 2", "specific pain point 3"]},
+    {"num": 3, "label": "The Reality", "headline": "reality-check headline", "stat": "shocking specific statistic", "context": "one sentence of context"},
+    {"num": 4, "label": "The Solution", "headline": "solution headline", "points": ["benefit 1 with ₹ or number", "benefit 2 with ₹ or number", "benefit 3 with ₹ or number"]},
+    {"num": 5, "label": "Results", "headline": "results headline", "quote": "compelling proof point or customer result", "source": "type of business owner"},
+    {"num": 6, "label": "Get Started", "headline": "action-oriented headline", "sub": "Try free → get-my-agent.com"}
+  ],
+  "caption": "Instagram caption — hook sentence, value prop, CTA — 150 chars max",
+  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "WhatsAppBusiness", "BusinessTips", "IndianEntrepreneur", "DigitalIndia", "GetMyAgent", "AIAgent", "SmallBusiness", "CustomerService"]
+}`,
+
+  reel: `Create a 30-45 second Instagram Reel script. Return exactly this JSON (no other text):
+{
+  "sections": [
+    {"time": "0:00-0:03", "label": "HOOK", "visual": "what is shown on screen", "audio": "exact shocking opening words or text"},
+    {"time": "0:03-0:12", "label": "PROBLEM", "visual": "visual demonstration idea", "audio": "relatable pain point in 2 sentences"},
+    {"time": "0:12-0:25", "label": "SOLUTION", "visual": "product demo description", "audio": "how AI agent solves it with specifics"},
+    {"time": "0:25-0:35", "label": "PROOF", "visual": "numbers or results shown on screen", "audio": "specific result or stat"},
+    {"time": "0:35-0:45", "label": "CTA", "visual": "website URL on screen", "audio": "single clear action"}
+  ],
+  "voiceover": "complete 45-second spoken script as one continuous paragraph",
+  "text_overlays": ["overlay 1", "overlay 2", "overlay 3", "overlay 4", "overlay 5"],
+  "caption": "reel caption — hook + CTA",
+  "hashtags": ["Reels", "IndiaSmallBusiness", "AIForBusiness", "BusinessTips", "GetMyAgent", "AIAgent", "WhatsAppMarketing", "IndianEntrepreneur", "DigitalMarketing", "GrowthHack"]
+}`,
+
+  story: `Create a 3-frame Instagram Story sequence. Return exactly this JSON (no other text):
+{
+  "frames": [
+    {"num": 1, "label": "Hook", "emoji": "relevant emoji", "main_text": "4-word max bold statement", "sub_text": "supporting detail one line"},
+    {"num": 2, "label": "Content", "emoji": "relevant emoji", "main_text": "content headline", "sub_text": "brief context", "list": ["key point 1", "key point 2", "key point 3"]},
+    {"num": 3, "label": "CTA", "emoji": "🚀", "main_text": "action headline", "sub_text": "get-my-agent.com", "button_text": "Try Free →"}
+  ],
+  "poll": {"question": "engaging poll question", "yes": "Yes option text", "no": "No option text"},
+  "question_sticker": "open question to drive DMs"
+}`,
+
+  feed_post: `Create an Instagram Feed Post. Return exactly this JSON (no other text):
+{
+  "hook": "first line that stops the scroll — one punchy sentence max 10 words",
+  "paragraphs": [
+    "paragraph 1: establish the pain point — 2-3 sentences",
+    "paragraph 2: introduce the solution with specifics — 2-3 sentences",
+    "paragraph 3: add proof or overcome main objection — 2-3 sentences"
+  ],
+  "cta": "single clear action sentence",
+  "caption": "full ready-to-post caption with hook + body + CTA, 300 words max, line breaks between paragraphs",
+  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "WhatsAppBusiness", "BusinessTips", "IndianEntrepreneur", "DigitalIndia", "GetMyAgent", "AIAgent", "SmallBusiness", "CustomerService", "BusinessAutomation", "StartupIndia", "SalesAgent", "ChatbotIndia", "BusinessGrowth"]
+}`,
+} as const;
+
+function buildGenerationPrompt(
+  pillarType: keyof typeof PILLAR_CONTEXT,
+  contentFormat: keyof typeof FORMAT_SCHEMAS,
+  customPrompt?: string
+): string {
+  const pillar = PILLAR_CONTEXT[pillarType];
+  const schema = FORMAT_SCHEMAS[contentFormat];
+  return `${schema}
+
+Content angle:
+- Hook: ${pillar.hook}
+- Pain point: ${pillar.painPoint}
+- Proof/stat: ${pillar.proof}
+- Solution: ${pillar.solution}${customPrompt ? `\n- Extra instructions: ${customPrompt}` : ""}`;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+
 export const appRouter = router({
   system: systemRouter,
   meta: metaRouter,
@@ -32,61 +139,46 @@ export const appRouter = router({
       .input(z.object({
         pillarType: z.enum(["desi_business_owner", "five_minute_transformation", "roi_calculator"]),
         platform: z.enum(["facebook", "instagram", "whatsapp", "youtube"]),
-        language: z.enum(["hinglish", "hindi", "english", "tamil", "telugu", "bengali"]).default("hinglish"),
+        contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).default("carousel"),
+        language: z.enum(["hinglish", "hindi", "english", "tamil", "telugu", "bengali"]).default("english"),
         customPrompt: z.string().optional(),
       }))
       .mutation(async ({ ctx, input }) => {
-        const isYouTube = input.platform === "youtube";
-
-        const prompts: Record<string, Record<string, string>> = {
-          facebook: {
-            desi_business_owner: "Write a Facebook post for Indian business owners using Hinglish humor. Show the struggle of missing customer messages at night vs having an AI agent. Add a relatable story hook (e.g. 'Raat 2 baje ek message aaya...'). Include call-to-action. Under 200 words.",
-            five_minute_transformation: `Write a Facebook post showing how to set up an AI consultant in 5 minutes. Step-by-step, use language: ${input.language}. Add excitement and a free trial CTA. Under 200 words.`,
-            roi_calculator: "Write a Facebook post comparing hiring staff (₹15,000-30,000/month) vs AI agent (₹999/month). Use 'Paisa Vasool' angle. Include ROI math. Under 200 words.",
-          },
-          instagram: {
-            desi_business_owner: "Write an Instagram Reel script for Indian SMBs. Hinglish, funny, hook in first 3 seconds. Show customer service struggle vs AI. Include text overlays idea and hashtags. Under 150 words.",
-            five_minute_transformation: `Write an Instagram Reel script: 5-minute AI setup demo. Fast cuts, timer visible, language: ${input.language}. End with free trial link. Under 150 words.`,
-            roi_calculator: "Write an Instagram carousel caption about cost savings: staff vs AI agent ₹999/month. Use bold stats, emojis, Hinglish. Under 150 words.",
-          },
-          whatsapp: {
-            desi_business_owner: "Write a WhatsApp Business broadcast message for Indian shop owners. Casual, short, in Hinglish. Show how AI handles customer queries 24/7. Include a WhatsApp demo link. Under 100 words.",
-            five_minute_transformation: `Write a WhatsApp Business message: 'Set up your AI agent in 5 minutes'. Language: ${input.language}. Conversational tone, include free trial link. Under 100 words.`,
-            roi_calculator: "Write a WhatsApp broadcast about ROI: compare cost of missed leads vs ₹999/month AI. Add urgency. Under 100 words.",
-          },
-          youtube: {
-            desi_business_owner: `Write a YouTube Shorts script (max 60 sec) for Indian business owners. Hook in first 2 seconds. Use Hinglish humor about missing customer messages. Show before/after with Get My Agent. End with subscribe CTA. Format: [HOOK] [PROBLEM] [SOLUTION] [CTA]. Language: ${input.language}.`,
-            five_minute_transformation: `Write a full YouTube video script (5-7 min) showing complete AI agent setup demo. Structured: intro hook, step-by-step setup (paste code → agent live), results, CTA to free trial. Language: ${input.language}. Include suggested title, description, and tags.`,
-            roi_calculator: `Write a YouTube Shorts script (max 60 sec) about ROI: hiring staff ₹15,000-30,000/month vs AI ₹999/month. Use a calculator visual idea. Language: ${input.language}. Format: [HOOK] [MATH] [PUNCHLINE] [CTA]. Include suggested title and 10 tags.`,
-          },
-        };
-
-        const platformPrompts = prompts[input.platform] || prompts.instagram;
-        const basePrompt = platformPrompts[input.pillarType];
-
-        const systemPrompt = isYouTube
-          ? "You are a YouTube content strategist for the Indian market. Create engaging video scripts, optimized titles, descriptions, and tags that help Indian business owners understand the value of AI. Use cultural references and relatable examples."
-          : "You are a social media content expert for the Indian market. Create engaging, viral-worthy content that resonates with Indian business owners. Use cultural references, humor, and local language preferences. Always include relevant hashtags and emojis.";
-
-        const userPrompt = input.customPrompt || basePrompt;
+        const userPrompt = buildGenerationPrompt(
+          input.pillarType as keyof typeof PILLAR_CONTEXT,
+          input.contentFormat as keyof typeof FORMAT_SCHEMAS,
+          input.customPrompt
+        );
 
         const response = await invokeLLM({
           messages: [
-            { role: "system", content: systemPrompt },
+            { role: "system", content: CONTENT_SYSTEM_PROMPT },
             { role: "user", content: userPrompt },
           ],
         });
 
-        const contentText = typeof response.choices[0]?.message.content === 'string' 
-          ? response.choices[0].message.content 
+        const contentText = typeof response.choices[0]?.message.content === "string"
+          ? response.choices[0].message.content
           : "";
-        
-        const hashtagMatch = contentText.match(/#\w+/g);
-        const hashtags = hashtagMatch ? hashtagMatch.join(" ") : "#GetMyAgent #AI #IndianBusiness";
+
+        let parsed: any = null;
+        try {
+          const jsonStr = contentText.replace(/^```json\s*|\s*```$/g, "").trim();
+          parsed = JSON.parse(jsonStr);
+        } catch {
+          // LLM didn't return valid JSON — caller falls back to raw text
+        }
+
+        const hashtags =
+          (Array.isArray(parsed?.hashtags) ? parsed.hashtags.map((h: string) => (h.startsWith("#") ? h : `#${h}`)).join(" ") : null)
+          ?? contentText.match(/#\w+/g)?.join(" ")
+          ?? "#GetMyAgent #AI #IndianBusiness";
 
         return {
           content: contentText,
+          parsed,
           hashtags,
+          format: input.contentFormat,
           platform: input.platform,
           language: input.language,
           pillarType: input.pillarType,

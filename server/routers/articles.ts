@@ -231,6 +231,18 @@ async function enhanceIfNeeded(html: string, keyword: string): Promise<string> {
     : html + '\n' + addition;
 }
 
+// ── Extract headings from generated HTML ─────────────────────────────────────
+function extractHeadingsFromHtml(html: string): { level: string; text: string }[] {
+  const results: { level: string; text: string }[] = [];
+  const re = /<(h[1-4])[^>]*>([\s\S]*?)<\/\1>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const text = m[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (text) results.push({ level: m[1].toUpperCase(), text });
+  }
+  return results;
+}
+
 // ── Normalize heading hierarchy (H1→H2 for all headings after the first H1) ─
 function normalizeHeadings(html: string): string {
   let h1Count = 0;
@@ -859,7 +871,7 @@ ${missingTopicsBlock}${lsiBlock}
           metaDescription: seo.metaDescription || null,
           keywords: JSON.stringify(seo.keywords || []),
           generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
-          headings: JSON.stringify(parsed.headings || []),
+          headings: JSON.stringify(extractHeadingsFromHtml(improvedContent)),
           seoScore: seo.score || 0,
           serpKeyword: serpKeyword || null,
           googlePos: findPos(googleSerp.results),
@@ -874,7 +886,7 @@ ${missingTopicsBlock}${lsiBlock}
         originalTitle: parsed.title,
         originalContent: parsed.content,
         originalMetaDescription: parsed.metaDescription,
-        headings: parsed.headings,
+        headings: extractHeadingsFromHtml(improvedContent),
         wordCount: improvedWordCount,
         improvedTitle: seo.metaTitle || parsed.title,
         improvedContent,

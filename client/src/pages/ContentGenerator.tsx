@@ -5,17 +5,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Copy, Download, Sparkles, RefreshCw } from 'lucide-react';
+import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import DashboardLayout from '@/components/DashboardLayout';
 
 type PillarType = 'desi_business_owner' | 'five_minute_transformation' | 'roi_calculator';
 type Platform = 'facebook' | 'instagram' | 'whatsapp' | 'youtube';
 type ContentFormat = 'carousel' | 'reel' | 'story' | 'feed_post';
+type Industry = 'retail' | 'real_estate' | 'restaurant' | 'ecommerce' | 'coaching' | 'services';
+type ContentAngle = 'standard' | 'pov' | 'transformation' | 'comparison' | 'objection' | 'story';
 
 const PILLARS = {
-  desi_business_owner: { icon: '😅', title: 'Relatable Business Owner', desc: 'Missed messages, lost leads, competitor won' },
-  five_minute_transformation: { icon: '⏱️', title: '5-Minute Setup', desc: 'Simple, fast, live today' },
+  desi_business_owner: { icon: '😅', title: 'Relatable Owner', desc: 'Missed messages, competitor won' },
+  five_minute_transformation: { icon: '⏱️', title: '5-Min Setup', desc: 'Simple, fast, live today' },
   roi_calculator: { icon: '💰', title: 'ROI Calculator', desc: '₹999/mo vs ₹15,000+/mo staff' },
 } as const;
 
@@ -31,6 +33,24 @@ const FORMATS: { key: ContentFormat; icon: string; label: string; desc: string }
   { key: 'reel', icon: '🎬', label: 'Reel Script', desc: '30-45 sec' },
   { key: 'story', icon: '📱', label: 'Story', desc: '3 frames' },
   { key: 'feed_post', icon: '📝', label: 'Feed Post', desc: 'Single post' },
+];
+
+const INDUSTRIES: { key: Industry; icon: string; label: string }[] = [
+  { key: 'retail', icon: '👗', label: 'Retail / Clothing' },
+  { key: 'real_estate', icon: '🏠', label: 'Real Estate' },
+  { key: 'restaurant', icon: '🍽️', label: 'Restaurant' },
+  { key: 'ecommerce', icon: '📦', label: 'E-commerce' },
+  { key: 'coaching', icon: '📚', label: 'Coaching' },
+  { key: 'services', icon: '🔧', label: 'Services' },
+];
+
+const ANGLES: { key: ContentAngle; icon: string; label: string; desc: string }[] = [
+  { key: 'standard', icon: '🎯', label: 'Standard', desc: 'Direct conversion' },
+  { key: 'pov', icon: '👁️', label: 'POV Story', desc: 'First-person' },
+  { key: 'transformation', icon: '✨', label: 'Before/After', desc: 'Day 1 vs Day 30' },
+  { key: 'comparison', icon: '⚖️', label: '₹ Comparison', desc: 'Side-by-side math' },
+  { key: 'objection', icon: '🛡️', label: 'Objection Busting', desc: 'Flip common fears' },
+  { key: 'story', icon: '📖', label: 'Mini Story', desc: 'Named protagonist' },
 ];
 
 // ─── Preview sub-components ──────────────────────────────────────────────────
@@ -80,11 +100,8 @@ function CarouselPreview({ data }: { data: any }) {
 function ReelPreview({ data }: { data: any }) {
   if (!data?.sections) return null;
   const labelColors: Record<string, string> = {
-    HOOK: 'bg-red-500',
-    PROBLEM: 'bg-orange-500',
-    SOLUTION: 'bg-blue-600',
-    PROOF: 'bg-green-600',
-    CTA: 'bg-purple-600',
+    HOOK: 'bg-red-500', PROBLEM: 'bg-orange-500',
+    SOLUTION: 'bg-blue-600', PROOF: 'bg-green-600', CTA: 'bg-purple-600',
   };
   return (
     <div className="space-y-3">
@@ -120,11 +137,11 @@ function ReelPreview({ data }: { data: any }) {
 
 function StoryPreview({ data }: { data: any }) {
   if (!data?.frames) return null;
-  const frameBgs = ['from-blue-900 to-blue-700', 'from-slate-900 to-blue-900', 'from-blue-600 to-cyan-500'];
+  const bgs = ['from-blue-900 to-blue-700', 'from-slate-900 to-blue-900', 'from-blue-600 to-cyan-500'];
   return (
     <div className="space-y-3">
       {data.frames.map((f: any, i: number) => (
-        <div key={f.num} className={`rounded-2xl bg-gradient-to-br ${frameBgs[i] ?? frameBgs[0]} p-5 text-white shadow-lg`}>
+        <div key={f.num} className={`rounded-2xl bg-gradient-to-br ${bgs[i] ?? bgs[0]} p-5 text-white shadow-lg`}>
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold bg-white/10 px-2 py-0.5 rounded-full">Frame {f.num}: {f.label}</span>
             <span className="text-2xl">{f.emoji}</span>
@@ -182,10 +199,23 @@ function FeedPreview({ data }: { data: any }) {
   );
 }
 
-function RawPreview({ content }: { content: string }) {
+function HookVariants({ hooks, onSelect }: { hooks: any[]; onSelect: (h: string) => void }) {
+  if (!hooks.length) return null;
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-      <p className="text-sm text-slate-700 whitespace-pre-wrap">{content}</p>
+    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+      <p className="text-xs font-semibold text-amber-700 uppercase mb-3">⚡ Hook Variants — pick one for Custom Instructions</p>
+      <div className="space-y-2">
+        {hooks.map((h: any, i: number) => (
+          <button
+            key={i}
+            onClick={() => onSelect(h.text)}
+            className="w-full text-left rounded-lg bg-white border border-amber-200 px-3 py-2 hover:border-amber-400 hover:bg-amber-50 transition-all group"
+          >
+            <span className="text-xs font-semibold text-amber-600 block mb-0.5">{h.style}</span>
+            <span className="text-sm text-slate-800 group-hover:text-slate-900">{h.text}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -196,6 +226,8 @@ export default function ContentGenerator() {
   const [selectedPillar, setSelectedPillar] = useState<PillarType>('roi_calculator');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('instagram');
   const [contentFormat, setContentFormat] = useState<ContentFormat>('carousel');
+  const [industry, setIndustry] = useState<Industry>('retail');
+  const [contentAngle, setContentAngle] = useState<ContentAngle>('standard');
   const [customPrompt, setCustomPrompt] = useState('');
 
   const [generatedContent, setGeneratedContent] = useState('');
@@ -203,29 +235,42 @@ export default function ContentGenerator() {
   const [currentFormat, setCurrentFormat] = useState<ContentFormat>('carousel');
   const [generatedHashtags, setGeneratedHashtags] = useState('');
   const [postTitle, setPostTitle] = useState('');
+  const [hookVariants, setHookVariants] = useState<any[]>([]);
 
   const generateMutation = trpc.content.generatePost.useMutation();
   const saveMutation = trpc.content.savePost.useMutation();
+  const hooksMutation = trpc.content.generateHooks.useMutation();
 
   const handleGenerate = async () => {
+    setHookVariants([]);
     try {
       const result = await generateMutation.mutateAsync({
         pillarType: selectedPillar,
         platform: selectedPlatform,
         contentFormat,
+        industry,
+        contentAngle,
         language: 'english',
         customPrompt: customPrompt || undefined,
       });
-
       setGeneratedContent(result.content);
       setParsedContent(result.parsed ?? null);
       setCurrentFormat(result.format as ContentFormat);
       setGeneratedHashtags(result.hashtags);
-      setPostTitle(`${PILLARS[selectedPillar].title} · ${FORMATS.find(f => f.key === contentFormat)?.label} · ${new Date().toLocaleDateString()}`);
+      setPostTitle(`${INDUSTRIES.find(i => i.key === industry)?.label} · ${PILLARS[selectedPillar].title} · ${FORMATS.find(f => f.key === contentFormat)?.label}`);
       toast.success('Content generated!');
-    } catch (error) {
+    } catch {
       toast.error('Failed to generate content');
-      console.error(error);
+    }
+  };
+
+  const handleGetHooks = async () => {
+    try {
+      const result = await hooksMutation.mutateAsync({ pillarType: selectedPillar, industry });
+      setHookVariants(result.hooks);
+      toast.success('5 hook variants ready!');
+    } catch {
+      toast.error('Failed to generate hooks');
     }
   };
 
@@ -251,10 +296,7 @@ export default function ContentGenerator() {
   };
 
   const handleCopy = () => {
-    const text = parsedContent
-      ? `${generatedContent}\n\n${generatedHashtags}`
-      : `${generatedContent}\n\n${generatedHashtags}`;
-    navigator.clipboard.writeText(text);
+    navigator.clipboard.writeText(`${generatedContent}\n\n${generatedHashtags}`);
     toast.success('Copied!');
   };
 
@@ -265,116 +307,134 @@ export default function ContentGenerator() {
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">Content Generator</h1>
-          <p className="text-lg text-slate-600">Create viral-worthy content for get-my-agent.com</p>
+          <p className="text-lg text-slate-600">Viral-worthy content for get-my-agent.com — specific to your industry</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Generator Panel */}
-          <div className="lg:col-span-2">
-            <Card className="shadow-lg">
-              <CardHeader className="bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-t-lg">
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5" />
-                  Generate Content
-                </CardTitle>
-                <CardDescription className="text-blue-100">English · Indian SMB audience · get-my-agent.com</CardDescription>
-              </CardHeader>
-              <CardContent className="pt-6 space-y-6">
+          <div className="lg:col-span-2 space-y-4">
 
-                {/* Content Pillar */}
+            {/* Row 1: Pillar + Platform */}
+            <Card className="shadow-sm">
+              <CardContent className="pt-5 space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-slate-900 mb-3">Content Pillar</label>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
                     {(Object.entries(PILLARS) as [PillarType, any][]).map(([key, p]) => (
-                      <button
-                        key={key}
-                        onClick={() => setSelectedPillar(key)}
-                        className={`p-4 rounded-lg border-2 transition-all text-left ${
-                          selectedPillar === key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'
-                        }`}
-                      >
-                        <div className="text-2xl mb-2">{p.icon}</div>
-                        <div className="font-semibold text-slate-900 text-sm">{p.title}</div>
-                        <div className="text-xs text-slate-500 mt-1">{p.desc}</div>
+                      <button key={key} onClick={() => setSelectedPillar(key)}
+                        className={`p-3 rounded-lg border-2 transition-all text-left ${selectedPillar === key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'}`}>
+                        <div className="text-xl mb-1">{p.icon}</div>
+                        <div className="font-semibold text-slate-900 text-xs">{p.title}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{p.desc}</div>
                       </button>
                     ))}
                   </div>
                 </div>
-
-                {/* Platform */}
                 <div>
                   <label className="block text-sm font-semibold text-slate-900 mb-3">Platform</label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-4 gap-2">
                     {(Object.entries(PLATFORMS) as [Platform, string][]).map(([key, label]) => (
-                      <button
-                        key={key}
-                        onClick={() => setSelectedPlatform(key)}
-                        className={`p-3 rounded-lg border-2 transition-all font-medium text-sm ${
-                          selectedPlatform === key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'
-                        }`}
-                      >
+                      <button key={key} onClick={() => setSelectedPlatform(key)}
+                        className={`p-2.5 rounded-lg border-2 transition-all font-medium text-xs ${selectedPlatform === key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'}`}>
                         {label}
                       </button>
                     ))}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
 
-                {/* Content Format */}
+            {/* Row 2: Industry */}
+            <Card className="shadow-sm border-orange-100">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold text-slate-900">🏪 Industry</CardTitle>
+                <CardDescription className="text-xs">Makes content specific to this type of business — not generic</CardDescription>
+              </CardHeader>
+              <CardContent className="px-5 pb-5">
+                <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                  {INDUSTRIES.map(ind => (
+                    <button key={ind.key} onClick={() => setIndustry(ind.key)}
+                      className={`p-2.5 rounded-lg border-2 transition-all text-center ${industry === ind.key ? 'border-orange-500 bg-orange-50' : 'border-slate-200 bg-white hover:border-orange-300'}`}>
+                      <div className="text-xl mb-1">{ind.icon}</div>
+                      <div className="text-xs font-medium text-slate-700 leading-tight">{ind.label}</div>
+                    </button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Row 3: Format + Angle */}
+            <Card className="shadow-sm">
+              <CardContent className="pt-5 space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-slate-900 mb-3">Content Format</label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     {FORMATS.map(f => (
-                      <button
-                        key={f.key}
-                        onClick={() => setContentFormat(f.key)}
-                        className={`p-3 rounded-lg border-2 transition-all text-left ${
-                          contentFormat === f.key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'
-                        }`}
-                      >
+                      <button key={f.key} onClick={() => setContentFormat(f.key)}
+                        className={`p-3 rounded-lg border-2 transition-all text-left ${contentFormat === f.key ? 'border-blue-600 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-400'}`}>
                         <div className="text-xl mb-1">{f.icon}</div>
-                        <div className="font-semibold text-slate-900 text-sm">{f.label}</div>
+                        <div className="font-semibold text-slate-900 text-xs">{f.label}</div>
                         <div className="text-xs text-slate-500">{f.desc}</div>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Custom Prompt */}
                 <div>
-                  <label className="block text-sm font-semibold text-slate-900 mb-2">Custom Instructions (optional)</label>
+                  <label className="block text-sm font-semibold text-slate-900 mb-1">Content Angle
+                    <span className="ml-2 text-xs font-normal text-slate-500">— narrative style</span>
+                  </label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {ANGLES.map(a => (
+                      <button key={a.key} onClick={() => setContentAngle(a.key)}
+                        className={`p-2.5 rounded-lg border-2 transition-all text-left ${contentAngle === a.key ? 'border-purple-500 bg-purple-50' : 'border-slate-200 bg-white hover:border-purple-300'}`}>
+                        <span className="text-lg mr-1">{a.icon}</span>
+                        <span className="font-semibold text-slate-900 text-xs">{a.label}</span>
+                        <div className="text-xs text-slate-500 mt-0.5">{a.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Row 4: Custom + Actions */}
+            <Card className="shadow-sm">
+              <CardContent className="pt-5 space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-900 mb-2">Custom Instructions
+                    <span className="ml-2 text-xs font-normal text-slate-500">(optional)</span>
+                  </label>
                   <Textarea
-                    placeholder="e.g. Focus on real estate agents, mention ₹999 pricing, add urgency..."
+                    placeholder="e.g. Focus on saree shops, mention Diwali season, target Tier-2 cities..."
                     value={customPrompt}
                     onChange={e => setCustomPrompt(e.target.value)}
-                    className="min-h-20 text-sm"
+                    className="min-h-16 text-sm"
                   />
                 </div>
 
-                {/* Buttons */}
-                <div className="flex gap-3">
-                  <Button
-                    onClick={handleGenerate}
-                    disabled={generateMutation.isPending}
-                    className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold py-3"
-                  >
-                    {generateMutation.isPending ? (
-                      <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</>
-                    ) : (
-                      <><Sparkles className="w-4 h-4 mr-2" />Generate</>
-                    )}
+                {/* Hook variants */}
+                {hookVariants.length > 0 && (
+                  <HookVariants hooks={hookVariants} onSelect={text => setCustomPrompt(`Start with this hook: "${text}"`)} />
+                )}
+
+                <div className="flex gap-2">
+                  <Button onClick={handleGenerate} disabled={generateMutation.isPending}
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold">
+                    {generateMutation.isPending
+                      ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</>
+                      : <><Sparkles className="w-4 h-4 mr-2" />Generate</>}
                   </Button>
                   {hasContent && (
-                    <Button
-                      onClick={handleGenerate}
-                      disabled={generateMutation.isPending}
-                      variant="outline"
-                      className="px-4"
-                      title="Regenerate"
-                    >
+                    <Button onClick={handleGenerate} disabled={generateMutation.isPending} variant="outline" className="px-3" title="Regenerate">
                       <RefreshCw className={`w-4 h-4 ${generateMutation.isPending ? 'animate-spin' : ''}`} />
                     </Button>
                   )}
+                  <Button onClick={handleGetHooks} disabled={hooksMutation.isPending} variant="outline" className="px-3 border-amber-300 text-amber-700 hover:bg-amber-50" title="Get 5 hook variants">
+                    {hooksMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                  </Button>
                 </div>
+                {!hasContent && <p className="text-xs text-slate-400 text-center">⚡ = get 5 hook options before generating</p>}
               </CardContent>
             </Card>
           </div>
@@ -382,8 +442,8 @@ export default function ContentGenerator() {
           {/* Preview Panel */}
           <div className="lg:col-span-1">
             <Card className="shadow-lg sticky top-4 max-h-[calc(100vh-6rem)] flex flex-col">
-              <CardHeader className="bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-t-lg flex-shrink-0">
-                <CardTitle className="flex items-center justify-between">
+              <CardHeader className="bg-gradient-to-r from-orange-600 to-orange-700 text-white rounded-t-lg flex-shrink-0 py-3">
+                <CardTitle className="flex items-center justify-between text-base">
                   <span>Preview</span>
                   {hasContent && (
                     <Badge variant="secondary" className="text-xs bg-white/20 text-white border-0">
@@ -391,7 +451,7 @@ export default function ContentGenerator() {
                     </Badge>
                   )}
                 </CardTitle>
-                <CardDescription className="text-orange-100">Generated content</CardDescription>
+                <CardDescription className="text-orange-100 text-xs">Generated content</CardDescription>
               </CardHeader>
               <CardContent className="pt-4 flex-1 overflow-y-auto">
                 {hasContent ? (
@@ -401,7 +461,6 @@ export default function ContentGenerator() {
                       <Input value={postTitle} onChange={e => setPostTitle(e.target.value)} className="mt-1 text-xs" />
                     </div>
 
-                    {/* Format-aware preview */}
                     {parsedContent ? (
                       <>
                         {currentFormat === 'carousel' && <CarouselPreview data={parsedContent} />}
@@ -410,10 +469,11 @@ export default function ContentGenerator() {
                         {currentFormat === 'feed_post' && <FeedPreview data={parsedContent} />}
                       </>
                     ) : (
-                      <RawPreview content={generatedContent} />
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-sm text-slate-700 whitespace-pre-wrap">{generatedContent}</p>
+                      </div>
                     )}
 
-                    {/* Hashtags */}
                     {generatedHashtags && (
                       <div>
                         <label className="text-xs font-semibold text-slate-500 uppercase">Hashtags</label>
@@ -425,28 +485,28 @@ export default function ContentGenerator() {
                       </div>
                     )}
 
-                    {/* Actions */}
                     <div className="space-y-2 pt-2 border-t">
                       <Button onClick={handleCopy} variant="outline" className="w-full text-sm">
                         <Copy className="w-4 h-4 mr-2" />Copy
                       </Button>
-                      <Button
-                        onClick={handleSave}
-                        disabled={saveMutation.isPending}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm"
-                      >
-                        {saveMutation.isPending ? (
-                          <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
-                        ) : (
-                          <><Download className="w-4 h-4 mr-2" />Save Draft</>
-                        )}
+                      <Button onClick={handleSave} disabled={saveMutation.isPending}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm">
+                        {saveMutation.isPending
+                          ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+                          : <><Download className="w-4 h-4 mr-2" />Save Draft</>}
                       </Button>
                     </div>
                   </div>
                 ) : (
                   <div className="text-center py-12">
                     <div className="text-5xl mb-3">✨</div>
-                    <p className="text-sm text-slate-500">Choose a pillar, platform and format,<br />then hit Generate.</p>
+                    <p className="text-sm text-slate-500 mb-4">Select industry + angle,<br />then Generate.</p>
+                    <div className="text-left bg-slate-50 rounded-lg p-3 space-y-1">
+                      <p className="text-xs font-semibold text-slate-600">Pro tips:</p>
+                      <p className="text-xs text-slate-500">⚡ Hit ⚡ for 5 hooks first</p>
+                      <p className="text-xs text-slate-500">📖 "Mini Story" gets most engagement</p>
+                      <p className="text-xs text-slate-500">⚖️ "₹ Comparison" converts best</p>
+                    </div>
                   </div>
                 )}
               </CardContent>

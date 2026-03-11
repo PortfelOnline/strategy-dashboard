@@ -14,105 +14,225 @@ import { articlesRouter } from "./routers/articles";
 
 const CONTENT_SYSTEM_PROMPT = `You are a high-converting social media copywriter for get-my-agent.com.
 Product: AI chatbot for Indian small businesses on WhatsApp, Instagram, and websites.
-Pricing: from ₹999/month. Key features: 24/7 instant replies (<3 seconds), automatic lead capture to CRM.
-Target audience: Indian small business owners — retail shops, e-commerce, real estate, restaurants, service businesses.
-
+Pricing: from ₹999/month. Features: 24/7 instant replies (<3 seconds), automatic lead capture to CRM, all platforms.
 Rules:
 - Write ONLY in English. No Hindi, Hinglish, or regional language words.
-- Be direct and conversion-focused. Every word should move the reader toward action.
-- Use specific ₹ amounts and numbers to make benefits tangible.
-- CRITICAL: Respond with valid JSON only. No markdown code fences. No explanation text outside the JSON object.`;
+- Be specific: use the exact industry, scenario, and ₹ amounts provided — do NOT genericise.
+- Make content feel real and relatable, not like a marketing brochure.
+- CRITICAL: Respond with valid JSON only. No markdown code fences. No text outside the JSON.`;
+
+// ── Industries ──────────────────────────────────────────────────────────────
+
+const INDUSTRY_CONTEXT = {
+  retail: {
+    label: "Retail / Clothing",
+    owner: "retail shop owner",
+    scenario: "A customer DMs your Instagram at 10pm: 'Is this kurta available in size L? What's the price?' You're asleep. By morning, they've already ordered from a competitor.",
+    painSpecific: "Retail shop owners get 60-70% of product enquiries outside business hours — evenings, Sundays, holidays",
+    lossPerMiss: "₹500–5,000 per missed order",
+    industryHashtags: ["RetailIndia", "FashionBusiness", "OnlineShopping"],
+  },
+  real_estate: {
+    label: "Real Estate",
+    owner: "real estate agent",
+    scenario: "A buyer WhatsApps: 'Interested in the 2BHK you posted. Still available? What's the price?' You see it 4 hours later. Their agent already showed them 3 properties.",
+    painSpecific: "Real estate agents miss 30-40% of property enquiries because leads come at all hours — buyers don't wait",
+    lossPerMiss: "₹10,000–50,000 per missed lead (brokerage)",
+    industryHashtags: ["RealEstateIndia", "PropertyIndia", "HomeBuying"],
+  },
+  restaurant: {
+    label: "Restaurant / Cafe",
+    owner: "restaurant owner",
+    scenario: "Someone DMs at 7pm: 'Do you have a table for 4 tonight at 8?' You're in the kitchen managing orders. They book somewhere else.",
+    painSpecific: "Restaurants lose 20-30% of potential bookings and delivery orders to slow response times during peak hours",
+    lossPerMiss: "₹800–3,000 per missed table",
+    industryHashtags: ["RestaurantIndia", "FoodBusiness", "CafeOwner"],
+  },
+  ecommerce: {
+    label: "E-commerce",
+    owner: "e-commerce seller",
+    scenario: "A customer asks: 'Will this deliver before Diwali? What's the return policy?' at 2am. No reply. They buy from Amazon instead.",
+    painSpecific: "E-commerce sellers on Instagram and WhatsApp lose significant sales when they're offline — buyers want instant answers",
+    lossPerMiss: "₹300–2,000 per missed order",
+    industryHashtags: ["EcommerceIndia", "OnlineBusiness", "InstagramShopping"],
+  },
+  coaching: {
+    label: "Coaching / Tuition",
+    owner: "coaching center owner",
+    scenario: "A parent WhatsApps at 9pm: 'Do you have seats for Class 10 Maths? What are the fees and batch timings?' No reply that night. They enrol their child elsewhere by morning.",
+    painSpecific: "Coaching centers lose 40% of admission enquiries to response delays during peak seasons (March, June, October)",
+    lossPerMiss: "₹5,000–15,000 per missed admission",
+    industryHashtags: ["CoachingIndia", "TuitionCenter", "EducationBusiness"],
+  },
+  services: {
+    label: "Services",
+    owner: "service business owner",
+    scenario: "A customer WhatsApps: 'Can you come tomorrow for AC repair? Rough cost?' You're on a job. They call 3 more numbers. Someone else gets the booking.",
+    painSpecific: "Service businesses lose jobs daily to whoever responds first — 67% of customers contact multiple providers simultaneously",
+    lossPerMiss: "₹500–5,000 per missed booking",
+    industryHashtags: ["ServiceBusiness", "HomeServices", "LocalBusiness"],
+  },
+} as const;
+
+// ── Content angles ──────────────────────────────────────────────────────────
+
+const ANGLE_CONTEXT = {
+  standard: {
+    label: "Standard",
+    instruction: "Lead with the specific industry pain point, show the exact cost of inaction, introduce the solution with concrete ₹ numbers, end with CTA.",
+  },
+  pov: {
+    label: "POV Story",
+    instruction: "Write in POV format — first-person story from the perspective of the business owner discovering and using the AI agent. Use 'POV:' as the hook. Make it feel like a real person sharing their experience, not an ad.",
+  },
+  transformation: {
+    label: "Before / After",
+    instruction: "Write a dramatic Before vs After or 'Day 1 vs Day 30' transformation. Be hyper-specific about the change: exact numbers, exact scenarios. The contrast should be jarring and undeniable.",
+  },
+  comparison: {
+    label: "₹ Comparison",
+    instruction: "Write a direct side-by-side comparison post: 'Option A vs Option B'. Use a table or bullet format. Make the math brutally obvious. The reader should feel slightly foolish for not switching sooner.",
+  },
+  objection: {
+    label: "Objection Busting",
+    instruction: "Start with the most common fear or objection in this industry ('But AI can't understand my customers' / 'My clients prefer talking to a real person' / 'I'm not tech-savvy'). Then systematically dismantle it with specific facts. Flip the script completely.",
+  },
+  story: {
+    label: "Mini Story",
+    instruction: "Write a mini-story with a named Indian protagonist (Rahul, Priya, Amit, etc.) who runs the specified business. Beginning: the painful moment. Middle: they discover the solution. End: specific measurable result 30 days later. Make it feel like a real testimonial.",
+  },
+} as const;
+
+// ── Pillar context ───────────────────────────────────────────────────────────
 
 const PILLAR_CONTEXT = {
   desi_business_owner: {
-    hook: "Your competitor just replied to that customer enquiry. You didn't.",
-    painPoint: "Indian SMBs miss 25-40% of customer messages outside business hours, losing sales to whoever responds first",
-    proof: "78% of customers buy from the first business that responds to their inquiry",
-    solution: "AI agent replies to every WhatsApp/Instagram message in under 3 seconds, 24/7 — even at 3am on Sundays",
+    hook: "Your competitor just replied to that customer. You didn't.",
+    focus: "emotional relatability — the daily struggle of missing messages, losing to faster competitors",
+    proof: "78% of customers buy from the first business that responds",
   },
   five_minute_transformation: {
-    hook: "Set up a 24/7 AI sales agent in less time than it takes to finish your chai",
-    painPoint: "Most business owners think AI is complex, expensive, and requires a tech team — so they delay and keep losing leads",
-    proof: "Average setup takes under 10 minutes. No coding. No IT team. First automated reply the same day.",
-    solution: "Connect WhatsApp or Instagram, customise your responses, go live — one-time setup, runs itself forever",
+    hook: "Set up a 24/7 AI sales agent in less time than it takes to finish your chai.",
+    focus: "speed and simplicity — show how fast and easy the setup is, destroy the 'too complicated' objection",
+    proof: "10 minutes from signup to first automated reply. No coding. No IT team.",
   },
   roi_calculator: {
     hook: "₹999/month vs ₹15,000-30,000/month. Same job. Which would you choose?",
-    painPoint: "Hiring customer service staff is expensive, unreliable, and still leaves gaps — nights, weekends, holidays",
-    proof: "Customers save an average ₹14,000+/month while handling 3x more customer conversations",
-    solution: "AI handles unlimited conversations for a flat monthly fee — no salary, no benefits, no sick days",
+    focus: "hard numbers — calculate the exact cost of the current approach vs AI, make the ROI undeniable",
+    proof: "Average customer saves ₹14,000+/month and handles 3x more conversations",
   },
 } as const;
+
+// ── Format schemas ───────────────────────────────────────────────────────────
 
 const FORMAT_SCHEMAS = {
   carousel: `Create a 6-slide Instagram Carousel. Return exactly this JSON (no other text):
 {
   "slides": [
-    {"num": 1, "label": "Cover", "headline": "scroll-stopping headline 6 words max", "sub": "compelling subtitle 10 words max"},
-    {"num": 2, "label": "The Problem", "headline": "relatable problem statement", "points": ["specific pain point 1", "specific pain point 2", "specific pain point 3"]},
-    {"num": 3, "label": "The Reality", "headline": "reality-check headline", "stat": "shocking specific statistic", "context": "one sentence of context"},
+    {"num": 1, "label": "Cover", "headline": "scroll-stopping headline 6 words max — use the specific industry scenario", "sub": "compelling subtitle 10 words max"},
+    {"num": 2, "label": "The Problem", "headline": "specific problem headline for this industry", "points": ["industry-specific pain 1 with ₹ or time cost", "industry-specific pain 2", "industry-specific pain 3"]},
+    {"num": 3, "label": "The Reality", "headline": "reality-check headline", "stat": "shocking specific statistic relevant to this industry", "context": "one sentence of context"},
     {"num": 4, "label": "The Solution", "headline": "solution headline", "points": ["benefit 1 with ₹ or number", "benefit 2 with ₹ or number", "benefit 3 with ₹ or number"]},
-    {"num": 5, "label": "Results", "headline": "results headline", "quote": "compelling proof point or customer result", "source": "type of business owner"},
+    {"num": 5, "label": "Results", "headline": "results headline", "quote": "specific customer result for this industry type", "source": "specific type of business owner (e.g. 'saree shop owner, Jaipur')"},
     {"num": 6, "label": "Get Started", "headline": "action-oriented headline", "sub": "Try free → get-my-agent.com"}
   ],
-  "caption": "Instagram caption — hook sentence, value prop, CTA — 150 chars max",
-  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "WhatsAppBusiness", "BusinessTips", "IndianEntrepreneur", "DigitalIndia", "GetMyAgent", "AIAgent", "SmallBusiness", "CustomerService"]
+  "caption": "Instagram caption — hook sentence using the industry scenario, value prop, CTA — 150 chars max",
+  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "GetMyAgent", "AIAgent", "IndianEntrepreneur", "SmallBusiness", "CustomerService", "BusinessGrowth", "WhatsAppBusiness", "DigitalIndia"]
 }`,
 
   reel: `Create a 30-45 second Instagram Reel script. Return exactly this JSON (no other text):
 {
   "sections": [
-    {"time": "0:00-0:03", "label": "HOOK", "visual": "what is shown on screen", "audio": "exact shocking opening words or text"},
-    {"time": "0:03-0:12", "label": "PROBLEM", "visual": "visual demonstration idea", "audio": "relatable pain point in 2 sentences"},
-    {"time": "0:12-0:25", "label": "SOLUTION", "visual": "product demo description", "audio": "how AI agent solves it with specifics"},
-    {"time": "0:25-0:35", "label": "PROOF", "visual": "numbers or results shown on screen", "audio": "specific result or stat"},
-    {"time": "0:35-0:45", "label": "CTA", "visual": "website URL on screen", "audio": "single clear action"}
+    {"time": "0:00-0:03", "label": "HOOK", "visual": "what is shown — use specific industry setting", "audio": "exact shocking opening words using the industry scenario"},
+    {"time": "0:03-0:12", "label": "PROBLEM", "visual": "visual showing the specific missed message / lost sale", "audio": "specific relatable moment for this industry in 2 sentences"},
+    {"time": "0:12-0:25", "label": "SOLUTION", "visual": "show AI agent responding instantly on phone screen", "audio": "how AI agent solves it with specific ₹ or time numbers"},
+    {"time": "0:25-0:35", "label": "PROOF", "visual": "specific numbers or result for this industry on screen", "audio": "specific measurable result relevant to this industry"},
+    {"time": "0:35-0:45", "label": "CTA", "visual": "get-my-agent.com on screen", "audio": "single clear action with urgency"}
   ],
-  "voiceover": "complete 45-second spoken script as one continuous paragraph",
-  "text_overlays": ["overlay 1", "overlay 2", "overlay 3", "overlay 4", "overlay 5"],
-  "caption": "reel caption — hook + CTA",
-  "hashtags": ["Reels", "IndiaSmallBusiness", "AIForBusiness", "BusinessTips", "GetMyAgent", "AIAgent", "WhatsAppMarketing", "IndianEntrepreneur", "DigitalMarketing", "GrowthHack"]
+  "voiceover": "complete 45-second spoken script as one paragraph — use the specific industry scenario throughout",
+  "text_overlays": ["overlay 1 — industry-specific hook text", "overlay 2", "overlay 3", "overlay 4", "overlay 5"],
+  "caption": "reel caption — industry-specific hook + CTA",
+  "hashtags": ["Reels", "IndiaSmallBusiness", "AIForBusiness", "GetMyAgent", "BusinessTips", "IndianEntrepreneur", "WhatsAppMarketing", "DigitalMarketing", "GrowthHack", "AIAgent"]
 }`,
 
   story: `Create a 3-frame Instagram Story sequence. Return exactly this JSON (no other text):
 {
   "frames": [
-    {"num": 1, "label": "Hook", "emoji": "relevant emoji", "main_text": "4-word max bold statement", "sub_text": "supporting detail one line"},
-    {"num": 2, "label": "Content", "emoji": "relevant emoji", "main_text": "content headline", "sub_text": "brief context", "list": ["key point 1", "key point 2", "key point 3"]},
+    {"num": 1, "label": "Hook", "emoji": "industry-relevant emoji", "main_text": "4-word max statement using industry scenario", "sub_text": "one specific detail (₹ amount or time)"},
+    {"num": 2, "label": "Content", "emoji": "relevant emoji", "main_text": "content headline", "sub_text": "brief context", "list": ["industry-specific point 1 with number", "industry-specific point 2", "industry-specific point 3"]},
     {"num": 3, "label": "CTA", "emoji": "🚀", "main_text": "action headline", "sub_text": "get-my-agent.com", "button_text": "Try Free →"}
   ],
-  "poll": {"question": "engaging poll question", "yes": "Yes option text", "no": "No option text"},
-  "question_sticker": "open question to drive DMs"
+  "poll": {"question": "industry-specific poll question", "yes": "relatable yes option", "no": "honest no option"},
+  "question_sticker": "open question to drive DMs from this type of business owner"
 }`,
 
   feed_post: `Create an Instagram Feed Post. Return exactly this JSON (no other text):
 {
-  "hook": "first line that stops the scroll — one punchy sentence max 10 words",
+  "hook": "first line using the EXACT industry scenario — stops the scroll in under 10 words",
   "paragraphs": [
-    "paragraph 1: establish the pain point — 2-3 sentences",
-    "paragraph 2: introduce the solution with specifics — 2-3 sentences",
-    "paragraph 3: add proof or overcome main objection — 2-3 sentences"
+    "paragraph 1: describe the specific industry pain in vivid detail — 2-3 sentences with ₹ loss",
+    "paragraph 2: introduce the solution with specifics for this industry — 2-3 sentences",
+    "paragraph 3: paint the after picture — specific measurable result for this industry type — 2-3 sentences"
   ],
-  "cta": "single clear action sentence",
-  "caption": "full ready-to-post caption with hook + body + CTA, 300 words max, line breaks between paragraphs",
-  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "WhatsAppBusiness", "BusinessTips", "IndianEntrepreneur", "DigitalIndia", "GetMyAgent", "AIAgent", "SmallBusiness", "CustomerService", "BusinessAutomation", "StartupIndia", "SalesAgent", "ChatbotIndia", "BusinessGrowth"]
+  "cta": "single clear action sentence with urgency",
+  "caption": "full ready-to-post caption — hook + all paragraphs + CTA — 300 words max, line breaks",
+  "hashtags": ["IndiaSmallBusiness", "AIForBusiness", "GetMyAgent", "AIAgent", "IndianEntrepreneur", "SmallBusiness", "CustomerService", "BusinessAutomation", "StartupIndia", "WhatsAppBusiness", "DigitalIndia", "BusinessGrowth", "SalesAgent", "ChatbotIndia", "BusinessTips"]
 }`,
 } as const;
+
+// ── Prompt builder ───────────────────────────────────────────────────────────
 
 function buildGenerationPrompt(
   pillarType: keyof typeof PILLAR_CONTEXT,
   contentFormat: keyof typeof FORMAT_SCHEMAS,
+  industry: keyof typeof INDUSTRY_CONTEXT,
+  contentAngle: keyof typeof ANGLE_CONTEXT,
   customPrompt?: string
 ): string {
   const pillar = PILLAR_CONTEXT[pillarType];
   const schema = FORMAT_SCHEMAS[contentFormat];
+  const ind = INDUSTRY_CONTEXT[industry];
+  const angle = ANGLE_CONTEXT[contentAngle];
+
   return `${schema}
 
-Content angle:
-- Hook: ${pillar.hook}
-- Pain point: ${pillar.painPoint}
-- Proof/stat: ${pillar.proof}
-- Solution: ${pillar.solution}${customPrompt ? `\n- Extra instructions: ${customPrompt}` : ""}`;
+INDUSTRY: ${ind.label} (${ind.owner})
+SPECIFIC SCENARIO TO USE: ${ind.scenario}
+INDUSTRY PAIN STAT: ${ind.painSpecific}
+COST PER MISSED LEAD: ${ind.lossPerMiss}
+
+CONTENT ANGLE — ${angle.label.toUpperCase()}: ${angle.instruction}
+
+PILLAR FOCUS — ${pillar.focus}
+HOOK CONCEPT: ${pillar.hook}
+KEY PROOF: ${pillar.proof}${customPrompt ? `\n\nEXTRA INSTRUCTIONS: ${customPrompt}` : ""}
+
+Use the industry-specific scenario and ₹ amounts throughout. Make it feel written FOR this exact type of business owner, not generic.`;
+}
+
+// ── Hook variants generator ──────────────────────────────────────────────────
+
+function buildHookVariantsPrompt(
+  industry: keyof typeof INDUSTRY_CONTEXT,
+  pillarType: keyof typeof PILLAR_CONTEXT
+): string {
+  const ind = INDUSTRY_CONTEXT[industry];
+  const pillar = PILLAR_CONTEXT[pillarType];
+  return `Generate 5 different scroll-stopping Instagram hooks for a ${ind.owner}.
+Context: ${ind.scenario}
+Cost of inaction: ${ind.lossPerMiss}
+Pillar focus: ${pillar.focus}
+
+Return exactly this JSON:
+{
+  "hooks": [
+    {"style": "Direct pain", "text": "hook text"},
+    {"style": "POV", "text": "POV: hook text"},
+    {"style": "Question", "text": "hook text?"},
+    {"style": "Shocking stat", "text": "hook with number"},
+    {"style": "Story opener", "text": "It was [time]. hook..."}
+  ]
+}`;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -140,6 +260,8 @@ export const appRouter = router({
         pillarType: z.enum(["desi_business_owner", "five_minute_transformation", "roi_calculator"]),
         platform: z.enum(["facebook", "instagram", "whatsapp", "youtube"]),
         contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).default("carousel"),
+        industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services"]).default("retail"),
+        contentAngle: z.enum(["standard", "pov", "transformation", "comparison", "objection", "story"]).default("standard"),
         language: z.enum(["hinglish", "hindi", "english", "tamil", "telugu", "bengali"]).default("english"),
         customPrompt: z.string().optional(),
       }))
@@ -147,6 +269,8 @@ export const appRouter = router({
         const userPrompt = buildGenerationPrompt(
           input.pillarType as keyof typeof PILLAR_CONTEXT,
           input.contentFormat as keyof typeof FORMAT_SCHEMAS,
+          input.industry as keyof typeof INDUSTRY_CONTEXT,
+          input.contentAngle as keyof typeof ANGLE_CONTEXT,
           input.customPrompt
         );
 
@@ -183,6 +307,32 @@ export const appRouter = router({
           language: input.language,
           pillarType: input.pillarType,
         };
+      }),
+
+    generateHooks: protectedProcedure
+      .input(z.object({
+        pillarType: z.enum(["desi_business_owner", "five_minute_transformation", "roi_calculator"]),
+        industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services"]).default("retail"),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const userPrompt = buildHookVariantsPrompt(
+          input.industry as keyof typeof INDUSTRY_CONTEXT,
+          input.pillarType as keyof typeof PILLAR_CONTEXT
+        );
+        const response = await invokeLLM({
+          messages: [
+            { role: "system", content: CONTENT_SYSTEM_PROMPT },
+            { role: "user", content: userPrompt },
+          ],
+        });
+        const contentText = typeof response.choices[0]?.message.content === "string"
+          ? response.choices[0].message.content : "";
+        let hooks: any[] = [];
+        try {
+          const jsonStr = contentText.replace(/^```json\s*|\s*```$/g, "").trim();
+          hooks = JSON.parse(jsonStr).hooks ?? [];
+        } catch { /* fallback empty */ }
+        return { hooks };
       }),
 
     savePost: protectedProcedure

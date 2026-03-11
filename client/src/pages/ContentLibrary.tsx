@@ -14,6 +14,7 @@ import { PublishToMeta } from '@/components/PublishToMeta';
 import { PublishToWordPress } from '@/components/PublishToWordPress';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'wouter';
+import DashboardLayout from '@/components/DashboardLayout';
 
 type Status = 'draft' | 'scheduled' | 'published' | 'archived';
 
@@ -131,8 +132,8 @@ export default function ContentLibrary() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8 px-4">
-      <div className="max-w-6xl mx-auto">
+    <DashboardLayout>
+    <div className="max-w-6xl mx-auto">
         <div className="mb-8 flex items-start justify-between">
           <div>
             <h1 className="text-4xl font-bold text-slate-900 mb-2">Content Library</h1>
@@ -394,6 +395,6 @@ export default function ContentLibrary() {
           content={selectedPostForWp.content}
         />
       )}
-    </div>
+    </DashboardLayout>
   );
 }

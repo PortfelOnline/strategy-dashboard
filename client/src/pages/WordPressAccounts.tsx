@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { trpc } from '@/lib/trpc';
 import { Globe, Trash2, Plus, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import DashboardLayout from '@/components/DashboardLayout';
 
 export default function WordPressAccounts() {
   const [siteUrl, setSiteUrl] = useState('');
@@ -55,8 +56,8 @@ export default function WordPressAccounts() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-      <div className="max-w-4xl mx-auto">
+    <DashboardLayout>
+    <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">WordPress Sites</h1>
           <p className="text-slate-600">Connect WordPress sites via Application Password to publish content directly</p>
@@ -174,6 +175,6 @@ export default function WordPressAccounts() {
           )}
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

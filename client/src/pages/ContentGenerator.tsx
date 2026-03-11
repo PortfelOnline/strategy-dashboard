@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Copy, Download, Sparkles, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import DashboardLayout from '@/components/DashboardLayout';
 
 type PillarType = 'desi_business_owner' | 'five_minute_transformation' | 'roi_calculator';
 type Platform = 'facebook' | 'instagram' | 'whatsapp' | 'youtube';
@@ -260,7 +261,7 @@ export default function ContentGenerator() {
   const hasContent = !!generatedContent;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8 px-4">
+    <DashboardLayout>
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">Content Generator</h1>
@@ -453,6 +454,6 @@ export default function ContentGenerator() {
           </div>
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

@@ -192,35 +192,41 @@ async function enhanceIfNeeded(html: string, keyword: string): Promise<string> {
   const faqQuestions = html.match(/<h[23][^>]*>[^<]*\?[^<]*<\/h[23]>/gi) || [];
   const hasTable = /<table/i.test(html);
 
-  const missing: string[] = [];
+  const tasks: string[] = [];
 
-  // Priority 1: word count — if article is short, expand all sections
   if (wordCount < 1800) {
-    missing.push(`КРИТИЧНО: расширь каждый существующий H2-раздел — добавь 100-150 слов к каждому разделу. Текущий объём: ${wordCount} слов — нужно минимум 1800. НЕ УДАЛЯЙ существующий текст — только ДОБАВЛЯЙ.`);
+    const needed = 1800 - wordCount;
+    const sections = Math.ceil(needed / 220);
+    tasks.push(`Напиши ${sections} новых подробных раздела (<h2>Заголовок</h2><p>200+ слов</p>) которых ещё НЕТ в статье. Суммарно минимум ${needed} слов. Используй H2/H3, не H1.`);
   }
   if (faqQuestions.length < 6) {
-    missing.push(`добавь раздел "Часто задаваемые вопросы" с ${Math.max(6 - faqQuestions.length, 3)} вопросами-ответами в формате <h3>Вопрос?</h3><p>Развёрнутый ответ 60-80 слов</p>`);
+    const faqNeeded = Math.max(6 - faqQuestions.length, 3);
+    tasks.push(`Добавь раздел FAQ: <h2>Часто задаваемые вопросы</h2> с ${faqNeeded} вопросами в формате <h3>Вопрос?</h3><p>Ответ 70-100 слов</p>.`);
   }
   if (!hasTable) {
-    missing.push('добавь таблицу сравнения способов получения документа (сроки, стоимость, удобство)');
+    tasks.push(`Добавь таблицу <table> сравнения способов получения документа: колонки — Способ/Срок/Стоимость/Удобство. Цены — только через [BLOCK_PRICE].`);
   }
 
-  if (missing.length === 0) return html;
+  if (tasks.length === 0) return html;
 
+  // APPEND approach: generate only new blocks, concatenate to existing html
   const response = await invokeLLM({
     messages: [
-      { role: 'system', content: 'Ты SEO-копирайтер. Расширяешь HTML-статью — только добавляешь контент, не удаляешь. Структура заголовков: H1 только один (заголовок статьи), разделы — H2, подразделы — H3. Возвращаешь ПОЛНЫЙ HTML.' },
-      { role: 'user', content: `Тема: "${keyword}". Текущая статья (${wordCount} слов):\n\n${html}\n\nЗАДАЧА — выполни ВСЁ перечисленное:\n${missing.map((m, i) => `${i + 1}. ${m}`).join('\n')}\n\nТРЕБОВАНИЯ:\n- Сохраняй структуру заголовков: H1 только заголовок статьи, разделы — H2, подразделы — H3\n- НЕ УДАЛЯЙ существующий текст — итоговая статья должна быть ДЛИННЕЕ исходной\n- Цены указывай ТОЛЬКО через шорткод [BLOCK_PRICE]\nВерни ТОЛЬКО полный итоговый HTML без <html>/<body>.` },
+      { role: 'system', content: 'Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML-контент для добавления в статью. НЕ пересказывай существующий текст. Используй только H2/H3 (не H1). Цены — через [BLOCK_PRICE]. Возвращай ТОЛЬКО новые HTML-блоки.' },
+      { role: 'user', content: `Тема: "${keyword}". Существующая статья (${wordCount} слов, начало):\n${html.slice(0, 1500)}...\n\nСгенерируй ДОПОЛНИТЕЛЬНЫЙ HTML (не дублируй то что уже есть):\n${tasks.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nВерни ТОЛЬКО новые HTML-блоки без <html>/<body>.` },
     ],
-    maxTokens: 8192,
+    maxTokens: 4096,
   }).catch(() => null);
 
   const rawContent = response?.choices[0]?.message.content;
-  const result = typeof rawContent === 'string' ? rawContent.trim() : '';
+  const addition = typeof rawContent === 'string' ? rawContent.trim() : '';
+  if (!addition || countWords(addition) < 50) return html;
 
-  // Only use enhanced version if it's actually longer than original
-  if (!result || countWords(result) <= wordCount) return html;
-  return result;
+  // Insert before conclusion H2, or append at end
+  const conclusionMatch = html.match(/(<h2[^>]*>[^<]*(?:[Вв]ывод|[Зз]аключ)[^<]*<\/h2>)/);
+  return conclusionMatch
+    ? html.replace(conclusionMatch[0], addition + '\n' + conclusionMatch[0])
+    : html + '\n' + addition;
 }
 
 // ── Normalize heading hierarchy (H1→H2 for all headings after the first H1) ─

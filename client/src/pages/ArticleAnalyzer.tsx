@@ -1543,6 +1543,7 @@ function SerpMonitor({ onAnalyze }: { onAnalyze: (url: string) => void }) {
   const [isRunning, setIsRunning] = useState(false);
   const [done, setDone]           = useState(0);
   const [total, setTotal]         = useState(0);
+  const { data: quota }           = trpc.articles.serpApiQuota.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
   const [newArticleKw, setNewArticleKw]       = useState('');
   const [newArticleComps, setNewArticleComps] = useState<{ title: string; domain: string; snippet: string }[]>([]);
   const [newArticleOpen, setNewArticleOpen]   = useState(false);
@@ -1649,6 +1650,16 @@ function SerpMonitor({ onAnalyze }: { onAnalyze: (url: string) => void }) {
             <div>
               <p className="font-medium text-slate-800">{articles.length} статей · проверено {checkedCount}</p>
               <p className="text-xs text-slate-500 mt-0.5">Проверяет позиции в Google и Яндекс по ключевому слову из заголовка</p>
+              {quota && (
+                <p className="text-xs mt-1 flex items-center gap-2 flex-wrap">
+                  <span className={`font-medium ${quota.totalLeft < 20 ? 'text-red-600' : quota.totalLeft < 80 ? 'text-yellow-600' : 'text-green-700'}`}>
+                    SerpAPI: {quota.totalLeft} / {quota.searchesPerMonth} запросов осталось
+                  </span>
+                  <span className="text-slate-400">·</span>
+                  <span className="text-slate-500">использовано {quota.thisMonthUsage} · тариф {quota.planName}</span>
+                  {quota.extraCredits > 0 && <span className="text-blue-500">+ {quota.extraCredits} доп.</span>}
+                </p>
+              )}
             </div>
             <div className="flex gap-2 flex-wrap">
               {isRunning ? (

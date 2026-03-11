@@ -1500,6 +1500,29 @@ ${competitorContext}
     }),
 
   /**
+   * SerpAPI account quota — remaining searches this month
+   */
+  serpApiQuota: protectedProcedure
+    .query(async () => {
+      const key = process.env.SERPAPI_KEY;
+      if (!key) return null;
+      try {
+        const axios = (await import('axios')).default;
+        const { data } = await axios.get(`https://serpapi.com/account?api_key=${key}`, { timeout: 8000 });
+        return {
+          planName:        data.plan_name        as string,
+          searchesPerMonth: data.searches_per_month as number,
+          searchesLeft:    data.plan_searches_left as number,
+          extraCredits:    data.extra_credits      as number,
+          totalLeft:       data.total_searches_left as number,
+          thisMonthUsage:  data.this_month_usage   as number,
+        };
+      } catch {
+        return null;
+      }
+    }),
+
+  /**
    * Lightweight SERP position check for one keyword — no AI
    */
   checkPosition: protectedProcedure

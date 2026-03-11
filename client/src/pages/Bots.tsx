@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
+import DashboardLayout from '@/components/DashboardLayout';
 
 const WEBSITES = [
   'https://shared-brains.ru',
@@ -198,7 +199,7 @@ export default function Bots() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+    <DashboardLayout>
       <div className="max-w-6xl mx-auto">
 
         {/* Header */}
@@ -840,6 +841,6 @@ export default function Bots() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </DashboardLayout>
   );
 }

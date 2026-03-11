@@ -6,6 +6,7 @@ import { trpc } from '@/lib/trpc';
 import { useAuth } from '@/_core/hooks/useAuth';
 import { Facebook, Instagram, Trash2, Plus, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import DashboardLayout from '@/components/DashboardLayout';
 
 export default function MetaAccounts() {
   const { user } = useAuth();
@@ -62,7 +63,7 @@ export default function MetaAccounts() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
+    <DashboardLayout>
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">Connected Accounts</h1>
@@ -153,6 +154,6 @@ export default function MetaAccounts() {
           )}
         </div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

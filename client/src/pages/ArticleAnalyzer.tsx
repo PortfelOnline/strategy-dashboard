@@ -15,6 +15,7 @@ import {
   Shield, Upload, RotateCcw, RefreshCw, Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import DashboardLayout from '@/components/DashboardLayout';
 
 type AnalysisResult = {
   analysisId: number | null;
@@ -3600,7 +3601,7 @@ export default function ArticleAnalyzer() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 py-8 px-4">
+    <DashboardLayout>
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-slate-900 mb-2">Анализ и улучшение статей</h1>
@@ -4222,6 +4223,6 @@ export default function ArticleAnalyzer() {
           content={result?.improvedContent || ''}
         />
       )}
-    </div>
+    </DashboardLayout>
   );
 }

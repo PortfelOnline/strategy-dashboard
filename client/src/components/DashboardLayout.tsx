@@ -21,17 +21,19 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { Bot, FileText, Globe, LayoutDashboard, LogOut, PanelLeft, Users } from "lucide-react";
+import { BookOpen, Bot, Calendar, FileText, Globe, LogOut, PanelLeft, Sparkles, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: LayoutDashboard, label: "Page 1", path: "/" },
-  { icon: Users, label: "Page 2", path: "/some-path" },
-  { icon: Globe, label: "WordPress", path: "/wordpress" },
   { icon: FileText, label: "Статьи", path: "/articles" },
+  { icon: Sparkles, label: "Генератор", path: "/generator" },
+  { icon: BookOpen, label: "Библиотека", path: "/library" },
+  { icon: Calendar, label: "Календарь", path: "/calendar" },
+  { icon: Globe, label: "WordPress", path: "/wordpress" },
+  { icon: Users, label: "Meta Аккаунты", path: "/accounts" },
   { icon: Bot, label: "Боты", path: null, href: "http://167.86.116.15:4000/login" },
 ];
 

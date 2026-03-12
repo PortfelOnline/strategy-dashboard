@@ -13,6 +13,7 @@ import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { getSessionCookieOptions } from "./cookies";
 import { initOrchestrator } from "../orchestrator";
 import { initArticleScheduler } from "../articleScheduler";
+import { initContentScheduler } from "../contentScheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -84,6 +85,7 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
     initOrchestrator();
     initArticleScheduler();
+    initContentScheduler();
   });
 }
 

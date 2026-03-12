@@ -6,16 +6,33 @@ import { Badge } from '@/components/ui/badge';
 import { ChevronLeft, ChevronRight, Clock, Calendar, Loader2 } from 'lucide-react';
 import { trpc } from '@/lib/trpc';
 import { toast } from 'sonner';
-import { format, addDays, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isSameDay } from 'date-fns';
+import {
+  format, addMonths, subMonths, startOfMonth, endOfMonth,
+  eachDayOfInterval, isSameMonth, isSameDay, addDays, getDay,
+} from 'date-fns';
 import DashboardLayout from '@/components/DashboardLayout';
 
 interface ScheduledPost {
   id: number;
   title: string;
-  platform: 'facebook' | 'instagram' | 'whatsapp';
+  platform: 'facebook' | 'instagram' | 'whatsapp' | 'youtube';
   scheduledAt: Date | string | null;
   status: 'draft' | 'scheduled' | 'published' | 'archived';
 }
+
+const PLATFORM_COLORS: Record<string, string> = {
+  facebook: 'bg-blue-600 text-white',
+  instagram: 'bg-gradient-to-r from-pink-500 to-purple-600 text-white',
+  whatsapp: 'bg-green-500 text-white',
+  youtube: 'bg-red-500 text-white',
+};
+
+const PLATFORM_EMOJI: Record<string, string> = {
+  facebook: '👍',
+  instagram: '📸',
+  whatsapp: '💬',
+  youtube: '▶️',
+};
 
 export default function ContentCalendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -52,15 +69,16 @@ export default function ContentCalendar() {
   const monthEnd = endOfMonth(currentDate);
   const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
 
+  // Padding cells before the 1st (Sunday = 0)
+  const leadingBlanks = getDay(monthStart);
+
   const getPostsForDate = (date: Date) => {
     return (scheduledPosts as ScheduledPost[]).filter(
       (post) => post.scheduledAt && isSameDay(new Date(post.scheduledAt), date)
     );
   };
 
-  const handleDragStart = (post: ScheduledPost) => {
-    setDraggedPost(post);
-  };
+  const handleDragStart = (post: ScheduledPost) => setDraggedPost(post);
 
   const handleDrop = (date: Date) => {
     if (!draggedPost) return;
@@ -97,33 +115,39 @@ export default function ContentCalendar() {
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, -30))}>
+                <Button variant="outline" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}>
                   <ChevronLeft className="w-4 h-4" />
                 </Button>
                 <h2 className="text-2xl font-bold min-w-48 text-center">
                   {format(currentDate, 'MMMM yyyy')}
                 </h2>
-                <Button variant="outline" size="icon" onClick={() => setCurrentDate(addDays(currentDate, 30))}>
+                <Button variant="outline" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}>
                   <ChevronRight className="w-4 h-4" />
                 </Button>
               </div>
-              <Button onClick={() => setCurrentDate(new Date())}>Today</Button>
+              <Button variant="outline" onClick={() => setCurrentDate(new Date())}>Today</Button>
             </div>
           </CardHeader>
         </Card>
 
         <Card>
           <CardContent className="p-6">
-            <div className="grid grid-cols-7 gap-2 mb-4">
+            <div className="grid grid-cols-7 gap-1 mb-2">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
-                <div key={day} className="text-center font-semibold text-slate-600 py-2">{day}</div>
+                <div key={day} className="text-center text-xs font-semibold text-slate-500 py-2 uppercase tracking-wide">
+                  {day}
+                </div>
               ))}
             </div>
 
-            <div className="grid grid-cols-7 gap-2">
+            <div className="grid grid-cols-7 gap-1">
+              {/* Leading blank cells */}
+              {Array.from({ length: leadingBlanks }).map((_, i) => (
+                <div key={`blank-${i}`} className="min-h-28 p-1 bg-slate-50 rounded-lg opacity-40" />
+              ))}
+
               {days.map(day => {
                 const dayPosts = getPostsForDate(day);
-                const isCurrentMonth = isSameMonth(day, currentDate);
                 const isToday = isSameDay(day, new Date());
 
                 return (
@@ -133,26 +157,30 @@ export default function ContentCalendar() {
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => handleDrop(day)}
                     className={`
-                      min-h-32 p-2 border rounded-lg cursor-pointer transition-all
-                      ${isCurrentMonth ? 'bg-white' : 'bg-slate-50'}
-                      ${isToday ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-400'}
+                      min-h-28 p-1.5 border rounded-lg cursor-pointer transition-all
+                      ${isToday ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-400 hover:bg-slate-50'}
                     `}
                   >
-                    <div className={`text-sm font-semibold mb-2 ${isToday ? 'text-blue-600' : 'text-slate-600'}`}>
+                    <div className={`text-xs font-bold mb-1 w-6 h-6 flex items-center justify-center rounded-full
+                      ${isToday ? 'bg-blue-600 text-white' : 'text-slate-600'}`}>
                       {format(day, 'd')}
                     </div>
-                    <div className="space-y-1">
-                      {dayPosts.map((post) => (
+                    <div className="space-y-0.5">
+                      {dayPosts.slice(0, 3).map((post) => (
                         <div
                           key={post.id}
                           draggable
                           onDragStart={(e) => { e.stopPropagation(); handleDragStart(post); }}
-                          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white text-xs p-1 rounded cursor-move hover:shadow-md transition-shadow truncate"
-                          title={post.title}
+                          className={`text-xs px-1.5 py-0.5 rounded cursor-move truncate flex items-center gap-1 ${PLATFORM_COLORS[post.platform] || 'bg-slate-500 text-white'}`}
+                          title={`${post.title}${post.scheduledAt ? ' · ' + format(new Date(post.scheduledAt), 'HH:mm') : ''}`}
                         >
-                          {post.platform === 'instagram' ? '📸' : post.platform === 'facebook' ? '👍' : '💬'} {post.title}
+                          <span>{PLATFORM_EMOJI[post.platform]}</span>
+                          <span className="truncate">{post.title}</span>
                         </div>
                       ))}
+                      {dayPosts.length > 3 && (
+                        <div className="text-xs text-slate-500 pl-1">+{dayPosts.length - 3} more</div>
+                      )}
                     </div>
                   </div>
                 );
@@ -187,7 +215,7 @@ export default function ContentCalendar() {
                         <div className="flex items-start justify-between">
                           <div>
                             <p className="font-medium text-sm">{post.title}</p>
-                            <Badge variant="outline" className="mt-1">{post.platform}</Badge>
+                            <Badge variant="outline" className="mt-1 capitalize">{post.platform}</Badge>
                           </div>
                           <Clock className="w-4 h-4 text-slate-400" />
                         </div>
@@ -220,7 +248,7 @@ export default function ContentCalendar() {
         </Dialog>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-slate-600">Scheduled This Month</CardTitle>
@@ -233,7 +261,7 @@ export default function ContentCalendar() {
           </Card>
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-slate-600">This Week</CardTitle>
+              <CardTitle className="text-sm font-medium text-slate-600">Next 7 Days</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-slate-900">
@@ -254,6 +282,15 @@ export default function ContentCalendar() {
               <div className="text-3xl font-bold text-slate-900">{(draftPosts as ScheduledPost[]).length}</div>
             </CardContent>
           </Card>
+        </div>
+
+        {/* Platform legend */}
+        <div className="flex flex-wrap gap-3 mt-4">
+          {Object.entries(PLATFORM_EMOJI).map(([platform, emoji]) => (
+            <div key={platform} className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${PLATFORM_COLORS[platform]}`}>
+              {emoji} <span className="capitalize">{platform}</span>
+            </div>
+          ))}
         </div>
       </div>
     </DashboardLayout>

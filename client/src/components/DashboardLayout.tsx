@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { BookOpen, Bot, Calendar, FileText, Globe, LogOut, PanelLeft, Sparkles, Users } from "lucide-react";
+import { BarChart2, BookOpen, Bot, Calendar, FileText, Globe, LogOut, PanelLeft, Sparkles, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -32,6 +32,7 @@ const menuItems = [
   { icon: Sparkles, label: "Генератор", path: "/generator" },
   { icon: BookOpen, label: "Библиотека", path: "/library" },
   { icon: Calendar, label: "Календарь", path: "/calendar" },
+  { icon: BarChart2, label: "Аналитика", path: "/analytics" },
   { icon: Globe, label: "WordPress", path: "/wordpress" },
   { icon: Users, label: "Meta Аккаунты", path: "/accounts" },
   { icon: Bot, label: "Боты", path: null, href: "http://167.86.116.15:4000/login" },

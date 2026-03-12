@@ -447,6 +447,110 @@ export const appRouter = router({
         return { variation };
       }),
 
+    bulkGenerate: protectedProcedure
+      .input(z.object({
+        pillarType: z.enum(["desi_business_owner", "five_minute_transformation", "roi_calculator"]),
+        contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).default("carousel"),
+        industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services"]).default("retail"),
+        contentAngle: z.enum(["standard", "pov", "transformation", "comparison", "objection", "story"]).default("standard"),
+        platform: z.enum(["facebook", "instagram", "whatsapp", "youtube"]).default("instagram"),
+        count: z.number().min(1).max(7).default(7),
+        language: z.string().default("english"),
+        startDate: z.date().optional(),
+      }))
+      .mutation(async ({ ctx, input }) => {
+        const ALL_ANGLES = ["standard", "pov", "transformation", "comparison", "objection", "story"] as const;
+        const baseIdx = ALL_ANGLES.indexOf(input.contentAngle as any);
+
+        const results = await Promise.all(
+          Array.from({ length: input.count }, async (_, i) => {
+            const angle = ALL_ANGLES[(baseIdx + i) % ALL_ANGLES.length] as keyof typeof ANGLE_CONTEXT;
+            const prompt = buildGenerationPrompt(
+              input.pillarType as keyof typeof PILLAR_CONTEXT,
+              input.contentFormat as keyof typeof FORMAT_SCHEMAS,
+              input.industry as keyof typeof INDUSTRY_CONTEXT,
+              angle,
+            );
+            const response = await invokeLLM({
+              messages: [
+                { role: "system", content: CONTENT_SYSTEM_PROMPT },
+                { role: "user", content: prompt },
+              ],
+            });
+            const contentText = typeof response.choices[0]?.message.content === "string"
+              ? response.choices[0].message.content : "";
+            let parsed: any = null;
+            try {
+              const jsonStr = contentText.replace(/^```json\s*|\s*```$/g, "").trim();
+              parsed = JSON.parse(jsonStr);
+            } catch { /* empty */ }
+
+            const ind = INDUSTRY_CONTEXT[input.industry as keyof typeof INDUSTRY_CONTEXT];
+            const title = parsed?.title ?? parsed?.hook ?? `${ind.label} · Post ${i + 1}`;
+            const hashtags = Array.isArray(parsed?.hashtags)
+              ? parsed.hashtags.map((h: string) => h.startsWith("#") ? h : `#${h}`).join(" ")
+              : `#GetMyAgent #AI #${ind.label.replace(/\s+/g, '')}`;
+
+            let scheduledAt: Date | undefined;
+            if (input.startDate) {
+              scheduledAt = new Date(input.startDate);
+              scheduledAt.setDate(scheduledAt.getDate() + i);
+              scheduledAt.setHours(9, 0, 0, 0);
+            }
+
+            await createContentPost(ctx.user.id, {
+              title,
+              content: contentText,
+              platform: input.platform,
+              language: input.language,
+              hashtags,
+              status: scheduledAt ? 'scheduled' : 'draft',
+              scheduledAt,
+            });
+
+            return { title, angle };
+          })
+        );
+
+        return { posts: results, count: results.length };
+      }),
+
+    getStats: protectedProcedure
+      .query(async ({ ctx }) => {
+        const allPosts = await getUserContentPosts(ctx.user.id);
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+        const byStatus = {
+          draft: allPosts.filter(p => p.status === 'draft').length,
+          scheduled: allPosts.filter(p => p.status === 'scheduled').length,
+          published: allPosts.filter(p => p.status === 'published').length,
+          archived: allPosts.filter(p => p.status === 'archived').length,
+        };
+
+        const byPlatform = ['facebook', 'instagram', 'whatsapp', 'youtube'].map(pl => ({
+          name: pl,
+          count: allPosts.filter(p => p.platform === pl).length,
+        }));
+
+        const publishedThisMonth = allPosts.filter(p =>
+          p.status === 'published' && p.publishedAt && new Date(p.publishedAt) >= monthStart
+        ).length;
+
+        const scheduledThisWeek = allPosts.filter(p =>
+          p.status === 'scheduled' && p.scheduledAt &&
+          new Date(p.scheduledAt) >= now && new Date(p.scheduledAt) <= weekEnd
+        ).length;
+
+        const upcoming = allPosts
+          .filter(p => p.status === 'scheduled' && p.scheduledAt && new Date(p.scheduledAt) >= now)
+          .sort((a, b) => new Date(a.scheduledAt!).getTime() - new Date(b.scheduledAt!).getTime())
+          .slice(0, 5);
+
+        return { byStatus, byPlatform, publishedThisMonth, scheduledThisWeek, upcoming, total: allPosts.length };
+      }),
+
     suggestHashtags: protectedProcedure
       .input(z.object({
         content: z.string(),

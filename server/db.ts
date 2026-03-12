@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, contentPosts, contentTemplates, InsertContentPost, InsertContentTemplate } from "../drizzle/schema";
 import { ENV } from './_core/env';
@@ -156,6 +156,15 @@ export async function deleteContentPost(userId: number, postId: number) {
   if (!db) throw new Error('Database not available');
   return db.delete(contentPosts)
     .where(and(eq(contentPosts.id, postId), eq(contentPosts.userId, userId)));
+}
+
+export async function getDueScheduledPosts() {
+  const db = await getDb();
+  if (!db) return [];
+  const now = new Date();
+  return db.select().from(contentPosts).where(
+    and(eq(contentPosts.status, 'scheduled'), lte(contentPosts.scheduledAt, now))
+  );
 }
 
 // TODO: add more feature queries here as your schema grows.

@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap } from 'lucide-react';
+import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap, CalendarDays } from 'lucide-react';
 import { toast } from 'sonner';
+import { useLocation } from 'wouter';
 import DashboardLayout from '@/components/DashboardLayout';
 
 type PillarType = 'desi_business_owner' | 'five_minute_transformation' | 'roi_calculator';
@@ -223,6 +225,7 @@ function HookVariants({ hooks, onSelect }: { hooks: any[]; onSelect: (h: string)
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export default function ContentGenerator() {
+  const [, navigate] = useLocation();
   const [selectedPillar, setSelectedPillar] = useState<PillarType>('roi_calculator');
   const [selectedPlatform, setSelectedPlatform] = useState<Platform>('instagram');
   const [contentFormat, setContentFormat] = useState<ContentFormat>('carousel');
@@ -237,9 +240,16 @@ export default function ContentGenerator() {
   const [postTitle, setPostTitle] = useState('');
   const [hookVariants, setHookVariants] = useState<any[]>([]);
 
+  // Bulk generate state
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkCount, setBulkCount] = useState(7);
+  const [bulkSchedule, setBulkSchedule] = useState(false);
+  const [bulkStartDate, setBulkStartDate] = useState('');
+
   const generateMutation = trpc.content.generatePost.useMutation();
   const saveMutation = trpc.content.savePost.useMutation();
   const hooksMutation = trpc.content.generateHooks.useMutation();
+  const bulkMutation = trpc.content.bulkGenerate.useMutation();
 
   const handleGenerate = async () => {
     setHookVariants([]);
@@ -292,6 +302,26 @@ export default function ContentGenerator() {
       setPostTitle('');
     } catch {
       toast.error('Failed to save');
+    }
+  };
+
+  const handleBulkGenerate = async () => {
+    try {
+      const result = await bulkMutation.mutateAsync({
+        pillarType: selectedPillar,
+        contentFormat,
+        industry,
+        contentAngle,
+        platform: selectedPlatform,
+        count: bulkCount,
+        language: 'english',
+        startDate: bulkSchedule && bulkStartDate ? new Date(bulkStartDate) : undefined,
+      });
+      setBulkOpen(false);
+      toast.success(`${result.count} posts saved!`);
+      navigate('/library');
+    } catch {
+      toast.error('Bulk generation failed');
     }
   };
 
@@ -433,8 +463,15 @@ export default function ContentGenerator() {
                   <Button onClick={handleGetHooks} disabled={hooksMutation.isPending} variant="outline" className="px-3 border-amber-300 text-amber-700 hover:bg-amber-50" title="Get 5 hook variants">
                     {hooksMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
                   </Button>
+                  <Button onClick={() => setBulkOpen(true)} variant="outline" className="px-3 border-green-300 text-green-700 hover:bg-green-50" title="Generate a full week of posts">
+                    <CalendarDays className="w-4 h-4" />
+                  </Button>
                 </div>
-                {!hasContent && <p className="text-xs text-slate-400 text-center">⚡ = get 5 hook options before generating</p>}
+                {!hasContent && (
+                  <p className="text-xs text-slate-400 text-center">
+                    ⚡ = hooks &nbsp;·&nbsp; 📅 = week plan (batch)
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -514,6 +551,68 @@ export default function ContentGenerator() {
           </div>
         </div>
       </div>
+
+      {/* Bulk Generate Dialog */}
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-green-600" />
+              Week Plan — Bulk Generate
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            <div>
+              <label className="text-sm font-semibold text-slate-800 block mb-2">How many posts?</label>
+              <div className="flex gap-2">
+                {[3, 5, 7].map(n => (
+                  <button key={n} onClick={() => setBulkCount(n)}
+                    className={`flex-1 py-2.5 rounded-lg border-2 font-bold text-sm transition-all ${bulkCount === n ? 'border-green-600 bg-green-50 text-green-700' : 'border-slate-200 hover:border-green-400'}`}>
+                    {n} posts
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-lg bg-slate-50 p-3 text-xs text-slate-600 space-y-1">
+              <p className="font-semibold text-slate-700">Will use current settings:</p>
+              <p>🏪 {INDUSTRIES.find(i => i.key === industry)?.label} · {PILLARS[selectedPillar].title}</p>
+              <p>📸 {PLATFORMS[selectedPlatform]} · {FORMATS.find(f => f.key === contentFormat)?.label}</p>
+              <p>🔄 Rotates through {bulkCount} content angles automatically</p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" className="rounded" checked={bulkSchedule} onChange={e => setBulkSchedule(e.target.checked)} />
+                <span className="text-sm font-medium text-slate-700">Schedule: 1 post per day starting from</span>
+              </label>
+              {bulkSchedule && (
+                <input
+                  type="date"
+                  className="mt-2 w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                  value={bulkStartDate}
+                  onChange={e => setBulkStartDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                />
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkOpen(false)}>Cancel</Button>
+            <Button
+              onClick={handleBulkGenerate}
+              disabled={bulkMutation.isPending || (bulkSchedule && !bulkStartDate)}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              {bulkMutation.isPending
+                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating {bulkCount} posts...</>
+                : <><CalendarDays className="w-4 h-4 mr-2" />Generate {bulkCount} Posts</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

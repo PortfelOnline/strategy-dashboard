@@ -11,4 +11,5 @@ export const ENV = {
   metaAppSecret: process.env.META_APP_SECRET ?? "",
   metaRedirectUri: process.env.META_REDIRECT_URI ?? "",
   botDir: process.env.BOT_DIR ?? "",
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
 };

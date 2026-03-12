@@ -9,6 +9,8 @@ import { metaRouter } from "./routers/meta";
 import { botsRouter } from "./routers/bots";
 import { wordpressRouter } from "./routers/wordpress";
 import { articlesRouter } from "./routers/articles";
+import { generateGeminiImage, generateVeoVideo, buildVisualPrompt } from "./_core/gemini";
+import { storagePut } from "./storage";
 
 // ─── Content generation helpers ────────────────────────────────────────────
 
@@ -624,6 +626,35 @@ export const appRouter = router({
           .slice(0, 5);
 
         return { byStatus, byPlatform, publishedThisMonth, scheduledThisWeek, upcoming, total: allPosts.length };
+      }),
+
+    generateVisual: protectedProcedure
+      .input(z.object({
+        industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services"]),
+        contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).default("feed_post"),
+        hook: z.string(),
+      }))
+      .mutation(async ({ input }) => {
+        const { prompt, aspectRatio } = buildVisualPrompt(input.industry, input.contentFormat, input.hook);
+        const { b64, mimeType } = await generateGeminiImage(prompt, aspectRatio);
+        const buffer = Buffer.from(b64, "base64");
+        const { url } = await storagePut(`visuals/${Date.now()}.jpg`, buffer, mimeType);
+        return { url, prompt };
+      }),
+
+    generateVideo: protectedProcedure
+      .input(z.object({
+        industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services"]),
+        hook: z.string(),
+        durationSeconds: z.number().min(4).max(8).default(8),
+      }))
+      .mutation(async ({ input }) => {
+        const { prompt } = buildVisualPrompt(input.industry, "reel", input.hook);
+        const videoPrompt = `${prompt} Dynamic motion, cinematic quality, vertical 9:16 video for Instagram Reels. 8 seconds.`;
+        const { b64, mimeType } = await generateVeoVideo(videoPrompt, "9:16", input.durationSeconds);
+        const buffer = Buffer.from(b64, "base64");
+        const { url } = await storagePut(`videos/${Date.now()}.mp4`, buffer, mimeType);
+        return { url };
       }),
 
     suggestHashtags: protectedProcedure

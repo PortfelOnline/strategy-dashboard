@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap, CalendarDays } from 'lucide-react';
+import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap, CalendarDays, Image, Video } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLocation } from 'wouter';
 import DashboardLayout from '@/components/DashboardLayout';
@@ -251,6 +251,8 @@ export default function ContentGenerator() {
   const [generatedHashtags, setGeneratedHashtags] = useState('');
   const [postTitle, setPostTitle] = useState('');
   const [hookVariants, setHookVariants] = useState<any[]>([]);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState('');
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState('');
 
   // Bulk generate state
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -262,6 +264,8 @@ export default function ContentGenerator() {
   const saveMutation = trpc.content.savePost.useMutation();
   const hooksMutation = trpc.content.generateHooks.useMutation();
   const bulkMutation = trpc.content.bulkGenerate.useMutation();
+  const visualMutation = trpc.content.generateVisual.useMutation();
+  const videoMutation = trpc.content.generateVideo.useMutation();
 
   const handleGenerate = async () => {
     setHookVariants([]);
@@ -336,6 +340,31 @@ export default function ContentGenerator() {
       navigate('/library');
     } catch {
       toast.error('Bulk generation failed');
+    }
+  };
+
+  const handleGenerateVisual = async () => {
+    const hook = parsedContent?.slides?.[0]?.headline
+      || parsedContent?.sections?.[0]?.audio
+      || parsedContent?.hook
+      || postTitle;
+    try {
+      const result = await visualMutation.mutateAsync({ industry, contentFormat, hook });
+      setGeneratedImageUrl(result.url ?? '');
+      toast.success('Image generated!');
+    } catch (e: any) {
+      toast.error(e.message || 'Image generation failed');
+    }
+  };
+
+  const handleGenerateVideo = async () => {
+    const hook = parsedContent?.sections?.[0]?.audio || parsedContent?.hook || postTitle;
+    try {
+      const result = await videoMutation.mutateAsync({ industry, hook });
+      setGeneratedVideoUrl(result.url ?? '');
+      toast.success('Video generated!');
+    } catch (e: any) {
+      toast.error(e.message || 'Video generation failed — Veo 2 requires special API access');
     }
   };
 
@@ -557,7 +586,49 @@ export default function ContentGenerator() {
                       </div>
                     )}
 
+                    {/* Generated visual */}
+                    {generatedImageUrl && (
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 uppercase block mb-1">Generated Image</label>
+                        <img src={generatedImageUrl} alt="Generated visual" className="w-full rounded-lg border border-slate-200" />
+                        <a href={generatedImageUrl} download className="mt-1 text-xs text-blue-600 hover:underline block">↓ Download</a>
+                      </div>
+                    )}
+                    {generatedVideoUrl && (
+                      <div>
+                        <label className="text-xs font-semibold text-slate-500 uppercase block mb-1">Generated Video</label>
+                        <video src={generatedVideoUrl} controls className="w-full rounded-lg border border-slate-200" />
+                        <a href={generatedVideoUrl} download className="mt-1 text-xs text-blue-600 hover:underline block">↓ Download</a>
+                      </div>
+                    )}
+
                     <div className="space-y-2 pt-2 border-t">
+                      {/* Gemini visual buttons */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          onClick={handleGenerateVisual}
+                          disabled={visualMutation.isPending}
+                          variant="outline"
+                          className="text-xs border-violet-300 text-violet-700 hover:bg-violet-50"
+                        >
+                          {visualMutation.isPending
+                            ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            : <Image className="w-3 h-3 mr-1" />}
+                          Generate Image
+                        </Button>
+                        <Button
+                          onClick={handleGenerateVideo}
+                          disabled={videoMutation.isPending}
+                          variant="outline"
+                          className="text-xs border-violet-300 text-violet-700 hover:bg-violet-50"
+                          title="Veo 2 — requires special Google API access"
+                        >
+                          {videoMutation.isPending
+                            ? <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            : <Video className="w-3 h-3 mr-1" />}
+                          Generate Video
+                        </Button>
+                      </div>
                       <Button onClick={handleCopy} variant="outline" className="w-full text-sm">
                         <Copy className="w-4 h-4 mr-2" />Copy
                       </Button>

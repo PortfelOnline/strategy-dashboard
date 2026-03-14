@@ -69,6 +69,7 @@ interface GoogleDocsConfig {
 interface OrchestratorConfig {
   enabled: boolean;
   maxConcurrent: number;
+  resourcePct: number;
   restartDelayMin: number;
   dailyStartHour: number;
   dailyEndHour: number;
@@ -99,10 +100,6 @@ export default function Bots() {
   const [newPilotBotId, setNewPilotBotId] = useState('');
   const [newPilotWebsite, setNewPilotWebsite] = useState(WEBSITES[0]);
 
-  // VNC state
-  const [vncOpen, setVncOpen] = useState(false);
-  const [vncBotId, setVncBotId] = useState<number | null>(null);
-
   const utils = trpc.useUtils();
 
   // Bots queries
@@ -116,12 +113,12 @@ export default function Bots() {
 
   // Proxies query
   const { data: proxiesData, isLoading: proxiesLoading, refetch: refetchProxies } = trpc.proxyList.useQuery(undefined, {
-    enabled: tab === 'proxies',
+    refetchInterval: tab === 'proxies' ? 10000 : false,
   });
 
   // Google Docs query
   const { data: googleDocsData } = trpc.googleDocs.useQuery(undefined, {
-    enabled: tab === 'docs',
+    staleTime: 60000,
   });
   useEffect(() => {
     if (googleDocsData && !docsEdits) setDocsEdits(googleDocsData);
@@ -129,7 +126,7 @@ export default function Bots() {
 
   // Orchestrator queries
   const { data: orchConfig } = trpc.orchestratorConfig.useQuery(undefined, {
-    enabled: tab === 'autopilot',
+    staleTime: 10000,
   });
   const { data: orchStatus, refetch: refetchOrchStatus } = trpc.orchestratorStatus.useQuery(undefined, {
     refetchInterval: 15_000,
@@ -190,15 +187,6 @@ export default function Bots() {
     onError: (e) => toast.error(e.message),
   });
 
-  // VNC mutations
-  const vncStart = trpc.vncStart.useMutation({
-    onSuccess: () => { setVncOpen(true); },
-    onError: (e) => toast.error(`VNC error: ${e.message}`),
-  });
-  const vncStop = trpc.vncStop.useMutation({
-    onSuccess: () => { setVncOpen(false); setVncBotId(null); },
-  });
-
   // Orchestrator mutation
   const saveOrch = trpc.setOrchestratorConfig.useMutation({
     onSuccess: () => {
@@ -207,6 +195,14 @@ export default function Bots() {
       utils.orchestratorStatus.invalidate();
     },
     onError: (e) => toast.error(e.message),
+  });
+
+
+  const vncStart = trpc.vncStart.useMutation({
+    onSuccess: (_, vars) => {
+      window.open(`/novnc/viewer.html?bot=${vars.botId}`, `vnc-${vars.botId}`, 'width=1280,height=820');
+    },
+    onError: (e) => toast.error('VNC: ' + e.message),
   });
 
   const bots: BotEntry[] = data?.bots ?? [];
@@ -249,7 +245,7 @@ export default function Bots() {
             <Button variant="outline" size="sm" onClick={() => { refetch(); refetchProxies(); }}>
               <RefreshCw className="w-4 h-4 mr-1" /> Refresh
             </Button>
-            <Button variant="ghost" size="sm" className="text-slate-400 text-xs"
+            <Button variant="outline" size="sm" className="text-slate-600 text-xs"
               onClick={async () => { await fetch('/api/auth/logout', {method:'POST'}); window.location.reload(); }}>
               Выйти
             </Button>
@@ -339,77 +335,118 @@ export default function Bots() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {bots.map(bot => (
-                  <Card key={bot.botId} className={`border-l-4 ${bot.status === 'running' ? 'border-l-green-500' : 'border-l-slate-300'}`}>
-                    <CardHeader className="pb-2">
-                      <div className="flex items-center justify-between">
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          <Bot className="w-5 h-5" /> Bot #{bot.botId}
-                        </CardTitle>
-                        <div className="flex items-center gap-1.5">
-                        <Badge className={bot.status === 'running' ? 'bg-green-100 text-green-800' : 'bg-slate-100 text-slate-600'}>
-                          {bot.status === 'running' ? '● Running' : '○ Stopped'}
-                        </Badge>
-                        {orchStatus?.managedBots.includes(bot.botId) && (
-                          <Badge className="bg-yellow-100 text-yellow-800 text-xs">
-                            <Zap className="w-3 h-3 mr-0.5" />Авто
-                          </Badge>
-                        )}
-                        </div>
-                      </div>
-                      {bot.status === 'running' && (
-                        <CardDescription className="text-xs space-y-0.5 mt-1">
-                          <div><span className="font-medium">Mode:</span> {bot.mode}</div>
-                          <div className="truncate"><span className="font-medium">Site:</span> {bot.website}</div>
-                          <div><span className="font-medium">PID:</span> {bot.pid} · {bot.startedAt ? formatDistanceToNow(new Date(bot.startedAt), { addSuffix: true }) : '—'}</div>
-                        </CardDescription>
-                      )}
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      {bot.state && (
-                        <div className="text-xs text-slate-500 bg-slate-50 rounded p-2 space-y-1">
-                          <div>Warmup days: <span className="font-medium text-slate-700">{bot.state.warmup_days ?? 0}</span></div>
-                          {bot.state.last_run && (
-                            <div>Last run: <span className="font-medium text-slate-700">{formatDistanceToNow(new Date(bot.state.last_run), { addSuffix: true })}</span></div>
-                          )}
-                          {bot.state.used_queries && (
-                            <div>Queries used: <span className="font-medium text-slate-700">{bot.state.used_queries.length}</span></div>
-                          )}
-                        </div>
-                      )}
-                      <div className="flex gap-2">
-                        {bot.status === 'stopped' ? (
-                          <Button size="sm" className="flex-1 bg-green-600 hover:bg-green-700"
-                            onClick={() => { setNewBotId(String(bot.botId)); setStartOpen(true); }}>
-                            <Play className="w-4 h-4 mr-1" /> Start
-                          </Button>
-                        ) : (
-                          <Button size="sm" variant="destructive" className="flex-1"
-                            onClick={() => stop.mutate({ botId: bot.botId })} disabled={stop.isPending}>
-                            {stop.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Square className="w-4 h-4 mr-1" />}
-                            Stop
-                          </Button>
-                        )}
-                        <Button size="sm" variant="outline"
-                          onClick={() => { setLogsBot(bot.botId); setLogsOpen(true); }}>
-                          <Terminal className="w-4 h-4" />
-                        </Button>
-                        {bot.status === 'running' && (
-                          <Button size="sm" variant="outline"
-                            onClick={() => { setVncBotId(bot.botId); vncStart.mutate({ botId: bot.botId }); }}
-                            disabled={vncStart.isPending && vncBotId === bot.botId}
-                            title="Просмотр экрана бота">
-                            {vncStart.isPending && vncBotId === bot.botId
-                              ? <Loader2 className="w-4 h-4 animate-spin" />
-                              : <Eye className="w-4 h-4" />}
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+              <Card>
+                <CardContent className="p-0">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b bg-slate-50 text-slate-500">
+                          <th className="text-left px-3 py-2 font-medium w-14">#</th>
+                          <th className="text-left px-3 py-2 font-medium w-24">Статус</th>
+                          <th className="text-left px-3 py-2 font-medium w-20">Режим</th>
+                          <th className="text-left px-3 py-2 font-medium">Сайт</th>
+                          <th className="text-left px-3 py-2 font-medium w-20">Прогрев</th>
+                          <th className="text-left px-3 py-2 font-medium w-24">Последний</th>
+                          <th className="text-right px-3 py-2 font-medium w-20">Действия</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {bots.map(bot => {
+                          const isRunning = bot.status === 'running';
+                          const isManaged = orchStatus?.managedBots.includes(bot.botId);
+                          const warmupDays = (bot.state?.warmup_days as number | undefined) ?? 0;
+                          const lastRun = bot.state?.last_run as string | undefined;
+                          const modeLabel = (bot as Record<string, unknown>).mode as string | undefined;
+                          const site = (bot as Record<string, unknown>).website as string | undefined;
+                          return (
+                            <tr key={bot.botId} className={`hover:bg-slate-50 ${isRunning ? 'bg-green-50/30' : ''}`}>
+                              <td className="px-3 py-1.5 font-mono font-medium text-slate-700">
+                                {String(bot.botId).padStart(3, '0')}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`inline-block w-1.5 h-1.5 rounded-full ${isRunning ? 'bg-green-500' : 'bg-slate-300'}`} />
+                                  <span className={isRunning ? 'text-green-700' : 'text-slate-400'}>
+                                    {isRunning ? 'Running' : 'Stopped'}
+                                  </span>
+                                  {isManaged && <Zap className="w-3 h-3 text-yellow-500" />}
+                                </div>
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {modeLabel ? (
+                                  <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                                    modeLabel === 'target' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'
+                                  }`}>
+                                    {modeLabel === 'target' ? 'Target' : 'Warmup'}
+                                  </span>
+                                ) : <span className="text-slate-300">—</span>}
+                              </td>
+                              <td className="px-3 py-1.5 text-slate-500 max-w-[180px]">
+                                <span className="truncate block" title={site}>
+                                  {site ? site.replace(/^https?:\/\//, '') : '—'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-1.5">
+                                <div className="flex items-center gap-1">
+                                  <div className="w-12 bg-slate-200 rounded-full h-1.5">
+                                    <div
+                                      className="bg-orange-400 h-1.5 rounded-full"
+                                      style={{ width: `${Math.min(100, (warmupDays / 14) * 100)}%` }}
+                                    />
+                                  </div>
+                                  <span className="text-slate-500">{warmupDays}d</span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-1.5 text-slate-400">
+                                {lastRun ? formatDistanceToNow(new Date(lastRun), { addSuffix: true }) : '—'}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                <div className="flex items-center justify-end gap-1">
+                                  {isRunning ? (
+                                    <button
+                                      className="p-1 rounded hover:bg-red-100 text-red-500 disabled:opacity-40"
+                                      onClick={() => stop.mutate({ botId: bot.botId })}
+                                      disabled={stop.isPending}
+                                      title="Stop"
+                                    >
+                                      <Square className="w-3.5 h-3.5" />
+                                    </button>
+                                  ) : (
+                                    <button
+                                      className="p-1 rounded hover:bg-green-100 text-green-600"
+                                      onClick={() => { setNewBotId(String(bot.botId)); setStartOpen(true); }}
+                                      title="Start"
+                                    >
+                                      <Play className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                  <button
+                                    className="p-1 rounded hover:bg-slate-100 text-slate-500"
+                                    onClick={() => { setLogsBot(bot.botId); setLogsOpen(true); }}
+                                    title="Logs"
+                                  >
+                                    <Terminal className="w-3.5 h-3.5" />
+                                  </button>
+                                  {isRunning && (
+                                    <button
+                                      className="p-1 rounded hover:bg-blue-100 text-blue-500"
+                                      onClick={() => vncStart.mutate({ botId: bot.botId })}
+                                      disabled={vncStart.isPending}
+                                      title="Смотреть"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </Card>
             )}
           </TabsContent>
 
@@ -716,6 +753,32 @@ export default function Bots() {
                         </div>
                       </div>
                       <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-sm font-medium text-slate-700">Лимит ресурсов (% свободных)</label>
+                          <span className="text-sm font-bold text-blue-600">{orchEdits.resourcePct ?? 50}%</span>
+                        </div>
+                        <input
+                          type="range" min={10} max={100} step={5}
+                          className="w-full accent-blue-600"
+                          value={orchEdits.resourcePct ?? 50}
+                          onChange={e => setOrchEdits(o => o ? { ...o, resourcePct: parseInt(e.target.value) } : o)}
+                        />
+                        <div className="flex justify-between text-xs text-slate-400 mt-0.5">
+                          <span>10%</span><span>50%</span><span>100%</span>
+                        </div>
+                        {detectedResources && (
+                          <p className="text-xs text-slate-500 mt-1">
+                            При {orchEdits.resourcePct ?? 50}% → макс. {Math.max(1, Math.min(
+                              orchEdits.maxConcurrent,
+                              Math.min(
+                                Math.floor(detectedResources.freeRamGb * 1024 * 1024 * 1024 * ((orchEdits.resourcePct ?? 50) / 100) / (580 * 1024 * 1024)),
+                                Math.max(1, Math.floor(detectedResources.cpuCount * ((orchEdits.resourcePct ?? 50) / 100) / 2))
+                              )
+                            ))} бот(ов) одновременно
+                          </p>
+                        )}
+                      </div>
+                      <div>
                         <label className="text-sm font-medium text-slate-700">Задержка перезапуска (мин)</label>
                         <Input
                           type="number" min={1} max={1440} className="mt-1"
@@ -946,29 +1009,6 @@ export default function Bots() {
               {start.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Play className="w-4 h-4 mr-1" />}
               Start Bot
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* VNC Dialog */}
-      <Dialog open={vncOpen} onOpenChange={(open) => { if (!open) vncStop.mutate(); else setVncOpen(true); }}>
-        <DialogContent className="max-w-5xl max-h-[90vh]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Eye className="w-5 h-5" /> Bot #{vncBotId} — экран в реальном времени
-            </DialogTitle>
-          </DialogHeader>
-          <div className="rounded-lg overflow-hidden bg-black" style={{ height: '65vh' }}>
-            {vncOpen && (
-              <iframe
-                src={`/novnc/vnc.html?host=${window.location.hostname}&port=${window.location.port || (window.location.protocol === 'https:' ? '443' : '80')}&path=vnc-ws&autoconnect=true&resize=scale&show_dot=true`}
-                className="w-full h-full border-0"
-                title="VNC viewer"
-              />
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => vncStop.mutate()}>Закрыть</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import * as crypto from "crypto";
 
 const COOKIE_NAME = "bd_session";
-const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days
+const COOKIE_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 const validTokens = new Set<string>();
 
 function getPassword(): string {

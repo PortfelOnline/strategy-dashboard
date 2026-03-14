@@ -1,7 +1,6 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import * as botManager from "./bots.js";
-import { getVncContainerIp } from "./bots.js";
 import * as orch from "./orchestrator.js";
 
 const t = initTRPC.context<Record<string, never>>().create();
@@ -25,6 +24,7 @@ const botEntrySchema = z.object({
 const orchestratorConfigSchema = z.object({
   enabled: z.boolean(),
   maxConcurrent: z.number().int().min(1).max(20),
+  resourcePct: z.number().int().min(10).max(100).default(50),
   restartDelayMin: z.number().int().min(1).max(1440),
   dailyStartHour: z.number().int().min(0).max(23),
   dailyEndHour: z.number().int().min(1).max(24),

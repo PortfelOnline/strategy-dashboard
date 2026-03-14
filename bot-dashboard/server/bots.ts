@@ -72,9 +72,14 @@ export function getRunningBots() {
     result.set(botId, b);
   }
 
-  // Also detect externally started bots (CLI, start.sh, etc.)
+  // Also detect bots running inside the yandex_bot container (or locally)
   try {
-    const output = execSync('ps -ax -o pid= -o args=', { encoding: 'utf8' });
+    const container = process.env.BOT_CONTAINER;
+    const psArgs = container
+      ? ['exec', container, 'ps', '-ax', '-o', 'pid=', '-o', 'args=']
+      : ['-ax', '-o', 'pid=', '-o', 'args='];
+    const psCmd = container ? 'docker' : 'ps';
+    const output = execFileSync(psCmd, psArgs, { encoding: 'utf8' });
     for (const line of output.split('\n')) {
       if (!line.includes('yandex_bot.py') || !line.includes('--bot-id')) continue;
       const pidMatch = line.match(/^\s*(\d+)/);
@@ -94,7 +99,7 @@ export function getRunningBots() {
       });
     }
   } catch {
-    // Ignore — ps failed or no external bots
+    // Ignore — docker exec failed or no external bots
   }
 
   return Array.from(result.values());
@@ -253,37 +258,73 @@ export function setGoogleDocs(config: GoogleDocsConfig): void {
 // --- VNC ---
 let activeVncContainerIp: string | null = null;
 
-export function startVnc(botId: number): { display: number; containerIp: string } {
-  const container = process.env.BOT_CONTAINER || 'yandex_bot';
-  const displayFile = path.join(BOT_DIR, 'outputs', 'bot_states', `bot_${botId}_display.txt`);
+let activeVncBotId: number | null = null;
+let vncWatcherTimer: ReturnType<typeof setTimeout> | null = null;
+let lastVncDisplay: number = 99;
 
-  let displayNum = 10;
+function readBotDisplay(container: string, botId: number): number {
+  const displayFile = `/bot_work/outputs/bot_states/bot_${botId}_display.txt`;
   try {
     if (fs.existsSync(displayFile)) {
-      displayNum = parseInt(fs.readFileSync(displayFile, 'utf8').trim()) || 10;
+      return parseInt(fs.readFileSync(displayFile, 'utf8').trim()) || 99;
     }
   } catch {}
+  return 99;
+}
 
-  // Kill any existing x11vnc
+function xSocketExists(container: string, displayNum: number): boolean {
+  try {
+    execFileSync('docker', ['exec', container, 'test', '-S', `/tmp/.X11-unix/X${displayNum}`]);
+    return true;
+  } catch { return false; }
+}
+
+function restartX11vnc(container: string, displayNum: number): void {
   try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
-
-  // Start x11vnc on display (detached)
+  if (!xSocketExists(container, displayNum)) return;
   spawn('docker', [
     'exec', container,
     'x11vnc', '-display', `:${displayNum}`,
     '-nopw', '-rfbport', '5900', '-forever', '-shared', '-noxdamage', '-quiet',
   ], { detached: true, stdio: 'ignore' });
+}
 
-  // Get container IP for WS proxy
+function startVncWatcher(container: string): void {
+  if (vncWatcherTimer) clearInterval(vncWatcherTimer as unknown as number);
+  vncWatcherTimer = setInterval(() => {
+    if (!activeVncBotId) return;
+    const newDisplay = readBotDisplay(container, activeVncBotId);
+    const vncRunning = (() => {
+      try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'x11vnc']); return true; } catch { return false; }
+    })();
+    if (newDisplay !== lastVncDisplay || !vncRunning) {
+      if (xSocketExists(container, newDisplay)) {
+        lastVncDisplay = newDisplay;
+        restartX11vnc(container, newDisplay);
+      }
+    }
+  }, 3000) as unknown as ReturnType<typeof setTimeout>;
+}
+
+export function startVnc(botId: number): { display: number; containerIp: string } {
+  const container = process.env.BOT_CONTAINER || 'yandex_bot';
+  activeVncBotId = botId;
+
+  const displayNum = readBotDisplay(container, botId);
+  lastVncDisplay = displayNum;
+
+  restartX11vnc(container, displayNum);
+
   try {
     activeVncContainerIp = execFileSync(
-      'docker', ['inspect', container, '--format', '{{.NetworkSettings.IPAddress}}'],
+      'docker', ['inspect', container, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'],
       { encoding: 'utf8' }
     ).trim();
   } catch {
     activeVncContainerIp = '127.0.0.1';
   }
 
+  startVncWatcher(container);
   return { display: displayNum, containerIp: activeVncContainerIp };
 }
 

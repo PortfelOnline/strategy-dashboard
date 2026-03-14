@@ -7,13 +7,14 @@ import { getBotDir, startBot, getRunningBots, getBotState } from './bots';
 const RAM_PER_BOT_BYTES = 580 * 1024 * 1024;
 
 
-// Dynamic limit: use 50% of currently free RAM + 50% of CPU cores
-export function dynamicMaxConcurrent(): number {
+// Dynamic limit: use `pct`% of currently free RAM + CPU cores
+export function dynamicMaxConcurrent(pct = 50): number {
   const freeMem = os.freemem();
   const cpuCount = os.cpus().length;
-  const ramBased = Math.floor(freeMem * 0.5 / RAM_PER_BOT_BYTES);
-  // Each bot uses ~2 threads; cap at 50% of CPU cores
-  const cpuBased = Math.max(1, Math.floor(cpuCount * 0.5 / 2));
+  const ratio = pct / 100;
+  const ramBased = Math.floor(freeMem * ratio / RAM_PER_BOT_BYTES);
+  // Each bot uses ~2 threads; cap at `pct`% of CPU cores
+  const cpuBased = Math.max(1, Math.floor(cpuCount * ratio / 2));
   return Math.max(1, Math.min(ramBased, cpuBased));
 }
 
@@ -47,6 +48,7 @@ export interface BotEntry {
 export interface OrchestratorConfig {
   enabled: boolean;
   maxConcurrent: number;
+  resourcePct: number;     // % of free RAM/CPU to use for dynamic limit (1–100)
   restartDelayMin: number; // minutes to wait before re-queuing a finished bot
   dailyStartHour: number;  // 0–23: start of allowed window
   dailyEndHour: number;    // 1–24: end of allowed window (exclusive)
@@ -69,6 +71,7 @@ export interface OrchestratorStatus {
 const DEFAULT_CONFIG: OrchestratorConfig = {
   enabled: false,
   maxConcurrent: detectMaxConcurrent(),
+  resourcePct: 50,
   restartDelayMin: 30,
   dailyStartHour: 0,
   dailyEndHour: 24,
@@ -131,11 +134,19 @@ function autoMode(botId: number): 'warmup' | 'target' {
 function tick(): void {
   const config = getOrchestratorConfig();
   if (!config.enabled) return;
-  if (!isWithinWindow(config)) return;
 
   const now = new Date();
   const running = getRunningBots();
   const runningIds = new Set(running.map(b => b.botId));
+
+  // 0. Always adopt externally-running bots (even outside time window)
+  for (const b of config.bots) {
+    if (b.enabled && runningIds.has(b.botId) && !managedBots.has(b.botId)) {
+      managedBots.add(b.botId);
+    }
+  }
+
+  if (!isWithinWindow(config)) return;
 
   // 1. Detect managed bots that have finished → schedule restart
   for (const botId of Array.from(managedBots)) {
@@ -179,8 +190,8 @@ function tick(): void {
     if (!enabledIds.has(queue[i].botId)) queue.splice(i, 1);
   }
 
-  // 5. Start from queue up to min(config.maxConcurrent, dynamic 50% free resources)
-  const effectiveMax = Math.min(config.maxConcurrent, dynamicMaxConcurrent());
+  // 5. Start from queue up to min(config.maxConcurrent, dynamic free resources)
+  const effectiveMax = Math.min(config.maxConcurrent, dynamicMaxConcurrent(config.resourcePct ?? 50));
   let runningCount = runningIds.size;
   while (runningCount < effectiveMax && queue.length > 0) {
     const next = queue.shift()!;

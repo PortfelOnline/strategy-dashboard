@@ -1,4 +1,4 @@
-import { spawn, execSync, ChildProcess } from 'child_process';
+import { spawn, execSync, execFileSync, ChildProcess } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -248,4 +248,51 @@ export function setGoogleDocs(config: GoogleDocsConfig): void {
   const dir = path.join(BOT_DIR, 'outputs');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(GOOGLE_DOCS_FILE(), JSON.stringify(config, null, 2));
+}
+
+// --- VNC ---
+let activeVncContainerIp: string | null = null;
+
+export function startVnc(botId: number): { display: number; containerIp: string } {
+  const container = process.env.BOT_CONTAINER || 'yandex_bot';
+  const displayFile = path.join(BOT_DIR, 'outputs', 'bot_states', `bot_${botId}_display.txt`);
+
+  let displayNum = 10;
+  try {
+    if (fs.existsSync(displayFile)) {
+      displayNum = parseInt(fs.readFileSync(displayFile, 'utf8').trim()) || 10;
+    }
+  } catch {}
+
+  // Kill any existing x11vnc
+  try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
+
+  // Start x11vnc on display (detached)
+  spawn('docker', [
+    'exec', container,
+    'x11vnc', '-display', `:${displayNum}`,
+    '-nopw', '-rfbport', '5900', '-forever', '-shared', '-noxdamage', '-quiet',
+  ], { detached: true, stdio: 'ignore' });
+
+  // Get container IP for WS proxy
+  try {
+    activeVncContainerIp = execFileSync(
+      'docker', ['inspect', container, '--format', '{{.NetworkSettings.IPAddress}}'],
+      { encoding: 'utf8' }
+    ).trim();
+  } catch {
+    activeVncContainerIp = '127.0.0.1';
+  }
+
+  return { display: displayNum, containerIp: activeVncContainerIp };
+}
+
+export function stopVnc(): void {
+  const container = process.env.BOT_CONTAINER || 'yandex_bot';
+  try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
+  activeVncContainerIp = null;
+}
+
+export function getVncContainerIp(): string | null {
+  return activeVncContainerIp;
 }

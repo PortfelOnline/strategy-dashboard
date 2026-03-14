@@ -2,12 +2,16 @@ import "dotenv/config";
 import express from "express";
 import cookieParser from "cookie-parser";
 import { createServer } from "http";
+import { WebSocketServer } from "ws";
+import net from "net";
+import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { botsRouter } from "./router.js";
 import { initOrchestrator } from "./orchestrator.js";
 import { login, logout, isAuthenticated, requireAuth } from "./auth.js";
+import { getVncContainerIp } from "./bots.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDev = process.env.NODE_ENV !== "production";
@@ -62,6 +66,35 @@ async function start() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  // --- noVNC static files ---
+  const noVncPath = path.resolve(__dirname, "../novnc");
+  if (fs.existsSync(noVncPath)) {
+    app.use("/novnc", express.static(noVncPath));
+  }
+
+  // --- VNC WebSocket proxy at /vnc-ws ---
+  const wss = new WebSocketServer({ noServer: true });
+  wss.on("connection", (ws) => {
+    const containerIp = getVncContainerIp() || "127.0.0.1";
+    const tcp = net.createConnection({ host: containerIp, port: 5900 });
+
+    tcp.on("data", (data) => { if (ws.readyState === ws.OPEN) ws.send(data); });
+    tcp.on("close", () => ws.close());
+    tcp.on("error", () => ws.close());
+
+    ws.on("message", (data) => { tcp.write(data as Buffer); });
+    ws.on("close", () => tcp.destroy());
+    ws.on("error", () => tcp.destroy());
+  });
+
+  server.on("upgrade", (req, socket, head) => {
+    if (req.url === "/vnc-ws") {
+      wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
 
   server.listen(PORT, () => {
     console.log(`Bot Dashboard running on http://localhost:${PORT}`);

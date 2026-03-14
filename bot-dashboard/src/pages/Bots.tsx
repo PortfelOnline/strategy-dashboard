@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -99,6 +99,10 @@ export default function Bots() {
   const [newPilotBotId, setNewPilotBotId] = useState('');
   const [newPilotWebsite, setNewPilotWebsite] = useState(WEBSITES[0]);
 
+  // VNC state
+  const [vncOpen, setVncOpen] = useState(false);
+  const [vncBotId, setVncBotId] = useState<number | null>(null);
+
   const utils = trpc.useUtils();
 
   // Bots queries
@@ -184,6 +188,15 @@ export default function Bots() {
   const saveDocs = trpc.setGoogleDocs.useMutation({
     onSuccess: () => { toast.success('Google Docs сохранены'); utils.googleDocs.invalidate(); },
     onError: (e) => toast.error(e.message),
+  });
+
+  // VNC mutations
+  const vncStart = trpc.vncStart.useMutation({
+    onSuccess: () => { setVncOpen(true); },
+    onError: (e) => toast.error(`VNC error: ${e.message}`),
+  });
+  const vncStop = trpc.vncStop.useMutation({
+    onSuccess: () => { setVncOpen(false); setVncBotId(null); },
   });
 
   // Orchestrator mutation
@@ -382,6 +395,16 @@ export default function Bots() {
                           onClick={() => { setLogsBot(bot.botId); setLogsOpen(true); }}>
                           <Terminal className="w-4 h-4" />
                         </Button>
+                        {bot.status === 'running' && (
+                          <Button size="sm" variant="outline"
+                            onClick={() => { setVncBotId(bot.botId); vncStart.mutate({ botId: bot.botId }); }}
+                            disabled={vncStart.isPending && vncBotId === bot.botId}
+                            title="Просмотр экрана бота">
+                            {vncStart.isPending && vncBotId === bot.botId
+                              ? <Loader2 className="w-4 h-4 animate-spin" />
+                              : <Eye className="w-4 h-4" />}
+                          </Button>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -923,6 +946,29 @@ export default function Bots() {
               {start.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Play className="w-4 h-4 mr-1" />}
               Start Bot
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* VNC Dialog */}
+      <Dialog open={vncOpen} onOpenChange={(open) => { if (!open) vncStop.mutate(); else setVncOpen(true); }}>
+        <DialogContent className="max-w-5xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-5 h-5" /> Bot #{vncBotId} — экран в реальном времени
+            </DialogTitle>
+          </DialogHeader>
+          <div className="rounded-lg overflow-hidden bg-black" style={{ height: '65vh' }}>
+            {vncOpen && (
+              <iframe
+                src={`/novnc/vnc.html?host=${window.location.hostname}&port=${window.location.port || (window.location.protocol === 'https:' ? '443' : '80')}&path=vnc-ws&autoconnect=true&resize=scale&show_dot=true`}
+                className="w-full h-full border-0"
+                title="VNC viewer"
+              />
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => vncStop.mutate()}>Закрыть</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

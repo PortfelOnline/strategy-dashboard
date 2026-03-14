@@ -1,6 +1,7 @@
 import { initTRPC } from "@trpc/server";
 import { z } from "zod";
 import * as botManager from "./bots.js";
+import { getVncContainerIp } from "./bots.js";
 import * as orch from "./orchestrator.js";
 
 const t = initTRPC.context<Record<string, never>>().create();
@@ -110,6 +111,14 @@ export const botsRouter = t.router({
   setOrchestratorConfig: procedure
     .input(orchestratorConfigSchema)
     .mutation(({ input }) => { orch.saveOrchestratorConfig(input); return { success: true }; }),
+
+  // --- VNC ---
+  vncStart: procedure
+    .input(z.object({ botId: z.number().int().min(1).max(1000) }))
+    .mutation(({ input }) => botManager.startVnc(input.botId)),
+
+  vncStop: procedure
+    .mutation(() => { botManager.stopVnc(); return { success: true }; }),
 });
 
 export type BotsRouter = typeof botsRouter;

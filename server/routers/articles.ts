@@ -222,7 +222,9 @@ async function enhanceIfNeeded(html: string, keyword: string): Promise<string> {
   }).catch(() => null);
 
   const rawContent = response?.choices[0]?.message.content;
-  const addition = typeof rawContent === 'string' ? rawContent.trim() : '';
+  const addition = typeof rawContent === 'string'
+    ? rawContent.trim().replace(/^```html?\s*/i, '').replace(/\s*```$/i, '').trim()
+    : '';
   if (!addition || countWords(addition) < 50) return html;
 
   // Insert before conclusion H2, or append at end

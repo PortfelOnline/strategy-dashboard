@@ -1432,13 +1432,18 @@ ${competitorContext}
       const account = await wordpressDb.getWordpressAccountById(ctx.user.id, input.accountId);
       if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'WordPress аккаунт не найден' });
 
-      // 2. Extract slug from original URL
-      const slug = new URL(input.originalUrl).pathname.replace(/\/$/, '').split('/').pop() || '';
+      // 2. Extract slug from original URL (follow redirects to get real slug)
+      let resolvedUrl = input.originalUrl;
+      try {
+        const headResp = await fetch(input.originalUrl, { method: 'HEAD', redirect: 'follow' });
+        if (headResp.url && headResp.url !== input.originalUrl) resolvedUrl = headResp.url;
+      } catch { /* keep original */ }
+      const slug = new URL(resolvedUrl).pathname.replace(/\/$/, '').split('/').pop() || '';
       if (!slug) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Не удалось извлечь slug из URL' });
 
       // 3. Find post by slug
       const post = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);
-      if (!post) throw new TRPCError({ code: 'NOT_FOUND', message: `Статья со slug "${slug}" не найдена на сайте` });
+      if (!post) throw new TRPCError({ code: 'NOT_FOUND', message: `Статья "${slug}" не найдена` });
 
       // 4. In parallel: generate CTA texts + 3 DALL-E images
       const noText = `NO text, NO letters, NO words, NO labels, NO watermarks, NO inscriptions anywhere in the image.`;
@@ -1601,7 +1606,12 @@ ${competitorContext}
       const account = await wordpressDb.getWordpressAccountById(ctx.user.id, input.accountId);
       if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'WordPress аккаунт не найден' });
 
-      const slug = new URL(input.originalUrl).pathname.replace(/\/$/, '').split('/').pop() || '';
+      let resolvedUrl2 = input.originalUrl;
+      try {
+        const headResp = await fetch(input.originalUrl, { method: 'HEAD', redirect: 'follow' });
+        if (headResp.url && headResp.url !== input.originalUrl) resolvedUrl2 = headResp.url;
+      } catch { /* keep original */ }
+      const slug = new URL(resolvedUrl2).pathname.replace(/\/$/, '').split('/').pop() || '';
       if (!slug) throw new TRPCError({ code: 'BAD_REQUEST', message: 'Не удалось извлечь slug из URL' });
 
       const original = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);

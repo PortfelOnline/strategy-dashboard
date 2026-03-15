@@ -442,6 +442,7 @@ ${missingTopicsBlock}${lsiBlock}
 
   improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword);
   improvedContent = normalizeHeadings(improvedContent);
+  improvedContent = beautifyArticleHtml(improvedContent);
 
   const improvedWordCount = improvedContent
     ? improvedContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length
@@ -627,6 +628,7 @@ ${missingTopicsBlock}${lsiBlock}
   // Post-generation quality check: add missing FAQ questions or table
   improvedContent = await enhanceIfNeeded(improvedContent, keyword);
   improvedContent = normalizeHeadings(improvedContent);
+  improvedContent = beautifyArticleHtml(improvedContent);
 
   // Add internal links to related articles on the same site
   improvedContent = await addInternalLinks(improvedContent, userId, ourDomain, parsed.title);
@@ -878,6 +880,7 @@ ${missingTopicsBlock}${lsiBlock}
       // Post-generation: fix missing FAQ questions or table
       improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword);
       improvedContent = normalizeHeadings(improvedContent);
+      improvedContent = beautifyArticleHtml(improvedContent);
 
       // Add internal links to related articles on the same site
       improvedContent = await addInternalLinks(improvedContent, ctx.user.id, ourDomain, parsed.title);

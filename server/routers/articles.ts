@@ -215,7 +215,7 @@ async function enhanceIfNeeded(html: string, keyword: string): Promise<string> {
   // APPEND approach: generate only new blocks, concatenate to existing html
   const response = await invokeLLM({
     messages: [
-      { role: 'system', content: 'Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML-контент для добавления в статью. НЕ пересказывай существующий текст. Используй только H2/H3 (не H1). Цены — через [BLOCK_PRICE]. Все упоминания заказа — ТОЛЬКО через https://base.kadastrmap.info/spravki/. НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа. Возвращай ТОЛЬКО новые HTML-блоки.' },
+      { role: 'system', content: 'Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML-контент для добавления в статью. НЕ пересказывай существующий текст. Используй только H2/H3 (не H1). Цены — через [BLOCK_PRICE]. Все упоминания заказа — ТОЛЬКО через /spravki/. НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа. Возвращай ТОЛЬКО новые HTML-блоки.' },
       { role: 'user', content: `Тема: "${keyword}". Существующая статья (${wordCount} слов, начало):\n${html.slice(0, 1500)}...\n\nСгенерируй ДОПОЛНИТЕЛЬНЫЙ HTML (не дублируй то что уже есть):\n${tasks.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nВерни ТОЛЬКО новые HTML-блоки без <html>/<body>.` },
     ],
     maxTokens: 4096,
@@ -263,6 +263,11 @@ function normalizeHeadings(html: string): string {
   });
 }
 
+// ── Remove first H1 from content (WP theme already renders post title as H1) ─
+function stripFirstH1(html: string): string {
+  return html.replace(/<h1[^>]*>.*?<\/h1>\s*/i, '');
+}
+
 // ── Internal links from user's article history ───────────────────────────────
 
 async function addInternalLinks(html: string, userId: number, ourDomain: string, currentTitle: string): Promise<string> {
@@ -301,7 +306,14 @@ async function addInternalLinks(html: string, userId: number, ourDomain: string,
 
   if (related.length === 0) return html;
 
-  const linksBlock = `\n<h2>Полезные материалы по теме</h2>\n<ul>\n${related.map(a => `<li><a href="${a.url}">${a.title}</a></li>`).join('\n')}\n</ul>\n`;
+  const linksBlock = `\n<h2>Полезные материалы по теме</h2>\n` +
+    `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin:1em 0 2em;">\n` +
+    related.map(a =>
+      `<a href="${a.url}" style="display:block;padding:12px 16px;background:#f0fdf4;border:1px solid #22c55e;` +
+      `border-radius:8px;text-decoration:none;color:#166534;font-weight:500;font-size:14px;line-height:1.4;">` +
+      `${a.title}</a>`
+    ).join('\n') +
+    `\n</div>\n`;
 
   // Insert before last h2 (conclusion) if exists, otherwise append
   const lastH2Match = html.match(/(<h2[^>]*>[^<]*(?:[Вв]ывод|[Зз]аключ)[^<]*<\/h2>)/);
@@ -414,7 +426,7 @@ ${missingTopicsBlock}${lsiBlock}
 5. FAQ-раздел: добавь H2 "Часто задаваемые вопросы" с минимум 6 вопросами-ответами (важно для блока "Люди также спрашивают" в Яндексе)
 6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно. ${getShortcodesHint(serpKeyword)}
 7. Пошаговые инструкции: нумерованные списки для процессов
-8. Все упоминания заказа документов — ТОЛЬКО через https://base.kadastrmap.info/spravki/ (<a>-ссылка). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+8. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (<a>-ссылка). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
 11. Сохрани язык и стиль оригинала
@@ -441,7 +453,7 @@ ${missingTopicsBlock}${lsiBlock}
     : parsed.content;
 
   improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword);
-  improvedContent = normalizeHeadings(improvedContent);
+  improvedContent = stripFirstH1(normalizeHeadings(improvedContent));
   improvedContent = beautifyArticleHtml(improvedContent);
 
   const improvedWordCount = improvedContent
@@ -587,13 +599,15 @@ ${missingTopicsBlock}${lsiBlock}
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
 5. FAQ: H2 "Часто задаваемые вопросы" с минимум 6 вопросами-ответами (блок "Люди также спрашивают")
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
-7. Все упоминания заказа документов — ТОЛЬКО через https://base.kadastrmap.info/spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+7. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
+11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
+12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты (выписки ЕГРН, отчёты о недвижимости и т.д.) если они не относятся к теме. Только релевантные разделы.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="https://base.kadastrmap.info/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>FAQ: часто задаваемые вопросы</h2>\n[6 вопросов-ответов в формате <h3>Вопрос</h3><p>Ответ 60-80 слов</p>]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="https://base.kadastrmap.info/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через https://base.kadastrmap.info/spravki/ (вставляй как ссылку <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
+    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>FAQ: часто задаваемые вопросы</h2>\n[6 вопросов-ответов в формате <h3>Вопрос</h3><p>Ответ 60-80 слов</p>]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через /spravki/ (вставляй как ссылку <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
 
   const [seoResponse, improvedResponse] = await Promise.all([
     invokeLLM({
@@ -627,7 +641,7 @@ ${missingTopicsBlock}${lsiBlock}
 
   // Post-generation quality check: add missing FAQ questions or table
   improvedContent = await enhanceIfNeeded(improvedContent, keyword);
-  improvedContent = normalizeHeadings(improvedContent);
+  improvedContent = stripFirstH1(normalizeHeadings(improvedContent));
   improvedContent = beautifyArticleHtml(improvedContent);
 
   // Add internal links to related articles on the same site
@@ -801,13 +815,23 @@ export const articlesRouter = router({
       const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
 
       // 3. SEO analysis + improved text — parallel, with competitor context
-      const seoPrompt = `Ты SEO-эксперт по российскому рынку. Проанализируй нашу статью с учётом конкурентов и верни JSON.
+      const seoPrompt = `Ты SEO-эксперт по российскому рынку. Проанализируй статью и верни JSON.
 
-Наша статья:
+Статья (ПОСЛЕ улучшения ИИ):
 Заголовок: ${parsed.title}
 Ключевой запрос: ${serpKeyword}
-Объём: ${parsed.wordCount} слов
+Объём: ${parsed.wordCount} слов → целевой после улучшения: 1800+ слов
 Структура: ${ourHeadings}
+
+Правила оценки score (0-100):
+- 1800+ слов → +20
+- 7+ H2 заголовков → +15
+- Ключ в H1 и первом абзаце → +15
+- FAQ раздел (6+ вопросов) → +10
+- Таблица сравнения → +10
+- Внешние ссылки на авторитетные источники (rosreestr.gov.ru и др.) → +10
+- Внутренние ссылки на другие страницы сайта → +10
+- Ключевые слова в подзаголовках → +10
 
 Верни ТОЛЬКО валидный JSON:
 {"metaTitle":"до 60 симв","metaDescription":"до 160 симв","keywords":["ключ1"],"headingsSuggestions":[],"generalSuggestions":["совет"],"score":75}`;
@@ -829,13 +853,15 @@ ${missingTopicsBlock}${lsiBlock}
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
 5. FAQ: H2 "Часто задаваемые вопросы" с минимум 6 вопросами-ответами (блок "Люди также спрашивают")
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
-7. Все упоминания заказа документов — ТОЛЬКО через https://base.kadastrmap.info/spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+7. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
+11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
+12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты (выписки ЕГРН, отчёты о недвижимости и т.д.) если они не относятся к теме. Только релевантные разделы.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="https://base.kadastrmap.info/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>FAQ: часто задаваемые вопросы</h2>\n[6 вопросов-ответов в формате <h3>Вопрос</h3><p>Ответ 60-80 слов</p>]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="https://base.kadastrmap.info/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через https://base.kadastrmap.info/spravki/ (<a>-ссылка). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
+        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>FAQ: часто задаваемые вопросы</h2>\n[6 вопросов-ответов в формате <h3>Вопрос</h3><p>Ответ 60-80 слов</p>]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через /spravki/ (<a>-ссылка). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
 
       const [seoResponse, improvedResponse] = await Promise.all([
         invokeLLM({
@@ -1314,7 +1340,7 @@ ${competitorSection}
     .input(z.object({
       keyword:  z.string().min(2),
       niche:    z.string().default('кадастр и недвижимость'),
-      ctaHint:  z.string().default('Вы можете заказать справку на объект недвижимости онлайн — данные реальные из ЕГРН, подходят для проверки объекта, сделок и юридического анализа. Заказать на https://base.kadastrmap.info/spravki/'),
+      ctaHint:  z.string().default('Вы можете заказать справку на объект недвижимости онлайн — данные реальные из ЕГРН, подходят для проверки объекта, сделок и юридического анализа. Заказать на /spravki/'),
     }))
     .mutation(async ({ input }) => {
       // 1. SERP
@@ -1539,7 +1565,7 @@ ${competitorContext}
         `padding:16px 48px;border-radius:8px;font-size:16px;font-weight:500;text-decoration:none;">` +
         `${text}</a></div>\n`;
 
-      let htmlContent = injectCtasIntoHtml(beautifyArticleHtml(input.content), ctaTexts, ctaBlock);
+      let htmlContent = injectCtasIntoHtml(beautifyArticleHtml(stripFirstH1(input.content)), ctaTexts, ctaBlock);
 
       // 7. Inject content images after H2 tags (2nd, 4th, 6th occurrence)
       const validMedia = uploadedMedia.filter(Boolean) as { id: number; url: string }[];
@@ -1675,7 +1701,7 @@ ${competitorContext}
       const validMedia = uploadedMedia.filter(Boolean) as { id: number; url: string }[];
 
       // Inject images after H2 (2nd, 4th, 6th) and CTA at end
-      let html = beautifyArticleHtml(input.content);
+      let html = beautifyArticleHtml(stripFirstH1(input.content));
       if (validMedia.length > 0) {
         let h2count = 0;
         html = html.replace(/<\/h2>/gi, () => {
@@ -2326,7 +2352,7 @@ function beautifyArticleHtml(html: string): string {
     if (/^\p{Emoji}/u.test(text.trim())) return;
     const emoji = pickHeadingEmoji(text);
     $(h2).replaceWith(
-      `<h2 style="border-left:4px solid #16a34a;padding:6px 0 6px 16px;` +
+      `<h2 style="text-align:center;` +
       `margin:2em 0 0.75em;font-size:1.35em;font-weight:700;line-height:1.3;color:#1a202c;">` +
       `${emoji} ${inner}</h2>`
     );

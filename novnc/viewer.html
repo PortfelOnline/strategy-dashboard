@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Бот — просмотр</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
+    #header { background: #16213e; padding: 8px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
+    #header h1 { font-size: 14px; flex: 1; }
+    #status { font-size: 12px; padding: 3px 10px; border-radius: 4px; background: #0f3460; }
+    #status.connected { background: #1a5c2a; }
+    #status.waiting { background: #5c4a0a; }
+    #status.error { background: #5c1a1a; }
+    #screen-wrap { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
+    #overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); font-size: 16px; color: #ccc; display: none; }
+    #overlay.show { display: flex; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <h1>👁 Бот #<span id="botNum">…</span></h1>
+    <span id="status" class="waiting">⏳ Ожидание бота…</span>
+    <button onclick="window.close()" style="background:#333;color:#eee;border:none;padding:4px 10px;border-radius:4px;cursor:pointer">✕</button>
+  </div>
+  <div id="screen-wrap">
+    <div id="overlay" class="show">⏳ Ожидание запуска браузера…</div>
+  </div>
+  <script type="module">
+    import RFB from '/novnc/core/rfb.js';
+
+    const params = new URLSearchParams(location.search);
+    const botId = params.get('bot') || '?';
+    document.getElementById('botNum').textContent = botId;
+
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${proto}://${location.host}/vnc-ws`;
+    const status = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+    const wrap = document.getElementById('screen-wrap');
+
+    let rfb = null;
+    let retryTimer = null;
+
+    function connect() {
+      if (rfb) { try { rfb.disconnect(); } catch {} rfb = null; }
+
+      try {
+        rfb = new RFB(wrap, wsUrl, { credentials: { password: '' } });
+        rfb.scaleViewport = true;
+        rfb.resizeSession = false;
+
+        rfb.addEventListener('connect', () => {
+          status.textContent = '● Подключено';
+          status.className = 'connected';
+          overlay.className = '';
+          clearTimeout(retryTimer);
+        });
+
+        rfb.addEventListener('disconnect', () => {
+          status.textContent = '⏳ Бот на паузе, переподключение…';
+          status.className = 'waiting';
+          overlay.textContent = '⏳ Бот между запросами, ожидание…';
+          overlay.className = 'show';
+          rfb = null;
+          retryTimer = setTimeout(connect, 4000);
+        });
+      } catch (e) {
+        status.textContent = 'Ошибка: ' + e.message;
+        status.className = 'error';
+        retryTimer = setTimeout(connect, 5000);
+      }
+    }
+
+    connect();
+  </script>
+</body>
+</html>

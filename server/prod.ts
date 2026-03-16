@@ -67,7 +67,12 @@ httpServer.on('upgrade', (req, socket, head) => {
     const containerIp = getVncContainerIp();
     if (!containerIp) { socket.destroy(); return; }
     const target = connect(5901, containerIp, () => {
-      if (head.length > 0) target.write(head);
+      // Resend the full HTTP upgrade request headers to websockify
+      const headers = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+        Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') +
+        '\r\n\r\n';
+      target.write(headers);
+      if (head && head.length > 0) target.write(head);
     });
     socket.pipe(target);
     target.pipe(socket);

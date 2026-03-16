@@ -42,8 +42,22 @@
     let rfb = null;
     let retryTimer = null;
 
-    function connect() {
+    async function connect() {
       if (rfb) { try { rfb.disconnect(); } catch {} rfb = null; }
+
+      // Start x11vnc for this bot via API before connecting
+      try {
+        const r = await fetch('/api/trpc/vncStart', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ botId: parseInt(botId) || 1 }),
+        });
+        if (r.ok) {
+          // Give x11vnc 1.5s to start listening on port 5900
+          await new Promise(res => setTimeout(res, 1500));
+        }
+      } catch (e) { /* ignore, will retry */ }
 
       try {
         rfb = new RFB(wrap, wsUrl, { credentials: { password: '' } });

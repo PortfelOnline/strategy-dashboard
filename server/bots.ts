@@ -279,18 +279,34 @@ function xSocketExists(container: string, displayNum: number): boolean {
   } catch { return false; }
 }
 
+function findActiveDisplay(container: string, preferredDisplay: number): number | null {
+  // Check preferred display first
+  if (xSocketExists(container, preferredDisplay)) return preferredDisplay;
+  // Find any active X socket
+  try {
+    const sockets = execFileSync('docker', ['exec', container, 'ls', '/tmp/.X11-unix/'], { encoding: 'utf8' })
+      .trim().split('\n')
+      .filter(s => s.startsWith('X') && s !== 'X99')
+      .map(s => parseInt(s.slice(1)))
+      .filter(n => !isNaN(n));
+    if (sockets.length > 0) return sockets[0];
+    // Fallback: include :99
+    const all = execFileSync('docker', ['exec', container, 'ls', '/tmp/.X11-unix/'], { encoding: 'utf8' })
+      .trim().split('\n').filter(s => s.startsWith('X'))
+      .map(s => parseInt(s.slice(1))).filter(n => !isNaN(n));
+    return all.length > 0 ? all[0] : null;
+  } catch { return null; }
+}
+
 function restartX11vnc(container: string, displayNum: number): void {
   try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
-  if (!xSocketExists(container, displayNum)) return;
+  const actualDisplay = findActiveDisplay(container, displayNum);
+  if (actualDisplay === null) return;
+  if (actualDisplay !== displayNum) lastVncDisplay = actualDisplay;
   spawn('docker', [
     'exec', container,
-    'x11vnc', '-display', `:${displayNum}`,
+    'x11vnc', '-display', `:${actualDisplay}`,
     '-nopw', '-rfbport', '5900', '-forever', '-shared', '-noxdamage', '-quiet',
-  ], { detached: true, stdio: 'ignore' });
-  // Start websockify to bridge WebSocket → raw VNC TCP
-  spawn('docker', [
-    'exec', container,
-    'websockify', '5901', 'localhost:5900',
   ], { detached: true, stdio: 'ignore' });
 }
 
@@ -303,10 +319,13 @@ function startVncWatcher(container: string): void {
       try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'x11vnc']); return true; } catch { return false; }
     })();
     if (newDisplay !== lastVncDisplay || !vncRunning) {
-      if (xSocketExists(container, newDisplay)) {
-        lastVncDisplay = newDisplay;
-        restartX11vnc(container, newDisplay);
-      }
+      restartX11vnc(container, newDisplay);
+    }
+    // Ensure websockify is running
+    try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'websockify']); }
+    catch {
+      spawn('docker', ['exec', container, 'websockify', '5901', 'localhost:5900'],
+        { detached: true, stdio: 'ignore' });
     }
   }, 3000) as unknown as ReturnType<typeof setTimeout>;
 }

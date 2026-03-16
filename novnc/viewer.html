@@ -66,8 +66,10 @@
           retryTimer = setTimeout(connect, 4000);
         });
       } catch (e) {
-        status.textContent = 'Ошибка: ' + e.message;
-        status.className = 'error';
+        status.textContent = 'Ожидание VNC…';
+        status.className = 'waiting';
+        overlay.textContent = '⏳ Ожидание запуска браузера бота…';
+        overlay.className = 'show';
         retryTimer = setTimeout(connect, 5000);
       }
     }

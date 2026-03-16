@@ -281,7 +281,6 @@ function xSocketExists(container: string, displayNum: number): boolean {
 
 function restartX11vnc(container: string, displayNum: number): void {
   try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
-  try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'websockify']); } catch {}
   if (!xSocketExists(container, displayNum)) return;
   spawn('docker', [
     'exec', container,

@@ -64,7 +64,16 @@ const httpServer = createServer(app);
 // WebSocket proxy: /vnc-ws → websockify in yandex_bot container (port 5901)
 httpServer.on('upgrade', (req, socket, head) => {
   if (req.url === '/vnc-ws') {
-    const containerIp = getVncContainerIp();
+    let containerIp = getVncContainerIp();
+    // Fallback: get container IP via docker inspect
+    if (!containerIp) {
+      try {
+        const { execFileSync: _efs } = require('child_process') as typeof import('child_process');
+        containerIp = (_efs as Function)('docker', ['inspect', process.env.BOT_CONTAINER || 'yandex_bot',
+          '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'],
+          { encoding: 'utf8' }).trim() || null;
+      } catch {}
+    }
     if (!containerIp) { socket.destroy(); return; }
     const target = connect(5901, containerIp, () => {
       // Resend the full HTTP upgrade request headers to websockify

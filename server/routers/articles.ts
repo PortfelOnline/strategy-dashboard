@@ -1754,6 +1754,32 @@ ${competitorContext}
     }),
 
   /**
+   * Publish a Revisionize draft → applies content to original post
+   * Revisionize hooks transition_post_status and copies draft → original automatically
+   */
+  publishDraftRevision: protectedProcedure
+    .input(z.object({
+      accountId: z.number(),
+      draftId:   z.number(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const account = await wordpressDb.getWordpressAccountById(ctx.user.id, input.accountId);
+      if (!account) throw new TRPCError({ code: 'NOT_FOUND', message: 'WordPress аккаунт не найден' });
+
+      const siteBase = account.siteUrl.replace(/\/$/, '');
+      const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+      const axiosInst = (await import('axios')).default;
+
+      const { data } = await axiosInst.post(
+        `${siteBase}/wp-json/wp/v2/posts/${input.draftId}`,
+        { status: 'publish' },
+        { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
+      );
+
+      return { success: true, link: data.link as string };
+    }),
+
+  /**
    * Save improved article to Content Library
    */
   saveToLibrary: protectedProcedure

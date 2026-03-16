@@ -489,6 +489,7 @@ function AnalysisPanel({
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [articleCopied, setArticleCopied] = useState(false);
   const [draftLink, setDraftLink] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<number | null>(null);
 
   const { data: wpAccounts = [] } = trpc.wordpress.getAccounts.useQuery();
   const firstAccountId = wpAccounts[0]?.id ?? null;
@@ -496,10 +497,21 @@ function AnalysisPanel({
   const { mutate: createDraft, isPending: isDraftPending } = trpc.articles.createDraftRevision.useMutation({
     onSuccess: (d) => {
       setDraftLink(d.editUrl);
+      setDraftId(d.draftId);
       window.open(d.editUrl, '_blank');
       toast.success('Черновик создан — открыт в WP Admin');
     },
     onError: (e: any) => toast.error(e?.message || 'Ошибка создания черновика'),
+  });
+
+  const { mutate: applyDraft, isPending: isApplyPending } = trpc.articles.publishDraftRevision.useMutation({
+    onSuccess: (d) => {
+      setDraftId(null);
+      setDraftLink(null);
+      toast.success('Статья опубликована на сайте!');
+      if (d.link) window.open(d.link, '_blank');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Ошибка публикации черновика'),
   });
 
   const handleCreateDraft = () => {
@@ -558,6 +570,18 @@ function AnalysisPanel({
             {isDraftPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Globe className="w-4 h-4" />}
             {draftLink ? 'Открыть черновик' : 'Черновик'}
           </Button>
+          {draftId && firstAccountId && (
+            <Button
+              size="sm"
+              className="gap-1 bg-blue-600 hover:bg-blue-700 text-white"
+              onClick={() => applyDraft({ accountId: firstAccountId, draftId })}
+              disabled={isApplyPending}
+              title="Применить черновик к оригинальной статье через Revisionize"
+            >
+              {isApplyPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+              Применить к оригиналу
+            </Button>
+          )}
           <Button
             size="sm"
             className="gap-1 bg-green-600 hover:bg-green-700 text-white"

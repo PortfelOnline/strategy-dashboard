@@ -103,7 +103,7 @@ export default function Bots() {
   const utils = trpc.useUtils();
 
   // Bots queries
-  const { data, isLoading, refetch } = trpc.list.useQuery(undefined, {
+  const { data, isLoading, isFetching, refetch } = trpc.list.useQuery(undefined, {
     refetchInterval: 5000,
   });
   const { data: logsData, isLoading: logsLoading } = trpc.logs.useQuery(
@@ -207,6 +207,7 @@ export default function Bots() {
 
   const bots: BotEntry[] = data?.bots ?? [];
   const proxyStats = data?.proxyStats;
+  const warmedCount = bots.filter(b => ((b.state as Record<string, unknown>)?.warmup_days as number ?? 0) >= 14).length;
   const proxies: ProxyEntry[] = proxiesData ?? [];
   const filteredProxies = proxies.filter(p =>
     !proxySearch || p.proxy.toLowerCase().includes(proxySearch.toLowerCase())
@@ -242,8 +243,11 @@ export default function Bots() {
             <p className="text-slate-600">Управление поисковыми ботами</p>
           </div>
           <div className="flex gap-2 items-center">
-            <Button variant="outline" size="sm" onClick={() => { refetch(); refetchProxies(); }}>
-              <RefreshCw className="w-4 h-4 mr-1" /> Refresh
+            <Button variant="outline" size="sm" disabled={isFetching} onClick={async () => {
+              await Promise.all([refetch(), refetchProxies()]);
+              toast.success('Обновлено');
+            }}>
+              <RefreshCw className={`w-4 h-4 mr-1 ${isFetching ? 'animate-spin' : ''}`} /> Refresh
             </Button>
             <Button variant="outline" size="sm" className="text-slate-600 text-xs"
               onClick={async () => { await fetch('/api/auth/logout', {method:'POST'}); window.location.reload(); }}>
@@ -276,7 +280,7 @@ export default function Bots() {
           <TabsContent value="bots">
             {/* Proxy Stats */}
             {proxyStats && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
@@ -319,6 +323,20 @@ export default function Bots() {
                       {bots.filter(b => b.status === 'running').length}
                     </div>
                     <p className="text-xs text-slate-500 mt-1">of {bots.length} total</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-500" /> Прогретые боты
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold text-green-600">{warmedCount}</div>
+                    <p className="text-xs text-slate-500 mt-1">из {bots.length} (≥14 дней прогрева)</p>
+                    <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
+                      <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: bots.length > 0 ? `${Math.min(100, (warmedCount / bots.length) * 100)}%` : '0%' }} />
+                    </div>
                   </CardContent>
                 </Card>
               </div>
@@ -430,8 +448,9 @@ export default function Bots() {
                                   {isRunning && (
                                     <button
                                       className="p-1 rounded hover:bg-blue-100 text-blue-500"
-                                      onClick={() => vncStart.mutate({ botId: bot.botId })}
-                                      disabled={vncStart.isPending}
+                                      onClick={() => {
+                                        window.open(`/novnc/viewer.html?bot=${bot.botId}`, `vnc-${bot.botId}`, 'width=1280,height=820');
+                                      }}
                                       title="Смотреть"
                                     >
                                       <Eye className="w-3.5 h-3.5" />

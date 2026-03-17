@@ -318,7 +318,10 @@ function startVncWatcher(container: string): void {
     const vncRunning = (() => {
       try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'x11vnc']); return true; } catch { return false; }
     })();
-    if (newDisplay !== lastVncDisplay || !vncRunning) {
+    // Restart if: x11vnc not running, OR current display died, OR bot got a real new display
+    const currentDisplayAlive = xSocketExists(container, lastVncDisplay);
+    const newDisplayExists = xSocketExists(container, newDisplay);
+    if (!vncRunning || !currentDisplayAlive || (newDisplayExists && newDisplay !== lastVncDisplay)) {
       restartX11vnc(container, newDisplay);
     }
     // Ensure websockify is running

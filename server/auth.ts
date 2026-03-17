@@ -64,7 +64,7 @@ export function login(password: string, res: Response): boolean {
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
     maxAge: COOKIE_MAX_AGE,
-    sameSite: "strict",
+    sameSite: "lax",
   });
   return true;
 }
@@ -85,7 +85,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     next();
     return;
   }
-  if (req.path.startsWith("/api/")) {
+  if (req.originalUrl.startsWith("/api/")) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

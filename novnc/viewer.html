@@ -6,41 +6,38 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #1a1a2e; color: #eee; font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; }
-    #header { background: #16213e; padding: 8px 12px; display: flex; align-items: center; gap-10 gap: 8px; flex-wrap: wrap; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
-    #header { gap: 8px; }
+    #header { background: #16213e; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid #0f3460; flex-shrink: 0; }
     #title { font-size: 14px; font-weight: 600; white-space: nowrap; }
     #vnc-status { font-size: 12px; padding: 3px 10px; border-radius: 4px; background: #0f3460; white-space: nowrap; }
     #vnc-status.connected { background: #1a5c2a; }
-    #vnc-status.waiting { background: #5c4a0a; }
-    #vnc-status.error { background: #5c1a1a; }
+    #vnc-status.waiting   { background: #5c4a0a; }
+    #vnc-status.error     { background: #5c1a1a; }
     #bot-status { font-size: 12px; padding: 3px 8px; border-radius: 4px; background: #1a3a1a; color: #6ee66e; white-space: nowrap; }
     #bot-status.stopped { background: #2a2a2a; color: #888; }
-    select, .btn {
-      font-size: 12px; border: none; border-radius: 4px; cursor: pointer;
-      padding: 4px 8px; outline: none;
-    }
+    select, .btn { font-size: 12px; border: none; border-radius: 4px; cursor: pointer; padding: 4px 8px; outline: none; }
     select { background: #0f3460; color: #eee; }
     .btn { color: #fff; font-weight: 500; }
     .btn-start { background: #1a6b2a; }
     .btn-start:hover { background: #1e8034; }
     .btn-start:disabled { background: #1a4a22; color: #888; cursor: default; }
     .btn-stop  { background: #7a1a1a; }
-    .btn-stop:hover { background: #9a2222; }
+    .btn-stop:hover  { background: #9a2222; }
     .btn-stop:disabled  { background: #4a1818; color: #888; cursor: default; }
     .btn-close { background: #333; }
     .btn-close:hover { background: #555; }
     #spacer { flex: 1; }
-    #screen-wrap { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
-    #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.65); font-size: 16px; color: #ccc; gap: 12px; display: none; }
+    #screen-wrap { flex: 1; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; background: #000; }
+    /* overlay: shown only when bot is stopped or loading for first time */
+    #overlay { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.80); font-size: 16px; color: #ccc; gap: 12px; }
     #overlay.show { display: flex; }
-    #overlay-text { text-align: center; }
+    #overlay-text { text-align: center; max-width: 280px; }
     #overlay-start-hint { font-size: 13px; color: #aaa; }
   </style>
 </head>
 <body>
   <div id="header">
     <span id="title">👁 Бот #<span id="botNum">…</span></span>
-    <span id="vnc-status" class="waiting">⏳ Подключение…</span>
+    <span id="vnc-status" class="waiting">⏳ Инициализация…</span>
     <span id="bot-status" class="stopped">⬤ Остановлен</span>
     <select id="sel-mode">
       <option value="warmup">Warmup</option>
@@ -60,8 +57,8 @@
   </div>
   <div id="screen-wrap">
     <div id="overlay" class="show">
-      <div id="overlay-text">⏳ Ожидание запуска браузера…</div>
-      <div id="overlay-start-hint">Нажми ▶ Запустить чтобы начать прогрев</div>
+      <div id="overlay-text">⏳ Проверяем статус бота…</div>
+      <div id="overlay-start-hint"></div>
     </div>
   </div>
 
@@ -86,12 +83,13 @@
     const selMode    = document.getElementById('sel-mode');
     const selSite    = document.getElementById('sel-site');
 
-    let rfb          = null;
-    let retryTimer   = null;
-    let wasConnected = false;
-    let botRunning   = false;
+    let rfb           = null;
+    let retryTimer    = null;
+    let vncActive     = false;   // VNC stream currently connected
+    let botRunning    = false;
+    let vncConnecting = false;   // prevent multiple concurrent connect() calls
 
-    // ─── API helpers ───────────────────────────────────────────
+    // ─── API ───────────────────────────────────────────────────
     async function api(procedure, input) {
       try {
         const r = await fetch(`/api/trpc/${procedure}`, {
@@ -101,23 +99,34 @@
           body: JSON.stringify(input ?? {}),
         });
         if (r.status === 401) return { __status: 401 };
-        if (!r.ok) return { __status: r.status };
+        if (!r.ok)            return { __status: r.status };
         const d = await r.json();
         return d?.result?.data ?? null;
       } catch { return null; }
     }
 
+    // ─── Bot status poll ───────────────────────────────────────
     async function checkBotStatus() {
       try {
-        const r = await fetch('/api/trpc/list?batch=1&input=%7B%7D', {
-          credentials: 'include',
-        });
+        const r = await fetch('/api/trpc/list?batch=1&input=%7B%7D', { credentials: 'include' });
         if (!r.ok) return;
         const d = await r.json();
         const data = d?.[0]?.result?.data;
         if (!data) return;
         const bot = data.bots?.find(b => b.botId === botIdN);
-        setBotRunning(bot?.status === 'running', bot?.mode, bot?.website);
+        const nowRunning = bot?.status === 'running';
+        const wasRunning = botRunning;
+        setBotRunning(nowRunning, bot?.mode, bot?.website);
+
+        // Bot just started → begin VNC
+        if (!wasRunning && nowRunning && !vncConnecting && !vncActive) {
+          scheduleConnect(500);
+        }
+        // Bot stopped → disconnect VNC, show stopped overlay
+        if (wasRunning && !nowRunning) {
+          disconnectVnc();
+          showOverlay('⬤ Бот остановлен', '▶ Запустить снова когда нужно');
+        }
       } catch {}
     }
 
@@ -134,32 +143,34 @@
         botStatus.className = 'stopped';
         btnStart.disabled = false;
         btnStop.disabled  = true;
-        hint.style.display = '';
       }
     }
 
-    // ─── Start / Stop ──────────────────────────────────────────
+    function showOverlay(text, hintText = '') {
+      overlayTxt.textContent = text;
+      hint.textContent = hintText;
+      hint.style.display = hintText ? '' : 'none';
+      overlay.className = 'show';
+    }
+
+    function hideOverlay() {
+      overlay.className = '';
+    }
+
+    // ─── Start / Stop buttons ──────────────────────────────────
     btnStart.addEventListener('click', async () => {
       btnStart.disabled = true;
       btnStart.textContent = '…';
-      const result = await api('start', {
-        botId: botIdN,
-        mode: selMode.value,
-        website: selSite.value,
-      });
+      const result = await api('start', { botId: botIdN, mode: selMode.value, website: selSite.value });
+      btnStart.textContent = '▶ Запустить';
       if (result?.pid) {
         setBotRunning(true, selMode.value, selSite.value);
-        overlayTxt.textContent = '⏳ Бот запущен, ожидание браузера…';
-        overlay.className = 'show';
-        // Reconnect VNC so it picks up the new display
-        clearTimeout(retryTimer);
-        retryTimer = setTimeout(connect, 1500);
+        showOverlay('⏳ Браузер запускается…');
+        scheduleConnect(2000);
       } else {
         btnStart.disabled = false;
-        btnStart.textContent = '▶ Запустить';
-        overlayTxt.textContent = '⚠️ Ошибка запуска бота';
+        showOverlay('⚠️ Ошибка запуска бота', 'Проверь логи');
       }
-      btnStart.textContent = '▶ Запустить';
     });
 
     btnStop.addEventListener('click', async () => {
@@ -167,41 +178,55 @@
       btnStop.textContent = '…';
       await api('stop', { botId: botIdN });
       setBotRunning(false);
-      overlayTxt.textContent = '⬤ Бот остановлен';
-      overlay.className = 'show';
+      disconnectVnc();
+      showOverlay('⬤ Бот остановлен', '▶ Нажми Запустить чтобы начать');
       btnStop.textContent = '■ Стоп';
     });
 
     // ─── VNC ───────────────────────────────────────────────────
-    async function startVncServer() {
-      const res = await api('vncStart', { botId: botIdN });
-      if (res && res.__status === 401) return 'unauth';
-      if (!res || res.__status) return 'error';
-      return 'ok';
+    function disconnectVnc() {
+      clearTimeout(retryTimer);
+      vncConnecting = false;
+      vncActive = false;
+      if (rfb) { try { rfb.disconnect(); } catch {} rfb = null; }
+      vncStatus.textContent = '⬤ Отключено';
+      vncStatus.className = '';
+    }
+
+    function scheduleConnect(delay = 3000) {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(connect, delay);
     }
 
     async function connect() {
+      if (vncConnecting) return;
+      if (!botRunning) return;  // don't connect if bot stopped
+
+      vncConnecting = true;
       if (rfb) { try { rfb.disconnect(); } catch {} rfb = null; }
 
       vncStatus.textContent = '⏳ Запускаю VNC…';
       vncStatus.className = 'waiting';
 
-      const vncResult = await startVncServer();
-      if (vncResult === 'unauth') {
-        overlayTxt.textContent = '🔑 Нет сессии. <a href="/" target="_blank" style="color:#7af">Войди в дашборд</a>, затем закрой это окно и нажми 👁 снова.';
-        hint.style.display = 'none';
-        overlay.className = 'show';
-        retryTimer = setTimeout(connect, 10000);
+      const res = await api('vncStart', { botId: botIdN });
+      if (res?.__status === 401) {
+        vncConnecting = false;
+        showOverlay('🔑 Нет сессии', 'Войди в дашборд и открой снова');
+        scheduleConnect(15000);
         return;
       }
-      if (vncResult === 'error') {
-        overlayTxt.innerHTML = '⚠️ Ошибка сервера VNC, повтор…';
-        overlay.className = 'show';
-        retryTimer = setTimeout(connect, 5000);
+      if (!res || res.__status) {
+        vncConnecting = false;
+        vncStatus.textContent = '⚠️ VNC ошибка';
+        vncStatus.className = 'error';
+        scheduleConnect(5000);
         return;
       }
 
-      await new Promise(res => setTimeout(res, 2000));
+      // Wait for x11vnc to start
+      await new Promise(r => setTimeout(r, 2000));
+
+      if (!botRunning) { vncConnecting = false; return; }
 
       try {
         rfb = new RFB(wrap, wsUrl, { credentials: { password: '' } });
@@ -209,36 +234,57 @@
         rfb.resizeSession = false;
 
         rfb.addEventListener('connect', () => {
-          wasConnected = true;
+          vncActive = true;
+          vncConnecting = false;
           vncStatus.textContent = '● Подключено';
           vncStatus.className = 'connected';
-          overlay.className = '';
-          clearTimeout(retryTimer);
+          hideOverlay();
         });
 
-        rfb.addEventListener('disconnect', () => {
+        rfb.addEventListener('disconnect', (ev) => {
           rfb = null;
-          vncStatus.textContent = wasConnected ? '⏳ Между запросами…' : '⏳ Ожидание…';
+          vncActive = false;
+          vncConnecting = false;
+          const reason = ev?.detail?.reason || '';
+          // Only show overlay when bot stopped. If bot still running, reconnect silently.
+          if (!botRunning) {
+            vncStatus.textContent = '⬤ Отключено';
+            vncStatus.className = '';
+            return;
+          }
+          // Bot still running — silent reconnect, show status in bar only
+          vncStatus.textContent = `⏳ Переподключение… ${reason ? '('+reason+')' : ''}`;
           vncStatus.className = 'waiting';
-          overlayTxt.textContent = wasConnected
-            ? '⏳ Бот между запросами, скоро появится снова…'
-            : '⏳ Браузер бота ещё не запущен…';
-          overlay.className = 'show';
-          retryTimer = setTimeout(connect, 3000);
+          scheduleConnect(3000);
         });
-      } catch {
-        vncStatus.textContent = 'Ожидание…';
-        vncStatus.className = 'waiting';
-        overlayTxt.textContent = '⏳ Ожидание браузера бота…';
-        overlay.className = 'show';
-        retryTimer = setTimeout(connect, 5000);
+
+        rfb.addEventListener('securityfailure', (ev) => {
+          vncConnecting = false;
+          vncStatus.textContent = '⚠️ VNC auth error';
+          vncStatus.className = 'error';
+          scheduleConnect(5000);
+        });
+
+      } catch (e) {
+        vncConnecting = false;
+        vncStatus.textContent = '⚠️ RFB init error';
+        vncStatus.className = 'error';
+        scheduleConnect(5000);
       }
     }
 
     // ─── Init ──────────────────────────────────────────────────
-    checkBotStatus();
-    setInterval(checkBotStatus, 5000);
-    connect();
+    // First: check bot status, then decide whether to start VNC
+    (async () => {
+      await checkBotStatus();
+      if (botRunning) {
+        showOverlay('⏳ Подключаемся к браузеру…');
+        scheduleConnect(500);
+      } else {
+        showOverlay('⬤ Бот не запущен', '▶ Нажми Запустить чтобы начать');
+      }
+      setInterval(checkBotStatus, 5000);
+    })();
   </script>
 </body>
 </html>

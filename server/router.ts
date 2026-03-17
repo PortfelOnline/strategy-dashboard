@@ -1,4 +1,4 @@
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as botManager from "./bots.js";
 import * as orch from "./orchestrator.js";
@@ -115,7 +115,11 @@ export const botsRouter = t.router({
   // --- VNC ---
   vncStart: procedure
     .input(z.object({ botId: z.number().int().min(1).max(1000) }))
-    .mutation(({ input }) => botManager.startVnc(input.botId)),
+    .mutation(({ input }) => {
+      const result = botManager.startVnc(input.botId);
+      if (!result) throw new TRPCError({ code: 'NOT_FOUND', message: 'Bot display not available' });
+      return result;
+    }),
 
   vncStop: procedure
     .mutation(() => { botManager.stopVnc(); return { success: true }; }),

@@ -300,47 +300,43 @@ function findActiveDisplay(container: string, preferredDisplay: number): number 
 
 function restartX11vnc(container: string, displayNum: number): void {
   try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
-  const actualDisplay = findActiveDisplay(container, displayNum);
-  if (actualDisplay === null) return;
-  if (actualDisplay !== displayNum) lastVncDisplay = actualDisplay;
+  // Only start x11vnc if the bot's OWN display is alive — no fallback to other bots
+  if (!xSocketExists(container, displayNum)) return;
+  lastVncDisplay = displayNum;
   spawn('docker', [
     'exec', container,
-    'x11vnc', '-display', `:${actualDisplay}`,
+    'x11vnc', '-display', `:${displayNum}`,
     '-nopw', '-rfbport', '5900', '-forever', '-shared', '-noxdamage', '-quiet',
   ], { detached: true, stdio: 'ignore' });
 }
 
-function startVncWatcher(container: string): void {
-  if (vncWatcherTimer) clearInterval(vncWatcherTimer as unknown as number);
-  vncWatcherTimer = setInterval(() => {
-    if (!activeVncBotId) return;
-    const newDisplay = readBotDisplay(container, activeVncBotId);
-    const vncRunning = (() => {
-      try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'x11vnc']); return true; } catch { return false; }
-    })();
-    // Restart if: x11vnc not running, OR current display died, OR bot got a real new display
-    const currentDisplayAlive = xSocketExists(container, lastVncDisplay);
-    const newDisplayExists = xSocketExists(container, newDisplay);
-    if (!vncRunning || !currentDisplayAlive || (newDisplayExists && newDisplay !== lastVncDisplay)) {
-      restartX11vnc(container, newDisplay);
+// External watcher removed — internal vnc_watcher.sh reads /app/outputs/vnc_target_display.txt
+// and manages x11vnc automatically
+function writeVncTarget(displayNum: number | null): void {
+  const targetFile = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'vnc_target_display.txt');
+  try {
+    if (displayNum !== null) {
+      fs.writeFileSync(targetFile, String(displayNum));
+    } else {
+      if (fs.existsSync(targetFile)) fs.unlinkSync(targetFile);
     }
-    // Ensure websockify is running
-    try { execFileSync('docker', ['exec', container, 'pgrep', '-f', 'websockify']); }
-    catch {
-      spawn('docker', ['exec', container, 'websockify', '5901', 'localhost:5900'],
-        { detached: true, stdio: 'ignore' });
-    }
-  }, 3000) as unknown as ReturnType<typeof setTimeout>;
+  } catch {}
 }
 
-export function startVnc(botId: number): { display: number; containerIp: string } {
+export function startVnc(botId: number): { display: number; containerIp: string } | null {
   const container = process.env.BOT_CONTAINER || 'yandex_bot';
-  activeVncBotId = botId;
 
   const displayNum = readBotDisplay(container, botId);
+  // If bot's display is not alive, don't start VNC — bot is not running
+  if (!xSocketExists(container, displayNum)) {
+    return null;
+  }
+
+  activeVncBotId = botId;
   lastVncDisplay = displayNum;
 
-  restartX11vnc(container, displayNum);
+  // Tell internal vnc_watcher.sh which display to use
+  writeVncTarget(displayNum);
 
   try {
     activeVncContainerIp = execFileSync(
@@ -351,14 +347,13 @@ export function startVnc(botId: number): { display: number; containerIp: string 
     activeVncContainerIp = '127.0.0.1';
   }
 
-  startVncWatcher(container);
   return { display: displayNum, containerIp: activeVncContainerIp };
 }
 
 export function stopVnc(): void {
-  const container = process.env.BOT_CONTAINER || 'yandex_bot';
-  try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'x11vnc']); } catch {}
-  try { execFileSync('docker', ['exec', container, 'pkill', '-f', 'websockify']); } catch {}
+  // Clear target so internal watcher stops x11vnc
+  writeVncTarget(null);
+  activeVncBotId = null;
   activeVncContainerIp = null;
 }
 

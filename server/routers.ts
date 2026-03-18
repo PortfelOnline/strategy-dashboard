@@ -12,6 +12,18 @@ import { articlesRouter } from "./routers/articles";
 import { generateGeminiImage, generateVeoVideo, buildVisualPrompt } from "./_core/gemini";
 import { storagePut } from "./storage";
 
+// ─── Trends cache & fallbacks ──────────────────────────────────────────────
+const trendsCache = new Map<string, { trends: { query: string; traffic: string }[]; ts: number }>();
+
+const FALLBACK_TRENDS_IN = [
+  { query: "AI chatbot for business", traffic: "50K+" },
+  { query: "WhatsApp automation", traffic: "100K+" },
+  { query: "Instagram marketing India", traffic: "200K+" },
+  { query: "small business online", traffic: "150K+" },
+  { query: "digital marketing tips", traffic: "80K+" },
+  { query: "customer support automation", traffic: "60K+" },
+];
+
 // ─── Content generation helpers ────────────────────────────────────────────
 
 const CONTENT_SYSTEM_PROMPT = `You are a high-converting social media copywriter for get-my-agent.com.
@@ -673,6 +685,48 @@ export const appRouter = router({
         const hashtags = typeof response.choices[0]?.message.content === 'string'
           ? response.choices[0].message.content.trim() : "";
         return { hashtags };
+      }),
+
+    getTrends: publicProcedure
+      .input(z.object({
+        geo: z.enum(["IN", "US", "GB", "AU", "SG"]).default("IN"),
+      }))
+      .query(async ({ input }) => {
+        const cacheKey = `trends_${input.geo}`;
+        const cached = trendsCache.get(cacheKey);
+        if (cached && Date.now() - cached.ts < 60 * 60 * 1000) {
+          return { trends: cached.trends, source: "cache" as const };
+        }
+
+        try {
+          const rssUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${input.geo}`;
+          const res = await fetch(rssUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; TrendBot/1.0)" },
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) throw new Error(`RSS fetch failed: ${res.status}`);
+          const xml = await res.text();
+
+          // Extract titles from RSS items
+          const titleMatches = xml.matchAll(/<title><!\[CDATA\[([^\]]+)\]\]><\/title>/g);
+          const titles = [...titleMatches].map(m => m[1]).filter(Boolean);
+
+          // Extract traffic numbers (approximate search volume)
+          const trafficMatches = xml.matchAll(/<ht:approx_traffic>([^<]+)<\/ht:approx_traffic>/g);
+          const traffic = [...trafficMatches].map(m => m[1]);
+
+          const trends = titles.slice(0, 12).map((title, i) => ({
+            query: title,
+            traffic: traffic[i] ?? "",
+          }));
+
+          trendsCache.set(cacheKey, { trends, ts: Date.now() });
+          return { trends, source: "live" as const };
+        } catch (err) {
+          // Return cached stale data if available, else fallback
+          if (cached) return { trends: cached.trends, source: "stale" as const };
+          return { trends: FALLBACK_TRENDS_IN, source: "fallback" as const };
+        }
       }),
   }),
 });

@@ -6,11 +6,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap, CalendarDays, Image, Video, Send } from 'lucide-react';
+import { Loader2, Copy, Download, Sparkles, RefreshCw, Zap, CalendarDays, Image, Video, Send, TrendingUp, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLocation } from 'wouter';
 import DashboardLayout from '@/components/DashboardLayout';
 import { PublishToMeta } from '@/components/PublishToMeta';
+
+type TrendGeo = 'IN' | 'US' | 'GB' | 'AU' | 'SG';
+
+const GEO_LABELS: Record<TrendGeo, string> = {
+  IN: '🇮🇳 India', US: '🇺🇸 USA', GB: '🇬🇧 UK', AU: '🇦🇺 Australia', SG: '🇸🇬 Singapore',
+};
 
 type PillarType = 'desi_business_owner' | 'five_minute_transformation' | 'roi_calculator';
 type Platform = 'facebook' | 'instagram' | 'whatsapp' | 'youtube';
@@ -256,6 +262,10 @@ export default function ContentGenerator() {
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState('');
   const [savedPostId, setSavedPostId] = useState<number | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [trendGeo, setTrendGeo] = useState<TrendGeo>('IN');
+
+  const { data: trendsData, isLoading: trendsLoading, refetch: refetchTrends } =
+    trpc.content.getTrends.useQuery({ geo: trendGeo }, { staleTime: 60 * 60 * 1000 });
 
   // Bulk generate state
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -475,6 +485,58 @@ export default function ContentGenerator() {
                     ))}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Trends Panel */}
+            <Card className="shadow-sm border-rose-100">
+              <CardHeader className="pb-2 pt-4 px-5">
+                <CardTitle className="text-sm font-semibold text-slate-900 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4 text-rose-500" />
+                    Trending Now
+                    {trendsData?.source === 'live' && (
+                      <span className="text-xs font-normal text-green-600 bg-green-50 px-1.5 py-0.5 rounded-full">live</span>
+                    )}
+                    {trendsData?.source === 'fallback' && (
+                      <span className="text-xs font-normal text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">offline</span>
+                    )}
+                  </span>
+                  <button onClick={() => refetchTrends()} className="text-slate-400 hover:text-slate-600" title="Refresh">
+                    <RefreshCw className={`w-3.5 h-3.5 ${trendsLoading ? 'animate-spin' : ''}`} />
+                  </button>
+                </CardTitle>
+                <CardDescription className="text-xs flex items-center gap-2">
+                  Click a trend to add it to your prompt
+                  <span className="flex gap-1">
+                    {(Object.keys(GEO_LABELS) as TrendGeo[]).map(geo => (
+                      <button key={geo} onClick={() => setTrendGeo(geo)}
+                        className={`px-1.5 py-0.5 rounded text-xs transition-all ${trendGeo === geo ? 'bg-rose-100 text-rose-700 font-semibold' : 'text-slate-400 hover:text-slate-600'}`}>
+                        {GEO_LABELS[geo].split(' ')[0]}
+                      </button>
+                    ))}
+                  </span>
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="px-5 pb-4">
+                {trendsLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <Loader2 className="w-3 h-3 animate-spin" />Fetching trends...
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(trendsData?.trends ?? []).map((t, i) => (
+                      <button key={i}
+                        onClick={() => setCustomPrompt(p => p ? `${p}. Incorporate trending topic: "${t.query}"` : `Incorporate trending topic: "${t.query}"`)}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-rose-200 bg-white text-xs text-slate-700 hover:border-rose-400 hover:bg-rose-50 transition-all"
+                      >
+                        <span className="text-rose-400 font-bold">#{i + 1}</span>
+                        {t.query}
+                        {t.traffic && <span className="text-slate-400 ml-0.5">{t.traffic}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

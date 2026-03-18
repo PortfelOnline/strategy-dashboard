@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { trpc } from '@/lib/trpc';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -298,6 +298,13 @@ export default function ContentGenerator() {
   const [hookVariants, setHookVariants] = useState<any[]>([]);
   const [generatedImageUrl, setGeneratedImageUrl] = useState('');
   const [generatedVideoUrl, setGeneratedVideoUrl] = useState('');
+  const imageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (generatedImageUrl) {
+      imageRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [generatedImageUrl]);
   const [savedPostId, setSavedPostId] = useState<number | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [trendGeo, setTrendGeo] = useState<TrendGeo>('IN');
@@ -952,7 +959,7 @@ export default function ContentGenerator() {
 
                     {/* Generated visual */}
                     {generatedImageUrl && (
-                      <div>
+                      <div ref={imageRef}>
                         <label className="text-xs font-semibold text-slate-500 uppercase block mb-1">Generated Image</label>
                         <img src={generatedImageUrl} alt="Generated visual" className="w-full rounded-lg border border-slate-200" />
                         <a href={generatedImageUrl} download className="mt-1 text-xs text-blue-600 hover:underline block">↓ Download</a>

@@ -9,8 +9,10 @@ import { metaRouter } from "./routers/meta";
 import { botsRouter } from "./routers/bots";
 import { wordpressRouter } from "./routers/wordpress";
 import { articlesRouter } from "./routers/articles";
-import { generateGeminiImage, generateVeoVideo, buildVisualPrompt } from "./_core/gemini";
+import { generateDalleImage, generateGeminiImage, generateVeoVideo, buildVisualPrompt, buildVisualDalleSize } from "./_core/gemini";
 import { storagePut } from "./storage";
+import fs from "fs";
+import path from "path";
 
 // ─── Trends cache & fallbacks ──────────────────────────────────────────────
 const trendsCache = new Map<string, { trends: { query: string; traffic: string }[]; ts: number }>();
@@ -725,10 +727,18 @@ export const appRouter = router({
         hook: z.string(),
       }))
       .mutation(async ({ input }) => {
-        const { prompt, aspectRatio } = buildVisualPrompt(input.industry, input.contentFormat, input.hook);
-        const { b64, mimeType } = await generateGeminiImage(prompt, aspectRatio);
+        const { prompt } = buildVisualPrompt(input.industry, input.contentFormat, input.hook);
+        const dalleSize = buildVisualDalleSize(input.contentFormat);
+        const { b64, mimeType } = await generateDalleImage(prompt, dalleSize);
         const buffer = Buffer.from(b64, "base64");
-        const { url } = await storagePut(`visuals/${Date.now()}.jpg`, buffer, mimeType);
+
+        // Save locally, fall back to cloud storage if configured
+        const filename = `visual_${Date.now()}.jpg`;
+        const localDir = path.join(process.cwd(), "public", "uploads");
+        fs.mkdirSync(localDir, { recursive: true });
+        fs.writeFileSync(path.join(localDir, filename), buffer);
+        const url = `/uploads/${filename}`;
+
         return { url, prompt };
       }),
 

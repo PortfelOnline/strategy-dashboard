@@ -301,6 +301,7 @@ export default function ContentGenerator() {
   const [savedPostId, setSavedPostId] = useState<number | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [trendGeo, setTrendGeo] = useState<TrendGeo>('IN');
+  const [lastClickedTrend, setLastClickedTrend] = useState<number | null>(null);
   const [abVariants, setAbVariants] = useState<any[]>([]);
   const [abOpen, setAbOpen] = useState(false);
   const [repurposeFormat, setRepurposeFormat] = useState<ContentFormat | null>(null);
@@ -655,7 +656,7 @@ export default function ContentGenerator() {
                     <RefreshCw className={`w-3.5 h-3.5 ${trendsLoading ? 'animate-spin' : ''}`} />
                   </button>
                 </CardTitle>
-                <CardDescription className="text-xs flex items-center gap-2">
+                <div className="text-xs text-slate-500 flex items-center gap-2 mt-1">
                   Click a trend to add it to your prompt
                   <span className="flex gap-1">
                     {(Object.keys(GEO_LABELS) as TrendGeo[]).map(geo => (
@@ -665,7 +666,7 @@ export default function ContentGenerator() {
                       </button>
                     ))}
                   </span>
-                </CardDescription>
+                </div>
               </CardHeader>
               <CardContent className="px-5 pb-4">
                 {trendsLoading ? (
@@ -676,10 +677,20 @@ export default function ContentGenerator() {
                   <div className="flex flex-wrap gap-1.5">
                     {(trendsData?.trends ?? []).map((t, i) => (
                       <button key={i}
-                        onClick={() => setCustomPrompt(p => p ? `${p}. Incorporate trending topic: "${t.query}"` : `Incorporate trending topic: "${t.query}"`)}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-full border border-rose-200 bg-white text-xs text-slate-700 hover:border-rose-400 hover:bg-rose-50 transition-all"
+                        onClick={() => {
+                          setCustomPrompt(p => p ? `${p}. Incorporate trending topic: "${t.query}"` : `Incorporate trending topic: "${t.query}"`);
+                          setLastClickedTrend(i);
+                          setTimeout(() => setLastClickedTrend(null), 1500);
+                        }}
+                        className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs transition-all ${
+                          lastClickedTrend === i
+                            ? 'border-green-400 bg-green-50 text-green-700'
+                            : 'border-rose-200 bg-white text-slate-700 hover:border-rose-400 hover:bg-rose-50'
+                        }`}
                       >
-                        <span className="text-rose-400 font-bold">#{i + 1}</span>
+                        <span className={`font-bold ${lastClickedTrend === i ? 'text-green-500' : 'text-rose-400'}`}>
+                          {lastClickedTrend === i ? '✓' : `#${i + 1}`}
+                        </span>
                         {t.query}
                         {t.traffic && <span className="text-slate-400 ml-0.5">{t.traffic}</span>}
                       </button>

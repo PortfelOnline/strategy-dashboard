@@ -28,14 +28,14 @@ import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
 const menuItems = [
-  { icon: FileText, label: "Статьи", path: "/articles" },
-  { icon: Sparkles, label: "Генератор", path: "/generator" },
-  { icon: BookOpen, label: "Библиотека", path: "/library" },
-  { icon: Calendar, label: "Календарь", path: "/calendar" },
-  { icon: BarChart2, label: "Аналитика", path: "/analytics" },
+  { icon: FileText, label: "Articles", path: "/articles" },
+  { icon: Sparkles, label: "Generator", path: "/generator" },
+  { icon: BookOpen, label: "Library", path: "/library" },
+  { icon: Calendar, label: "Calendar", path: "/calendar" },
+  { icon: BarChart2, label: "Analytics", path: "/analytics" },
   { icon: Globe, label: "WordPress", path: "/wordpress" },
-  { icon: Users, label: "Meta Аккаунты", path: "/accounts" },
-  { icon: Bot, label: "Боты", path: null, href: "http://167.86.116.15:4000/login" },
+  { icon: Users, label: "Meta Accounts", path: "/accounts" },
+  { icon: Bot, label: "Bots", path: null, href: "http://167.86.116.15:4000/login" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -176,8 +176,8 @@ function DashboardLayoutContent({
               </button>
               {!isCollapsed ? (
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="font-semibold tracking-tight truncate">
-                    Navigation
+                  <span className="font-semibold tracking-tight truncate text-primary">
+                    get-my-agent.com
                   </span>
                 </div>
               ) : null}

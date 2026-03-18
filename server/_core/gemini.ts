@@ -15,7 +15,7 @@ export async function generateGeminiImage(
   const ai = getClient();
 
   const response = await ai.models.generateImages({
-    model: "imagen-3.0-generate-001",
+    model: "imagen-4.0-generate-001",
     prompt,
     config: {
       numberOfImages: 1,
@@ -64,20 +64,52 @@ export async function generateVeoVideo(
 
 // ── Visual prompt builder ─────────────────────────────────────────────────────
 
+// ── DALL-E 3 image generation (OpenAI) ───────────────────────────────────────
+
+export async function generateDalleImage(
+  prompt: string,
+  size: "1024x1024" | "1792x1024" | "1024x1792" = "1792x1024"
+): Promise<{ b64: string; mimeType: string }> {
+  const apiKey = process.env.BUILT_IN_FORGE_API_KEY;
+  if (!apiKey) throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
+
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "dall-e-3", prompt, n: 1, size, quality: "standard", response_format: "b64_json" }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`DALL-E 3 error ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const json = await res.json() as any;
+  const b64 = json.data?.[0]?.b64_json;
+  if (!b64) throw new Error("DALL-E 3 returned no image");
+
+  return { b64, mimeType: "image/jpeg" };
+}
+
+// ── Visual prompt builder (competitor-inspired styles) ────────────────────────
+
+// Proven ad visual styles based on top Indian proptech competitors
+// (Wati, Privyr, Interakt, Gallabox): WhatsApp mockups + agent scenarios outperform
+// generic property photos in conversion for AI-agent / automation products.
 const INDUSTRY_VISUAL: Record<string, string> = {
-  retail: "vibrant Indian clothing boutique with colorful kurtas and sarees on racks, warm golden lighting, modern store interior",
-  real_estate: "modern Indian residential apartment exterior with blue sky, clean architecture, city backdrop",
-  restaurant: "Indian restaurant with beautifully plated food, warm ambient lighting, clean tableware",
-  ecommerce: "hands holding smartphone showing online shopping interface, Indian home setting, soft natural light",
-  coaching: "Indian student at desk with open books and laptop, bright study room, focused expression",
-  services: "Indian service professional in neat uniform with tools, outdoor residential setting, confident posture",
+  real_estate: "Split-scene: LEFT — tired Indian male real estate agent in his 30s sleeping on couch at night, phone on table showing 3 missed WhatsApp notification badges. Dim warm bedroom light. RIGHT — same smartphone showing WhatsApp chat with AI bot instantly replying to a property enquiry at 11:47 PM with green chat bubbles. Clean graphic divide between the two halves.",
+  retail: "Split-scene: LEFT — Indian shop owner looking frustrated at a pile of unanswered customer messages on his phone. RIGHT — smartphone screen showing WhatsApp chat with AI bot instantly replying to multiple customer enquiries, green chat bubbles, clean modern UI.",
+  restaurant: "Split-scene: LEFT — Indian restaurant owner at closing time looking at missed WhatsApp reservation messages. RIGHT — phone screen showing AI instantly confirming reservations via WhatsApp at midnight, green chat bubbles.",
+  ecommerce: "Split-scene: LEFT — Indian online seller overwhelmed, laptop showing dozens of unread customer messages. RIGHT — phone showing WhatsApp AI bot instantly responding to product queries, order confirmations, green chat bubbles.",
+  coaching: "Split-scene: LEFT — Indian coach or tutor missing student enquiry messages late at night, phone showing missed notifications. RIGHT — smartphone showing AI bot instantly replying to course enquiries on WhatsApp at 11 PM.",
+  services: "Split-scene: LEFT — Indian service professional (plumber/electrician) on a job, phone buzzing with missed client messages. RIGHT — phone showing AI automatically responding to service enquiry on WhatsApp.",
 };
 
-const FORMAT_ASPECT: Record<string, "1:1" | "9:16" | "16:9" | "4:5"> = {
-  carousel: "1:1",
-  feed_post: "1:1",
-  story: "9:16",
-  reel: "9:16",
+const DALLE_SIZE: Record<string, "1792x1024" | "1024x1024" | "1024x1792"> = {
+  carousel: "1024x1024",
+  feed_post: "1792x1024",
+  story: "1024x1792",
+  reel: "1024x1792",
 };
 
 export function buildVisualPrompt(
@@ -85,19 +117,19 @@ export function buildVisualPrompt(
   format: string,
   hook: string
 ): { prompt: string; aspectRatio: "1:1" | "9:16" | "16:9" | "4:5" } {
-  const setting = INDUSTRY_VISUAL[industry] ?? "Indian small business owner working on smartphone";
-  const aspectRatio = FORMAT_ASPECT[format] ?? "1:1";
+  const scene = INDUSTRY_VISUAL[industry] ?? "Split-scene: Indian small business owner missing WhatsApp messages at night vs. AI bot instantly replying to all of them.";
+  const aspectRatio = (format === "story" || format === "reel") ? "9:16" : "1:1";
 
   const prompt = [
-    `Commercial social media photo for an Indian small business marketing campaign.`,
-    `Scene: ${setting}.`,
-    `Mood: Aspirational, warm, confident. Modern Indian entrepreneurial aesthetic.`,
-    `Lighting: Natural daylight or warm indoor lighting. Clean, professional composition.`,
-    `Color palette: Deep blues and warm orange accents.`,
-    `Style: Photorealistic, high-resolution editorial photography. No text, no overlays, no logos.`,
-    `The image should visually complement this message: "${hook.slice(0, 120)}".`,
-    `Do NOT include any text, watermarks, or graphics in the image.`,
+    scene,
+    `Mood: High-contrast emotional storytelling. Problem vs solution in one frame.`,
+    `Style: Photorealistic, high-resolution commercial advertising photo. No text, no overlays, no logos, no watermarks.`,
+    `The visual should amplify this message: "${hook.slice(0, 100)}".`,
   ].join(" ");
 
   return { prompt, aspectRatio };
+}
+
+export function buildVisualDalleSize(format: string): "1792x1024" | "1024x1024" | "1024x1792" {
+  return DALLE_SIZE[format] ?? "1792x1024";
 }

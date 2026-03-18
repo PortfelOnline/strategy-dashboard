@@ -57,6 +57,9 @@ async function startServer() {
     });
   }
 
+  // Serve locally generated images (DALL-E uploads)
+  app.use("/uploads", express.static("public/uploads"));
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API

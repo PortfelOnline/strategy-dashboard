@@ -97,12 +97,12 @@ export async function generateDalleImage(
 // (Wati, Privyr, Interakt, Gallabox): WhatsApp mockups + agent scenarios outperform
 // generic property photos in conversion for AI-agent / automation products.
 const INDUSTRY_VISUAL: Record<string, string> = {
-  real_estate: "Split-scene: LEFT — tired Indian male real estate agent in his 30s sleeping on couch at night, phone on table showing 3 missed WhatsApp notification badges. Dim warm bedroom light. RIGHT — same smartphone showing WhatsApp chat with AI bot instantly replying to a property enquiry at 11:47 PM with green chat bubbles. Clean graphic divide between the two halves.",
-  retail: "Split-scene: LEFT — Indian shop owner looking frustrated at a pile of unanswered customer messages on his phone. RIGHT — smartphone screen showing WhatsApp chat with AI bot instantly replying to multiple customer enquiries, green chat bubbles, clean modern UI.",
-  restaurant: "Split-scene: LEFT — Indian restaurant owner at closing time looking at missed WhatsApp reservation messages. RIGHT — phone screen showing AI instantly confirming reservations via WhatsApp at midnight, green chat bubbles.",
-  ecommerce: "Split-scene: LEFT — Indian online seller overwhelmed, laptop showing dozens of unread customer messages. RIGHT — phone showing WhatsApp AI bot instantly responding to product queries, order confirmations, green chat bubbles.",
-  coaching: "Split-scene: LEFT — Indian coach or tutor missing student enquiry messages late at night, phone showing missed notifications. RIGHT — smartphone showing AI bot instantly replying to course enquiries on WhatsApp at 11 PM.",
-  services: "Split-scene: LEFT — Indian service professional (plumber/electrician) on a job, phone buzzing with missed client messages. RIGHT — phone showing AI automatically responding to service enquiry on WhatsApp.",
+  real_estate: "Split-scene divided by a clean vertical line. LEFT HALF — cinematic photo of a tired Indian male real estate agent in his 30s, asleep on a couch at night, dim warm bedroom light, phone face-down on the table beside him, expression of exhaustion. RIGHT HALF — same man wide awake, smiling confidently, holding phone with bright glowing screen, green notification glow on his face, modern home office background. Photorealistic commercial advertising photo.",
+  retail: "Split-scene divided by a clean vertical line. LEFT HALF — Indian shop owner in his 40s sitting behind counter, head in hands, surrounded by empty shelves, worried expression, late evening. RIGHT HALF — same shop owner smiling broadly, arms crossed proudly, shelves full, cash register glowing, vibrant daylight. Photorealistic commercial advertising photo.",
+  restaurant: "Split-scene divided by a clean vertical line. LEFT HALF — Indian restaurant owner in chef apron standing in empty dining room, looking at his watch anxiously, closing time, chairs up on tables. RIGHT HALF — same restaurant packed full of happy Indian diners, owner smiling confidently near the entrance. Photorealistic commercial advertising photo.",
+  ecommerce: "Split-scene divided by a clean vertical line. LEFT HALF — young Indian woman seller sitting at desk overwhelmed, staring at laptop screen, stacks of unshipped packages behind her, stressed expression. RIGHT HALF — same woman relaxed and happy, laptop glowing, packages neatly organized, smiling at camera. Photorealistic commercial advertising photo.",
+  coaching: "Split-scene divided by a clean vertical line. LEFT HALF — Indian male tutor or coach sitting alone in empty classroom at night, textbooks piled up, looking discouraged. RIGHT HALF — same tutor teaching enthusiastically to a group of engaged Indian students, bright modern classroom. Photorealistic commercial advertising photo.",
+  services: "Split-scene divided by a clean vertical line. LEFT HALF — Indian plumber or electrician in work clothes sitting on curb outside, tool bag beside him, looking at silent phone, expression of frustration. RIGHT HALF — same man busy working in a home, tools in hand, smiling confidently while homeowner gives thumbs up in background. Photorealistic commercial advertising photo.",
 };
 
 const DALLE_SIZE: Record<string, "1792x1024" | "1024x1024" | "1024x1792"> = {
@@ -123,8 +123,8 @@ export function buildVisualPrompt(
   const prompt = [
     scene,
     `Mood: High-contrast emotional storytelling. Problem vs solution in one frame.`,
-    `Style: Photorealistic, high-resolution commercial advertising photo. No text, no overlays, no logos, no watermarks.`,
-    `The visual should amplify this message: "${hook.slice(0, 100)}".`,
+    `Style: Photorealistic, high-resolution commercial advertising photo.`,
+    `IMPORTANT: No text of any kind. No letters, no words, no numbers, no signs, no chat bubbles, no phone screens with text, no captions, no watermarks, no logos, no UI elements.`,
   ].join(" ");
 
   return { prompt, aspectRatio };

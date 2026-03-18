@@ -933,6 +933,14 @@ export default function ContentGenerator() {
                       <Input value={postTitle} onChange={e => setPostTitle(e.target.value)} className="mt-1 text-xs" />
                     </div>
 
+                    {/* Generated visual — shown right below title */}
+                    {generatedImageUrl && (
+                      <div ref={imageRef}>
+                        <img src={generatedImageUrl} alt="Generated visual" className="w-full rounded-xl border border-slate-200 shadow-sm" />
+                        <a href={generatedImageUrl} download className="mt-1 text-xs text-blue-600 hover:underline block">↓ Download image</a>
+                      </div>
+                    )}
+
                     {parsedContent ? (
                       <>
                         {currentFormat === 'carousel' && <CarouselPreview data={parsedContent} />}
@@ -954,15 +962,6 @@ export default function ContentGenerator() {
                             <Badge key={i} variant="secondary" className="text-xs">{tag}</Badge>
                           ))}
                         </div>
-                      </div>
-                    )}
-
-                    {/* Generated visual */}
-                    {generatedImageUrl && (
-                      <div ref={imageRef}>
-                        <label className="text-xs font-semibold text-slate-500 uppercase block mb-1">Generated Image</label>
-                        <img src={generatedImageUrl} alt="Generated visual" className="w-full rounded-lg border border-slate-200" />
-                        <a href={generatedImageUrl} download className="mt-1 text-xs text-blue-600 hover:underline block">↓ Download</a>
                       </div>
                     )}
                     {generatedVideoUrl && (

@@ -28,6 +28,7 @@ const orchestratorConfigSchema = z.object({
   restartDelayMin: z.number().int().min(1).max(1440),
   dailyStartHour: z.number().int().min(0).max(23),
   dailyEndHour: z.number().int().min(1).max(24),
+  skipTimeCheck: z.boolean().default(false),
   bots: z.array(botEntrySchema),
 });
 

@@ -73,6 +73,7 @@ interface OrchestratorConfig {
   restartDelayMin: number;
   dailyStartHour: number;
   dailyEndHour: number;
+  skipTimeCheck: boolean;
   bots: Array<{ botId: number; website: string; enabled: boolean }>;
 }
 
@@ -824,6 +825,18 @@ export default function Bots() {
                         />
                       </div>
                       </div>{/* /grid-cols-2 */}
+                      <div className="mt-3 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="skipTimeCheck"
+                          checked={orchEdits.skipTimeCheck ?? false}
+                          onChange={e => setOrchEdits(o => o ? { ...o, skipTimeCheck: e.target.checked } : o)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        <label htmlFor="skipTimeCheck" className="text-sm text-slate-700">
+                          Круглосуточный режим — боты работают в любое время (игнорировать ночное окно)
+                        </label>
+                      </div>
                     </CardContent>
                   </Card>
 

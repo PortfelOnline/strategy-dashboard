@@ -199,7 +199,11 @@ export default function Bots() {
 
 
   const vncStart = trpc.vncStart.useMutation({
-    onSuccess: (_, vars) => {
+    onSuccess: (data, vars) => {
+      if (data?.sleeping) {
+        toast.info('Бот сейчас спит — ждёт следующего запроса. Попробуйте позже.');
+        return;
+      }
       window.open(`/novnc/viewer.html?bot=${vars.botId}`, `vnc-${vars.botId}`, 'width=1280,height=820');
     },
     onError: (e) => toast.error('VNC: ' + e.message),
@@ -448,10 +452,8 @@ export default function Bots() {
                                   {isRunning && (
                                     <button
                                       className="p-1 rounded hover:bg-blue-100 text-blue-500"
-                                      onClick={() => {
-                                        window.open(`/novnc/viewer.html?bot=${bot.botId}`, `vnc-${bot.botId}`, 'width=1280,height=820');
-                                      }}
-                                      title="Смотреть"
+                                      onClick={() => vncStart.mutate({ botId: bot.botId })}
+                                      title="Смотреть (только когда бот активен)"
                                     >
                                       <Eye className="w-3.5 h-3.5" />
                                     </button>

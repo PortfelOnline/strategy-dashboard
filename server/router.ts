@@ -117,7 +117,8 @@ export const botsRouter = t.router({
     .input(z.object({ botId: z.number().int().min(1).max(1000) }))
     .mutation(({ input }) => {
       const result = botManager.startVnc(input.botId);
-      if (!result) throw new TRPCError({ code: 'NOT_FOUND', message: 'Bot display not available' });
+      // null = display not alive (bot never started); sleeping = browser not open yet
+      if (!result) return { sleeping: true, display: 0, containerIp: '' };
       return result;
     }),
 

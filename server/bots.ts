@@ -325,31 +325,32 @@ function writeVncTarget(displayNum: number | null): void {
   } catch {}
 }
 
-export function startVnc(botId: number): { display: number; containerIp: string } | null {
-  const container = process.env.BOT_CONTAINER || 'yandex_bot';
+function isBotBrowserActive(container: string): boolean {
+  try {
+    const { execFileSync: ef } = require("child_process");
+    ef("docker", ["exec", container, "pgrep", "-x", "firefox"], { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    return true;
+  } catch { return false; }
+}
 
+export function startVnc(botId: number): { display: number; containerIp: string; sleeping: boolean } | null {
+  const container = process.env.BOT_CONTAINER || "yandex_bot";
   const displayNum = readBotDisplay(container, botId);
-  // If bot's display is not alive, don't start VNC — bot is not running
-  if (!xSocketExists(container, displayNum)) {
-    return null;
-  }
+  if (!xSocketExists(container, displayNum)) return null;
 
+  const sleeping = !isBotBrowserActive(container);
   activeVncBotId = botId;
   lastVncDisplay = displayNum;
-
-  // Tell internal vnc_watcher.sh which display to use
   writeVncTarget(displayNum);
 
   try {
     activeVncContainerIp = execFileSync(
-      'docker', ['inspect', container, '--format', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'],
-      { encoding: 'utf8' }
+      "docker", ["inspect", container, "--format", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"],
+      { encoding: "utf8" }
     ).trim();
-  } catch {
-    activeVncContainerIp = '127.0.0.1';
-  }
+  } catch { activeVncContainerIp = "127.0.0.1"; }
 
-  return { display: displayNum, containerIp: activeVncContainerIp };
+  return { display: displayNum, containerIp: activeVncContainerIp, sleeping };
 }
 
 export function stopVnc(): void {

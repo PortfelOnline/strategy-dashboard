@@ -136,3 +136,16 @@ export const articleAnalyses = mysqlTable("articleAnalyses", {
 
 export type ArticleAnalysis = typeof articleAnalyses.$inferSelect;
 export type InsertArticleAnalysis = typeof articleAnalyses.$inferInsert;
+
+/**
+ * Saved competitor intel topics (keywords user wants to track)
+ */
+export const savedTopics = mysqlTable("savedTopics", {
+  id:        int("id").autoincrement().primaryKey(),
+  userId:    int("userId").notNull().references(() => users.id),
+  keyword:   varchar("keyword", { length: 255 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type SavedTopic = typeof savedTopics.$inferSelect;
+export type InsertSavedTopic = typeof savedTopics.$inferInsert;

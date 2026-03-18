@@ -4,7 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router, protectedProcedure } from "./_core/trpc";
 import { z } from "zod";
 import { invokeLLM } from "./_core/llm";
-import { createContentPost, getUserContentPosts, getContentTemplates, createContentTemplate, updateContentPost, deleteContentPost } from "./db";
+import { createContentPost, getUserContentPosts, getContentTemplates, createContentTemplate, updateContentPost, deleteContentPost, getSavedTopics, saveTopic, deleteTopic } from "./db";
 import { metaRouter } from "./routers/meta";
 import { botsRouter } from "./routers/bots";
 import { wordpressRouter } from "./routers/wordpress";
@@ -1004,6 +1004,26 @@ Return ONLY valid JSON. No markdown fences.`;
           if (cached) return { trends: cached.trends, source: "stale" as const };
           return { trends: FALLBACK_TRENDS_IN, source: "fallback" as const };
         }
+      }),
+
+    // ── Saved Topics ───────────────────────────────────────────────────────────
+    listSavedTopics: protectedProcedure
+      .query(async ({ ctx }) => {
+        return getSavedTopics(ctx.user.id);
+      }),
+
+    saveTopic: protectedProcedure
+      .input(z.object({ keyword: z.string().min(1).max(255) }))
+      .mutation(async ({ ctx, input }) => {
+        await saveTopic(ctx.user.id, input.keyword.trim());
+        return { ok: true };
+      }),
+
+    deleteTopic: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ ctx, input }) => {
+        await deleteTopic(ctx.user.id, input.id);
+        return { ok: true };
       }),
   }),
 });

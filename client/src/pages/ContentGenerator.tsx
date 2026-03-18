@@ -317,6 +317,7 @@ export default function ContentGenerator() {
   const [competitorKeyword, setCompetitorKeyword] = useState('');
   const [competitorOpen, setCompetitorOpen] = useState(false);
   const [competitorResult, setCompetitorResult] = useState<any>(null);
+  const [topicSearch, setTopicSearch] = useState('');
 
   const { data: trendsData, isLoading: trendsLoading, refetch: refetchTrends } =
     trpc.content.getTrends.useQuery({ geo: trendGeo }, { staleTime: 60 * 60 * 1000 });
@@ -338,6 +339,9 @@ export default function ContentGenerator() {
   const rssMutation = trpc.content.rssToPost.useMutation();
   const emojiMutation = trpc.content.optimizeEmojis.useMutation();
   const competitorMutation = trpc.content.analyzeCompetitors.useMutation();
+  const { data: savedTopicsData, refetch: refetchTopics } = trpc.content.listSavedTopics.useQuery();
+  const saveTopicMutation = trpc.content.saveTopic.useMutation({ onSuccess: () => refetchTopics() });
+  const deleteTopicMutation = trpc.content.deleteTopic.useMutation({ onSuccess: () => refetchTopics() });
 
   const handleGenerate = async () => {
     setHookVariants([]);
@@ -724,6 +728,7 @@ export default function ContentGenerator() {
               </CardHeader>
               {competitorOpen && (
                 <CardContent className="px-5 pb-4 space-y-3">
+                  {/* Search input + Analyze */}
                   <div className="flex gap-2">
                     <Input
                       placeholder="e.g. AI chatbot, WhatsApp automation, CRM software..."
@@ -740,10 +745,56 @@ export default function ContentGenerator() {
                     </Button>
                   </div>
 
+                  {/* Saved topics */}
+                  {(savedTopicsData && savedTopicsData.length > 0) && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Input
+                          placeholder="Search saved topics..."
+                          value={topicSearch}
+                          onChange={e => setTopicSearch(e.target.value)}
+                          className="text-xs h-7 flex-1"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {savedTopicsData
+                          .filter(t => t.keyword.toLowerCase().includes(topicSearch.toLowerCase()))
+                          .map(t => (
+                            <div key={t.id} className="flex items-center gap-0.5 bg-violet-50 border border-violet-200 rounded-full px-2.5 py-0.5 group">
+                              <button
+                                onClick={() => setCompetitorKeyword(t.keyword)}
+                                className="text-xs text-violet-700 hover:text-violet-900"
+                              >
+                                {t.keyword}
+                              </button>
+                              <button
+                                onClick={() => deleteTopicMutation.mutate({ id: t.id })}
+                                className="ml-1 text-violet-300 hover:text-red-500 transition-colors"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   {competitorResult && (() => {
                     const a = competitorResult.analysis;
+                    const alreadySaved = savedTopicsData?.some(t => t.keyword.toLowerCase() === competitorKeyword.toLowerCase());
                     return (
                       <div className="space-y-3 pt-1">
+                        {/* Save topic button */}
+                        {competitorKeyword && (
+                          <button
+                            onClick={() => !alreadySaved && saveTopicMutation.mutate({ keyword: competitorKeyword })}
+                            disabled={alreadySaved || saveTopicMutation.isPending}
+                            className={`text-xs flex items-center gap-1 px-2.5 py-1 rounded-full border transition-all ${alreadySaved ? 'border-green-300 bg-green-50 text-green-700 cursor-default' : 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100'}`}
+                          >
+                            {alreadySaved ? '✓ Saved' : saveTopicMutation.isPending ? '...' : `+ Save "${competitorKeyword}"`}
+                          </button>
+                        )}
+
                         {a.summary && (
                           <p className="text-xs text-slate-600 bg-violet-50 rounded-lg p-3 border border-violet-100 leading-relaxed">
                             {a.summary}

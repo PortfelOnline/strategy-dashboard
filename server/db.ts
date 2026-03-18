@@ -1,6 +1,6 @@
 import { eq, and, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, contentPosts, contentTemplates, InsertContentPost, InsertContentTemplate } from "../drizzle/schema";
+import { InsertUser, users, contentPosts, contentTemplates, savedTopics, InsertContentPost, InsertContentTemplate } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -165,6 +165,26 @@ export async function getDueScheduledPosts() {
   return db.select().from(contentPosts).where(
     and(eq(contentPosts.status, 'scheduled'), lte(contentPosts.scheduledAt, now))
   );
+}
+
+// ── Saved Topics ─────────────────────────────────────────────────────────────
+
+export async function getSavedTopics(userId: number) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.select().from(savedTopics).where(eq(savedTopics.userId, userId));
+}
+
+export async function saveTopic(userId: number, keyword: string) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.insert(savedTopics).values({ userId, keyword });
+}
+
+export async function deleteTopic(userId: number, topicId: number) {
+  const db = await getDb();
+  if (!db) throw new Error('Database not available');
+  return db.delete(savedTopics).where(and(eq(savedTopics.id, topicId), eq(savedTopics.userId, userId)));
 }
 
 // TODO: add more feature queries here as your schema grows.

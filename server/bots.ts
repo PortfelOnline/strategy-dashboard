@@ -31,7 +31,7 @@ interface BotProcess {
 
 const runningBots = new Map<number, BotProcess>();
 
-export function startBot(botId: number, mode: 'warmup' | 'target', website: string) {
+export function startBot(botId: number, mode: 'warmup' | 'target', website: string, skipTimeCheck = false) {
   if (runningBots.has(botId)) {
     throw new Error(`Bot ${botId} is already running`);
   }
@@ -39,11 +39,13 @@ export function startBot(botId: number, mode: 'warmup' | 'target', website: stri
   const [spawnCmd, spawnPrefix] = container
     ? ['docker', ['exec', container, 'python3', '/app/yandex_bot.py']]
     : ['python3', [path.join(BOT_DIR, 'yandex_bot.py')]];
+  const extraArgs = skipTimeCheck ? ['--skip-time-check'] : [];
   const proc = spawn(spawnCmd, [
     ...spawnPrefix,
     '--bot-id', String(botId),
     '--mode', mode,
     '--website', website,
+    ...extraArgs,
   ], { cwd: BOT_DIR, detached: false });
 
   const entry: BotProcess = {

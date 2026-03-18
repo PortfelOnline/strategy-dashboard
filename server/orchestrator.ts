@@ -52,6 +52,7 @@ export interface OrchestratorConfig {
   restartDelayMin: number; // minutes to wait before re-queuing a finished bot
   dailyStartHour: number;  // 0–23: start of allowed window
   dailyEndHour: number;    // 1–24: end of allowed window (exclusive)
+  skipTimeCheck: boolean;  // pass --skip-time-check to bots (run 24/7 ignoring night hours)
   bots: BotEntry[];
 }
 
@@ -75,6 +76,7 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   restartDelayMin: 30,
   dailyStartHour: 0,
   dailyEndHour: 24,
+  skipTimeCheck: false,
   bots: [],
 };
 
@@ -198,7 +200,7 @@ function tick(): void {
     if (runningIds.has(next.botId) || managedBots.has(next.botId)) continue;
     const mode = autoMode(next.botId);
     try {
-      startBot(next.botId, mode, next.website);
+      startBot(next.botId, mode, next.website, config.skipTimeCheck ?? false);
       managedBots.add(next.botId);
       runningIds.add(next.botId);
       runningCount++;

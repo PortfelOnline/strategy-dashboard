@@ -188,6 +188,54 @@ function countWords(html: string): number {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
 }
 
+// Generate 3 contextual DALL-E image prompts based on article title
+async function generateImagePrompts(title: string): Promise<string[]> {
+  const skinNote = `All people must have light/fair Slavic skin tone (Russian appearance). No dark-skinned people.`;
+  const noText = `NO text, NO letters, NO words, NO labels, NO watermarks anywhere in the image.`;
+
+  const fallback = [
+    `Photorealistic wide-format photo: a person sitting at a bright modern desk looking at official documents and a laptop, warm natural light, clean minimalist interior. ${skinNote} ${noText}`,
+    `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. ${noText}`,
+    `Photorealistic close-up: a person's hands holding an official stamped document over a wooden desk with a blurred laptop in the background, warm light. ${skinNote} ${noText}`,
+  ];
+
+  try {
+    const resp = await invokeLLM({
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a DALL-E prompt writer for a Russian real estate / cadastral documents website. Write photorealistic, visually appealing image prompts in English. Focus on Russian context: property, documents, offices, apartments. Never include text/letters in images.',
+        },
+        {
+          role: 'user',
+          content: `Article title: "${title}"
+
+The article is about ordering official Russian property/cadastral documents (EGRN extracts, encumbrance certificates, cadastral passports etc.) via kadastrmap.info online service.
+
+Write exactly 3 different DALL-E image prompts that visually match different sections of this specific article. Each prompt must:
+- Be photorealistic, wide-format
+- Directly relate to the article topic (e.g. for "обременение" show mortgaged property, bank documents, chains on property icon; for "кадастровый паспорт" show blueprint/floor plan)
+- Show different scenes: 1) the problem/need (why the document is needed), 2) the online ordering process (person on laptop/phone using a service), 3) the result/benefit (receiving the document, happy outcome)
+- All people: light/fair Slavic skin tone. ${noText}
+- Be concise (1-2 sentences max)
+
+Return ONLY a JSON array of 3 strings: ["prompt1", "prompt2", "prompt3"]`,
+        },
+      ],
+      maxTokens: 600,
+    });
+
+    const content = resp?.choices[0]?.message.content;
+    const raw = (typeof content === 'string' ? content : '').trim();
+    const cleaned = raw.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed) && parsed.length >= 3) return parsed.slice(0, 3);
+  } catch {
+    // fall through to fallback
+  }
+  return fallback;
+}
+
 async function enhanceIfNeeded(html: string, keyword: string): Promise<string> {
   const wordCount = countWords(html);
   const faqItems = (html.match(/<details/gi) || []).length;
@@ -1479,11 +1527,7 @@ ${competitorContext}
         .replace(/\s+в\s+Москве$/i, '')
         .replace(/:\s*.+$/, '')
         .trim();
-      const imagePrompts = [
-        `Photorealistic wide-format photo: friendly real estate agent and client shaking hands in a bright modern office, large windows, plants, neutral interior. ${skinNote} No text, no signs, no screens, no documents visible.`,
-        `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. No text, no labels, no overlays.`,
-        `Photorealistic close-up: a person's hands holding a set of keys over a wooden desk with a blurred laptop and coffee cup in the background, warm natural light. ${skinNote} No text, no screens, no signs.`,
-      ];
+      const imagePrompts = await generateImagePrompts(input.title);
 
       const [ctaResponse, metaResponse, excerptResponse, ...imageResults] = await Promise.all([
         invokeLLM({
@@ -1681,14 +1725,7 @@ ${competitorContext}
         .replace(/:\s*.+$/, '')  // remove subtitle after colon
         .trim();
 
-      // Derive short subject for context-specific prompt
-      const imgSubject = focusKeyword || input.title;
-      const skinNoteD = `All people must have light/fair Slavic skin tone (Russian appearance). No dark-skinned people.`;
-      const imagePrompts = [
-        `Photorealistic wide-format photo: friendly real estate agent and client shaking hands in a bright modern office, large windows, plants, neutral interior. ${skinNoteD} No text, no signs, no screens, no documents visible.`,
-        `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. No text, no labels, no overlays.`,
-        `Photorealistic close-up: a person's hands holding a set of keys over a wooden desk with a blurred laptop and coffee cup in the background, warm natural light. ${skinNoteD} No text, no screens, no signs.`,
-      ];
+      const imagePrompts = await generateImagePrompts(input.title);
 
       // Run meta LLM + DALL-E images in parallel
       const [metaResp, ...imageResults] = await Promise.all([

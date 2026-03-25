@@ -226,31 +226,30 @@ export async function generateSlideshowVideo(opts: SlideshowVideoOptions): Promi
 
 // Narrative arc: scene 0 = problem, scene 1 = transformation, scene 2 = triumph
 const SECTION_PROMPTS = [
-  // Scene 0 — overwhelmed owner, phone flooded with missed messages
+  // Scene 0 — overwhelmed owner, chaos, missed opportunities
   [
-    `Photorealistic vertical photo, Indian small business owner (30s, South Asian features) sitting at a busy shop counter,`,
-    `expression of stress and overwhelm. In his hands a smartphone screen showing dozens of unread WhatsApp messages piling up —`,
-    `green notification badges, chat list overflowing. Warm shop interior background (jewellery or textile store), shallow depth of field.`,
-    `Cinematic lighting. NO text overlays, NO letters visible on screen, pure photorealistic commercial style.`,
+    `Cinematic vertical photo, Indian male small business owner (30s, South Asian) slumped at a shop counter,`,
+    `head in hands, expression of exhaustion and stress. Around him: a cluttered counter, ringing phone face-down,`,
+    `unhappy customers in background waiting. Warm but chaotic shop interior (jewellery or textile store).`,
+    `Shallow depth of field, moody dramatic lighting. Pure photorealistic, absolutely NO text anywhere in the image.`,
   ],
-  // Scene 1 — phone glowing with AI auto-replies streaming in
+  // Scene 1 — glowing phone, magical transformation, AI energy
   [
-    `Photorealistic vertical photo, close-up of a smartphone held by Indian hands, screen showing a WhatsApp conversation:`,
-    `green chat bubbles appearing one after another as if auto-typing — instant replies flowing in real time.`,
-    `A blurred Indian small-business background (salon, restaurant, or shop). Phone screen glows with green light.`,
-    `Shallow focus, cinematic look. NO readable text, NO letters on screen, pure visual storytelling.`,
+    `Cinematic vertical photo, a modern smartphone levitating slightly above an open palm of Indian hands,`,
+    `screen face-down showing only a soft pulsing green glow radiating outward — magical energy, technology at work.`,
+    `Blurred warm Indian shop background with bokeh lights. Abstract sense of automation and intelligence.`,
+    `Shallow focus, dramatic cinematic lighting. Pure photorealistic, absolutely NO text or symbols anywhere.`,
   ],
-  // Scene 2 — relieved owner, shop thriving, phone shows happy chat
+  // Scene 2 — confident owner, thriving shop, success
   [
-    `Photorealistic vertical photo, Indian small business owner (30s, South Asian features) smiling with relief,`,
-    `relaxed posture, holding a smartphone showing a WhatsApp chat with green checkmarks and happy customer conversation.`,
-    `Bright warm shop background (customers visible, busy and prosperous). Confident, triumphant mood.`,
-    `Cinematic lighting, shallow DOF. NO readable text, NO letters visible, pure photorealistic commercial style.`,
+    `Cinematic vertical photo, Indian male small business owner (30s, South Asian) standing tall and smiling confidently,`,
+    `arms crossed, in a busy prosperous shop with happy customers in background. Bright warm golden lighting,`,
+    `clean organized counter. Expression of calm control and success. Professional commercial photography style.`,
+    `Shallow depth of field. Pure photorealistic, absolutely NO text anywhere in the image.`,
   ],
 ];
 
 async function generateSectionImage(section: { label: string; visual: string; script: string }, tmpDir: string, idx: number): Promise<string> {
-  const { generateGeminiImage } = await import("./gemini");
   // Use narrative arc prompts (0=problem, 1=AI transformation, 2=triumph), cycling for extra sections
   const promptLines = SECTION_PROMPTS[idx % SECTION_PROMPTS.length];
   const prompt = promptLines.join(" ");

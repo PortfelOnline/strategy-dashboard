@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Loader2, Trash2, Edit2, Archive, Send, Sparkles, Calendar, BarChart2, Eye, Heart, RefreshCw, Image, ArrowUpDown, SlidersHorizontal, Clock, Pencil, Video, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, Trash2, Edit2, Archive, Send, Sparkles, Calendar, BarChart2, Eye, Heart, RefreshCw, Image, ArrowUpDown, SlidersHorizontal, Clock, Pencil, Video, ChevronDown, ChevronUp, Copy, Check } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { PublishToMeta } from '@/components/PublishToMeta';
@@ -71,6 +71,24 @@ function extractContentPreview(content: string): string {
   }
 }
 
+function extractFullContent(content: string): { hook?: string; paragraphs?: string[]; cta?: string; hashtags?: string; voiceover?: string; sections?: any[]; caption?: string; raw: string } {
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      hook: parsed.hook,
+      paragraphs: parsed.paragraphs,
+      cta: parsed.cta,
+      hashtags: parsed.hashtags,
+      voiceover: parsed.voiceover,
+      sections: parsed.sections,
+      caption: parsed.caption,
+      raw: content,
+    };
+  } catch {
+    return { raw: content };
+  }
+}
+
 function formatDateTime(val: Date | string | null | undefined): string {
   if (!val) return '—';
   const d = new Date(val);
@@ -106,6 +124,8 @@ export default function ContentLibrary() {
   const [addLinkValue, setAddLinkValue] = useState('');
   const [expandedPostIds, setExpandedPostIds] = useState<Set<number>>(new Set());
   const [generatingImagePostId, setGeneratingImagePostId] = useState<number | null>(null);
+  const [previewPost, setPreviewPost] = useState<Post | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const { data: posts, isLoading } = trpc.content.listPosts.useQuery({ status: selectedStatus });
 
@@ -505,6 +525,15 @@ export default function ContentLibrary() {
                       variant="outline"
                       size="sm"
                       className="flex-1"
+                      onClick={() => setPreviewPost(post)}
+                    >
+                      <Eye className="w-4 h-4 mr-1" />
+                      Preview
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
                       onClick={() => openEditDialog(post)}
                     >
                       <Edit2 className="w-4 h-4 mr-1" />
@@ -764,6 +793,97 @@ export default function ContentLibrary() {
           content={selectedPostForWp.content}
         />
       )}
+
+      {/* Full Post Preview Dialog */}
+      <Dialog open={!!previewPost} onOpenChange={(open) => { if (!open) setPreviewPost(null); }}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+          {previewPost && (() => {
+            const fc = extractFullContent(previewPost.content);
+            const isFB = previewPost.platform === 'facebook';
+            const copyText = [
+              fc.hook,
+              ...(fc.paragraphs ?? []),
+              fc.cta,
+              fc.hashtags ?? previewPost.hashtags,
+            ].filter(Boolean).join('\n\n');
+
+            const handleCopy = (text: string, field: string) => {
+              navigator.clipboard.writeText(text);
+              setCopiedField(field);
+              setTimeout(() => setCopiedField(null), 2000);
+            };
+
+            return (
+              <div>
+                {/* Platform header */}
+                <div className={`flex items-center gap-3 px-4 py-3 border-b ${isFB ? 'bg-blue-600' : 'bg-gradient-to-r from-purple-600 to-pink-500'}`}>
+                  <span className="text-white text-lg font-bold">{isFB ? '👍 Facebook' : '📸 Instagram'}</span>
+                  <Badge className="ml-auto bg-white/20 text-white border-0 text-xs">{previewPost.status}</Badge>
+                </div>
+
+                {/* Post content */}
+                <div className="p-4 space-y-3">
+                  {/* Image */}
+                  {previewPost.mediaUrl && (
+                    <img src={previewPost.mediaUrl} alt="Post visual" className="w-full rounded-xl object-cover max-h-72" />
+                  )}
+
+                  {/* Text body */}
+                  <div className="space-y-2 text-sm text-slate-800 leading-relaxed">
+                    {fc.hook && (
+                      <p className="font-semibold text-base">{fc.hook}</p>
+                    )}
+                    {fc.paragraphs?.map((p, i) => (
+                      <p key={i}>{p}</p>
+                    ))}
+                    {!fc.hook && !fc.paragraphs && fc.voiceover && (
+                      <p className="italic text-slate-600">{fc.voiceover}</p>
+                    )}
+                    {!fc.hook && !fc.paragraphs && !fc.voiceover && (
+                      <p className="whitespace-pre-wrap">{fc.raw}</p>
+                    )}
+                    {fc.cta && (
+                      <p className="font-semibold text-blue-700">👉 {fc.cta}</p>
+                    )}
+                  </div>
+
+                  {/* Hashtags */}
+                  {(fc.hashtags || previewPost.hashtags) && (
+                    <p className="text-xs text-blue-500 leading-relaxed">{fc.hashtags || previewPost.hashtags}</p>
+                  )}
+                </div>
+
+                {/* Action bar */}
+                <div className="flex gap-2 px-4 pb-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => handleCopy(copyText, 'post')}
+                  >
+                    {copiedField === 'post' ? <Check className="w-4 h-4 mr-1 text-green-600" /> : <Copy className="w-4 h-4 mr-1" />}
+                    {copiedField === 'post' ? 'Copied!' : 'Copy post'}
+                  </Button>
+                  {(fc.hashtags || previewPost.hashtags) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleCopy((fc.hashtags || previewPost.hashtags)!, 'tags')}
+                    >
+                      {copiedField === 'tags' ? <Check className="w-4 h-4 mr-1 text-green-600" /> : <Copy className="w-4 h-4 mr-1" />}
+                      {copiedField === 'tags' ? 'Copied!' : 'Copy hashtags'}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => { setPreviewPost(null); openEditDialog(previewPost); }}>
+                    <Edit2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
 
       {/* Reel Script Dialog */}
       <Dialog open={reelDialogOpen} onOpenChange={setReelDialogOpen}>

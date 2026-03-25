@@ -140,3 +140,68 @@ export function buildVisualPrompt(
 export function buildVisualDalleSize(format: string): "1792x1024" | "1024x1024" | "1024x1792" {
   return DALLE_SIZE[format] ?? "1792x1024";
 }
+
+/**
+ * Use LLM to generate a highly specific, context-aware DALL-E prompt
+ * based on the full post content — hook, paragraphs, industry, and product details.
+ */
+export async function generateVisualPromptWithLLM(
+  industry: string,
+  format: string,
+  hook: string,
+  postContent?: string
+): Promise<{ prompt: string; aspectRatio: "1:1" | "9:16" | "16:9" | "4:5" }> {
+  const aspectRatio = (format === "story" || format === "reel") ? "9:16" : "1:1";
+  const orientation = (format === "story" || format === "reel") ? "vertical 9:16" : "horizontal 16:9";
+
+  // Parse post content if JSON
+  let fullText = hook;
+  if (postContent) {
+    try {
+      const parsed = JSON.parse(postContent);
+      const parts: string[] = [];
+      if (parsed.hook) parts.push(parsed.hook);
+      if (parsed.paragraphs?.length) parts.push(...parsed.paragraphs);
+      if (parsed.cta) parts.push(parsed.cta);
+      fullText = parts.join(" ") || hook;
+    } catch {
+      fullText = postContent.slice(0, 500);
+    }
+  }
+
+  const { invokeLLM } = await import("./llm");
+  const result = await invokeLLM({
+    messages: [
+      {
+        role: "system",
+        content: `You are a professional advertising art director specializing in photorealistic social media visuals for Indian small business owners.
+Your job: write a precise DALL-E image generation prompt.
+
+Rules:
+- Scene must be photorealistic, commercial-quality, emotionally compelling
+- Must feature Indian people, Indian setting, Indian context
+- Use a split-scene (before/after, problem/solution) format UNLESS the post is about a specific night-time or single-moment scenario — then use a single emotionally powerful scene
+- Capture the exact TIME OF DAY, MOOD, and PRODUCT/SERVICE from the post
+- NEVER include any text, letters, words, numbers, signs, logos, or watermarks in the image
+- Orientation: ${orientation}
+- Output ONLY the prompt text. No explanation, no JSON, just the prompt.`
+      },
+      {
+        role: "user",
+        content: `Industry: ${industry}
+Post content: "${fullText}"
+
+Write a specific DALL-E 3 prompt for this post's image. Make it match the exact scenario, product, time of day, and emotional moment described in the post.`
+      }
+    ],
+    maxTokens: 400,
+  });
+
+  const llmPrompt = (result.choices[0]?.message?.content as string ?? "").trim();
+
+  // Append absolute no-text rule
+  const finalPrompt = llmPrompt
+    + " CRITICAL: Absolutely NO text, NO letters, NO words, NO numbers, NO signs anywhere in the image. No watermarks. Photorealistic commercial advertising photo.";
+
+  return { prompt: finalPrompt, aspectRatio };
+}

@@ -10,7 +10,7 @@ import { metaRouter } from "./routers/meta";
 import { botsRouter } from "./routers/bots";
 import { wordpressRouter } from "./routers/wordpress";
 import { articlesRouter } from "./routers/articles";
-import { generateDalleImage, generateGeminiImage, generateVeoVideo, buildVisualPrompt, buildVisualDalleSize } from "./_core/gemini";
+import { generateDalleImage, generateGeminiImage, generateVeoVideo, buildVisualPrompt, buildVisualDalleSize, generateVisualPromptWithLLM } from "./_core/gemini";
 import { storagePut } from "./storage";
 import fs from "fs";
 import path from "path";
@@ -948,9 +948,10 @@ Return ONLY valid JSON (no markdown fences):
         industry: z.enum(["retail", "real_estate", "restaurant", "ecommerce", "coaching", "services", "insurance_agent", "loan_agent", "ca_tax", "travel_agent", "wedding_planner", "interior_designer", "clinic_doctor", "car_dealer", "salon_beauty", "gym_fitness", "lawyer"]),
         contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).default("feed_post"),
         hook: z.string(),
+        postContent: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const { prompt } = buildVisualPrompt(input.industry, input.contentFormat, input.hook);
+        const { prompt } = await generateVisualPromptWithLLM(input.industry, input.contentFormat, input.hook, input.postContent);
         const dalleSize = buildVisualDalleSize(input.contentFormat);
         const { b64, mimeType } = await generateDalleImage(prompt, dalleSize);
         const buffer = Buffer.from(b64, "base64");

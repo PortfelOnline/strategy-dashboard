@@ -219,8 +219,9 @@ export default function ContentLibrary() {
     const hook = extractContentPreview(post.content).slice(0, 200);
     generateVisual.mutate({
       industry: inferIndustry(post.title) as any,
-      contentFormat: 'feed_post',
+      contentFormat: post.platform === 'instagram' ? 'feed_post' : 'feed_post',
       hook,
+      postContent: post.content,
     });
   }
 

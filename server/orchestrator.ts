@@ -144,6 +144,10 @@ function tick(): void {
 }
 
 export function initOrchestrator(): void {
+  if (process.env.DISABLE_BOTS === 'true') {
+    console.log('[orchestrator] DISABLE_BOTS=true — bot spawning disabled on this machine');
+    return;
+  }
   if (tickTimer) return;
   tickTimer = setInterval(tick, TICK_INTERVAL_MS);
   tick();

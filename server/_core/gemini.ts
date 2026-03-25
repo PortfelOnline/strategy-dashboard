@@ -117,15 +117,22 @@ export function buildVisualPrompt(
   format: string,
   hook: string
 ): { prompt: string; aspectRatio: "1:1" | "9:16" | "16:9" | "4:5" } {
-  const scene = INDUSTRY_VISUAL[industry] ?? "Split-scene: Indian small business owner missing WhatsApp messages at night vs. AI bot instantly replying to all of them.";
+  const baseScene = INDUSTRY_VISUAL[industry] ?? "Split-scene: Indian small business owner missing WhatsApp messages at night vs. AI bot instantly replying to all of them.";
   const aspectRatio = (format === "story" || format === "reel") ? "9:16" : "1:1";
 
+  // Use hook text to add specific scene context — makes the image match the post content
+  const cleanHook = hook.replace(/[#*_~`]/g, '').trim().slice(0, 120);
+  const hookContext = cleanHook
+    ? `The emotional moment being depicted relates to: "${cleanHook}". Adapt the scene to reflect this specific scenario — time of day, mood, and setting should match this context.`
+    : '';
+
   const prompt = [
-    scene,
+    baseScene,
+    hookContext,
     `Mood: High-contrast emotional storytelling. Problem vs solution in one frame.`,
     `Style: Photorealistic, high-resolution commercial advertising photo.`,
     `CRITICAL: Absolutely NO text, NO letters, NO words, NO numbers, NO signs anywhere in the entire image. Chat bubbles on the phone screen must be completely empty colored shapes with zero readable content inside them. No watermarks, no logos, no captions, no UI labels.`,
-  ].join(" ");
+  ].filter(Boolean).join(" ");
 
   return { prompt, aspectRatio };
 }

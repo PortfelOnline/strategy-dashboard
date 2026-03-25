@@ -13,6 +13,7 @@ import ArticleAnalyzer from "./pages/ArticleAnalyzer";
 import ContentCalendar from "@/pages/ContentCalendar";
 import Bots from "@/pages/Bots";
 import Analytics from "@/pages/Analytics";
+import SeoTracker from "@/pages/SeoTracker";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -27,6 +28,7 @@ function Router() {
       <Route path="/calendar" component={ContentCalendar} />
       <Route path="/bots" component={Bots} />
       <Route path="/analytics" component={Analytics} />
+      <Route path="/seo-tracker" component={SeoTracker} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

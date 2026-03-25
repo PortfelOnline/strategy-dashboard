@@ -4,6 +4,7 @@ export interface KadmapArticle {
   postId: number;
   slug: string;
   title: string;
+  keyword?: string; // main target keyword for SERP check
   priority: 'high' | 'medium' | 'low';
   wordsBefore?: number;
   seoScoreBefore?: number;
@@ -16,6 +17,11 @@ export interface ArticleProgress {
   seoScoreAfter?: number;
   doneAt?: string; // ISO date
   notes?: string;
+  googlePos?: number | null;   // position in Google top-10 (null = not found)
+  yandexPos?: number | null;   // position in Yandex top-10
+  posCheckedAt?: string;       // ISO date of last position check
+  top3Google?: { pos: number; domain: string; title: string }[];
+  top3Yandex?: { pos: number; domain: string; title: string }[];
 }
 
 // Sorted by conversion potential (buyer intent)
@@ -35,16 +41,17 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 5535,
     slug: 'kak-proverit-kvartiru-na-obremenenie-pri-pokupke',
     title: 'Как проверить квартиру на обременение при покупке',
+    keyword: 'как проверить квартиру на обременение при покупке',
     priority: 'high',
     wordsBefore: 436,
     seoScoreBefore: 75,
     reason: 'Горячий buyer intent — человек готов купить документ',
   },
-  // TODO — высокий приоритет
   {
     postId: 4299,
     slug: 'proverit-kvartiru-na-obremenenie-online',
     title: 'Проверить квартиру на обременение онлайн',
+    keyword: 'проверить квартиру на обременение онлайн',
     priority: 'high',
     reason: 'Транзакционный запрос, высокий intent',
   },
@@ -52,6 +59,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 4305,
     slug: 'kak-proverit-kvartiru-na-obremenenie',
     title: 'Как проверить квартиру на обременение',
+    keyword: 'как проверить квартиру на обременение',
     priority: 'high',
     reason: 'Основной информационный запрос кластера',
   },
@@ -59,6 +67,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 5607,
     slug: 'proverit-kvartiru-arest-sudebnyh-pristavov',
     title: 'Проверить квартиру арест судебных приставов',
+    keyword: 'проверить квартиру арест судебных приставов',
     priority: 'high',
     reason: 'Buyer с острой проблемой — высокая конверсия',
   },
@@ -66,6 +75,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 7129,
     slug: 'gde-proverit-kvartiru-na-obremenenie',
     title: 'Где проверить квартиру на обременение?',
+    keyword: 'где проверить квартиру на обременение',
     priority: 'high',
     reason: 'BOFU-запрос с явным intent купить',
   },
@@ -74,6 +84,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 4302,
     slug: 'kak-uznat-obremenenie-na-kvartiru',
     title: 'Как узнать обременение на квартиру через интернет',
+    keyword: 'как узнать обременение на квартиру',
     priority: 'high',
     reason: 'Информационный + транзакционный интент',
   },
@@ -81,6 +92,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 4308,
     slug: 'kak-uznat-nalozhen-li-arest-na-kvartiru',
     title: 'Как узнать наложен ли арест на квартиру?',
+    keyword: 'как узнать наложен ли арест на квартиру',
     priority: 'high',
     reason: 'Острая проблема — человек ищет выход',
   },
@@ -88,6 +100,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 5522,
     slug: 'kak-uznat-kvartira-v-areste-ili-net',
     title: 'Как узнать квартира в аресте или нет',
+    keyword: 'как узнать квартира в аресте или нет',
     priority: 'high',
     reason: 'Бинарный вопрос с высоким intent',
   },
@@ -95,6 +108,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     postId: 5558,
     slug: 'kak-uznat-kvartira-v-zaloge-ili-net',
     title: 'Как узнать квартира в залоге или нет',
+    keyword: 'как узнать квартира в залоге или нет',
     priority: 'high',
     reason: 'Залог/ипотека — горячий intent перед сделкой',
   },

@@ -3,7 +3,26 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { CheckCircle2, Circle, Clock, ExternalLink, TrendingUp, FileText, Target, Image, List, HelpCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, ExternalLink, TrendingUp, FileText, Target, Image, List, HelpCircle, RefreshCw, Trophy } from 'lucide-react';
+import { trpc } from '@/lib/trpc';
+
+function PosBadge({ pos, engine }: { pos: number | null | undefined; engine: 'G' | 'Y' }) {
+  if (pos === undefined) return null;
+  const color = pos === null
+    ? 'bg-slate-100 text-slate-400'
+    : pos <= 3
+      ? 'bg-green-100 text-green-700 border-green-200'
+      : pos <= 10
+        ? 'bg-yellow-100 text-yellow-700 border-yellow-200'
+        : 'bg-red-100 text-red-600 border-red-200';
+  const label = pos === null ? `${engine}>10` : `${engine}#${pos}`;
+  return (
+    <span className={`inline-flex items-center text-xs font-mono px-1.5 py-0.5 rounded border ${color}`}>
+      {pos !== null && pos <= 3 && <Trophy className="w-3 h-3 mr-0.5" />}
+      {label}
+    </span>
+  );
+}
 
 function parseNotesBadges(notes: string) {
   const h2 = notes.match(/(\d+)\s*H2/i)?.[1];
@@ -39,6 +58,30 @@ export default function SeoTracker() {
   const [progress, setProgress] = useState<Record<number, ArticleProgress>>({});
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<ArticleProgress>({ status: 'todo' });
+  const [checkingId, setCheckingId] = useState<number | null>(null);
+  const checkPosMutation = trpc.articles.checkPosition.useMutation();
+
+  async function checkPosition(postId: number, keyword: string) {
+    setCheckingId(postId);
+    try {
+      const data = await checkPosMutation.mutateAsync({ keyword });
+      updateArticle(postId, {
+        googlePos: data.googlePos,
+        yandexPos: data.yandexPos,
+        posCheckedAt: new Date().toISOString(),
+        top3Google: data.topCompetitors?.slice(0, 3).map((c, i) => ({
+          pos: i + 1,
+          domain: c.domain,
+          title: c.title,
+        })),
+        top3Yandex: [],
+      });
+    } catch (e) {
+      console.error('[checkPosition]', e);
+    } finally {
+      setCheckingId(null);
+    }
+  }
 
   // Load from localStorage on mount, seed initial if empty
   useEffect(() => {
@@ -254,6 +297,39 @@ export default function SeoTracker() {
                         })()}
                         {p.notes && (
                           <p className="text-xs text-slate-400 mt-1 italic">{p.notes}</p>
+                        )}
+
+                        {/* Position row */}
+                        <div className="flex flex-wrap items-center gap-2 mt-2">
+                          <PosBadge pos={p.googlePos} engine="G" />
+                          <PosBadge pos={p.yandexPos} engine="Y" />
+                          {p.posCheckedAt && (
+                            <span className="text-xs text-slate-400">
+                              проверено {p.posCheckedAt.slice(0, 10)}
+                            </span>
+                          )}
+                          {article.keyword && (
+                            <button
+                              onClick={() => checkPosition(article.postId, article.keyword!)}
+                              disabled={checkingId === article.postId}
+                              className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${checkingId === article.postId ? 'animate-spin' : ''}`} />
+                              {checkingId === article.postId ? 'Проверяю...' : 'Позиции'}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Top-3 competitors */}
+                        {(p.top3Google?.length || p.top3Yandex?.length) && (
+                          <div className="mt-2 text-xs text-slate-500 space-y-0.5">
+                            {p.top3Google?.slice(0, 3).map((r, i) => (
+                              <div key={i} className="truncate">
+                                <span className="text-slate-400">G#{r.pos}</span> {r.domain}
+                                {r.domain === 'kadastrmap.info' && <span className="ml-1 text-green-600 font-medium">← МЫ</span>}
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
 

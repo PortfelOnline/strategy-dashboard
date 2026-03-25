@@ -1041,7 +1041,7 @@ export default function ContentLibrary() {
                     title={!selectedPost?.mediaUrl ? 'Post needs an image — add one in Edit' : ''}
                   >
                     {generateReelVideo.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : '🖼️'}
-                    Slideshow (my image)
+                    My image
                   </Button>
                   <Button
                     size="sm"
@@ -1055,12 +1055,12 @@ export default function ContentLibrary() {
                       sections: reelScript.sections || [],
                     })}
                   >
-                    {generateReelVideo.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : '🎞️'}
-                    Stock footage (Pexels)
+                    {generateReelVideo.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : '✨'}
+                    AI scenes (Gemini)
                   </Button>
                 </div>
                 {!selectedPost?.mediaUrl && (
-                  <p className="text-xs text-slate-500">Slideshow requires a post image. Edit the post to add one, or use Stock footage.</p>
+                  <p className="text-xs text-slate-500">Slideshow requires a post image. Edit the post to add one, or use AI scenes.</p>
                 )}
                 {generateReelVideo.isPending && (
                   <p className="text-xs text-purple-600 animate-pulse">Generating video... this takes ~30-60 seconds ⏳</p>

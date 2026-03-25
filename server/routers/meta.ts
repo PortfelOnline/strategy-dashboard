@@ -5,7 +5,7 @@ import * as metaApi from "../_core/meta";
 import * as metaDb from "../meta.db";
 import { getDb } from "../db";
 import { contentPosts } from "../../drizzle/schema";
-import { eq, and, isNotNull } from "drizzle-orm";
+import { eq, and, isNotNull, isNull } from "drizzle-orm";
 
 export const metaRouter = router({
   /**
@@ -319,7 +319,19 @@ export const metaRouter = router({
 
       if (remoteMap.size === 0) return { updated: 0 };
 
-      // Find our posts that have a metaPostId and match against remote
+      // Build full remote post details map for content-based matching
+      const remoteDetails = new Map<string, { permalink: string; message?: string }>();
+      for (const account of accounts) {
+        if (account.accountType === "facebook_page") {
+          const posts = await metaApi.getPagePosts(account.accountId, account.accessToken);
+          for (const p of posts) remoteDetails.set(p.id, { permalink: p.permalink_url, message: p.message });
+        } else if (account.accountType === "instagram_business") {
+          const media = await metaApi.getInstagramMedia(account.accountId, account.accessToken);
+          for (const m of media) remoteDetails.set(m.id, { permalink: m.permalink, message: m.caption });
+        }
+      }
+
+      // Pass 1: match by metaPostId (published via app)
       const dbPosts = await db
         .select()
         .from(contentPosts)
@@ -327,14 +339,50 @@ export const metaRouter = router({
 
       for (const post of dbPosts) {
         if (!post.metaPostId) continue;
-        const permalink = remoteMap.get(post.metaPostId);
-        if (!permalink) continue;
-
+        const remote = remoteDetails.get(post.metaPostId);
+        if (!remote) continue;
         await db
           .update(contentPosts)
-          .set({ status: "published", publishedAt: post.publishedAt ?? new Date(), postUrl: permalink } as any)
+          .set({ status: "published", publishedAt: post.publishedAt ?? new Date(), postUrl: remote.permalink } as any)
           .where(eq(contentPosts.id, post.id));
         updated++;
+      }
+
+      // Pass 2: match published posts without metaPostId by content similarity
+      const unlinkedPosts = await db
+        .select()
+        .from(contentPosts)
+        .where(and(
+          eq(contentPosts.userId, ctx.user.id),
+          eq(contentPosts.status, "published"),
+          isNull(contentPosts.metaPostId),
+          isNull((contentPosts as any).postUrl),
+        ));
+
+      for (const post of unlinkedPosts) {
+        // Extract hook/first sentence from post content for matching
+        let hookText = "";
+        try {
+          const parsed = JSON.parse(post.content);
+          hookText = (parsed.hook || parsed.paragraphs?.[0] || "").slice(0, 60).toLowerCase();
+        } catch {
+          hookText = post.content.slice(0, 60).toLowerCase();
+        }
+        if (!hookText) continue;
+
+        // Find remote post whose message contains our hook text
+        for (const [remoteId, remote] of remoteDetails) {
+          if (!remote.message) continue;
+          if (remote.message.toLowerCase().includes(hookText)) {
+            await db
+              .update(contentPosts)
+              .set({ metaPostId: remoteId, postUrl: remote.permalink, publishedAt: post.publishedAt ?? new Date() } as any)
+              .where(eq(contentPosts.id, post.id));
+            remoteDetails.delete(remoteId); // prevent double-match
+            updated++;
+            break;
+          }
+        }
       }
 
       return { updated };

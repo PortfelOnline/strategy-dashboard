@@ -6,7 +6,7 @@ function getClient() {
   return new GoogleGenAI({ apiKey });
 }
 
-// ── Image generation (Imagen 3) ───────────────────────────────────────────────
+// ── Image generation (Imagen 4 — requires paid Gemini plan) ──────────────────
 
 export async function generateGeminiImage(
   prompt: string,
@@ -25,7 +25,7 @@ export async function generateGeminiImage(
   });
 
   const img = response.generatedImages?.[0]?.image;
-  if (!img?.imageBytes) throw new Error("Imagen 3 returned no image");
+  if (!img?.imageBytes) throw new Error("Imagen returned no image");
 
   return { b64: img.imageBytes, mimeType: "image/jpeg" };
 }

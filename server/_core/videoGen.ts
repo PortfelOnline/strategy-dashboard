@@ -255,9 +255,22 @@ async function generateSectionImage(section: { label: string; visual: string; sc
   const promptLines = SECTION_PROMPTS[idx % SECTION_PROMPTS.length];
   const prompt = promptLines.join(" ");
 
-  const { b64, mimeType } = await generateGeminiImage(prompt, "9:16");
-  const ext = mimeType.includes("png") ? "png" : "jpg";
-  const imgPath = path.join(tmpDir, `section_${idx}.${ext}`);
+  // DALL-E 3 via OpenAI — portrait 1024×1792 ≈ 9:16
+  const apiKey = process.env.BUILT_IN_FORGE_API_KEY || process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("No OpenAI API key for image generation");
+
+  const res = await fetch("https://api.openai.com/v1/images/generations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ model: "dall-e-3", prompt: prompt.slice(0, 1000), n: 1, size: "1024x1792", response_format: "b64_json" }),
+  });
+  if (!res.ok) throw new Error(`DALL-E 3 failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
+
+  const data: any = await res.json();
+  const b64 = data.data?.[0]?.b64_json;
+  if (!b64) throw new Error("DALL-E 3 returned no image");
+
+  const imgPath = path.join(tmpDir, `section_${idx}.jpg`);
   fs.writeFileSync(imgPath, Buffer.from(b64, "base64"));
   return imgPath;
 }

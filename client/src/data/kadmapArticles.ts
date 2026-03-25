@@ -69,27 +69,56 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     priority: 'high',
     reason: 'BOFU-запрос с явным intent купить',
   },
-  // Средний приоритет
+  // ✅ DONE — второй батч 2026-03-25
   {
-    postId: 0,
-    slug: 'snyat-obremenenie-posle-pogasheniya-ipoteki',
-    title: 'Снять обременение после погашения ипотеки',
+    postId: 4302,
+    slug: 'kak-uznat-obremenenie-na-kvartiru',
+    title: 'Как узнать обременение на квартиру через интернет',
+    priority: 'high',
+    reason: 'Информационный + транзакционный интент',
+  },
+  {
+    postId: 4308,
+    slug: 'kak-uznat-nalozhen-li-arest-na-kvartiru',
+    title: 'Как узнать наложен ли арест на квартиру?',
+    priority: 'high',
+    reason: 'Острая проблема — человек ищет выход',
+  },
+  {
+    postId: 5522,
+    slug: 'kak-uznat-kvartira-v-areste-ili-net',
+    title: 'Как узнать квартира в аресте или нет',
+    priority: 'high',
+    reason: 'Бинарный вопрос с высоким intent',
+  },
+  {
+    postId: 5558,
+    slug: 'kak-uznat-kvartira-v-zaloge-ili-net',
+    title: 'Как узнать квартира в залоге или нет',
+    priority: 'high',
+    reason: 'Залог/ипотека — горячий intent перед сделкой',
+  },
+  // Средний приоритет — TODO
+  {
+    postId: 5464,
+    slug: 'snyat-obremenenie-s-kvartiry-posle-pogasheniya-ipoteki',
+    title: 'Снять обременение с квартиры после погашения ипотеки',
     priority: 'medium',
     reason: 'Ипотечный кластер — переход к заказу выписки',
   },
   {
-    postId: 0,
+    postId: 4312,
     slug: 'proverit-kvartiru-na-dolgi-pered-pokupkoy',
     title: 'Проверить квартиру на долги перед покупкой',
     priority: 'medium',
     reason: 'Покупатели вторичного жилья',
   },
   {
-    postId: 0,
-    slug: 'kak-uznat-obremenenie-na-kvartiru',
-    title: 'Как узнать обременение на квартиру',
+    postId: 5707,
+    slug: 'kak-uznat-est-li-obremenenie-na-kvartiru',
+    title: 'Как узнать есть ли обременение на квартиру',
     priority: 'medium',
-    reason: 'Высокочастотный запрос',
+    reason: 'Высокочастотный информационный запрос',
   },
 ];
 

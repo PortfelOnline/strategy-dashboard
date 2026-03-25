@@ -9,7 +9,7 @@ function parseNotesBadges(notes: string) {
   const h2 = notes.match(/(\d+)\s*H2/i)?.[1];
   const h3 = notes.match(/(\d+)\s*H3/i)?.[1];
   const faq = notes.match(/(\d+)\s*FAQ/i)?.[1];
-  const img = notes.match(/(\d+)\s*(?:картинок|img|изображений)/i)?.[1];
+  const img = notes.match(/(\d+)\s*(?:\S+\s+)?(?:картинок|img|изображений)/i)?.[1];
   const intent = notes.match(/(транзакционный|информационный|BOFU|бинарный|срочный|проблемный|острая\s+проблема|залог|ипотека)[^,.]*/i)?.[0];
   return { h2, h3, faq, img, intent };
 }
@@ -278,8 +278,9 @@ export default function SeoTracker() {
             <div className="flex items-start gap-2">
               <Target className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
               <div className="text-sm text-blue-800">
-                <strong>Эталон: </strong>
-                ~3500 слов · 15+ H2 · 5 H3 · 10+ FAQ · 9 картинок (width/height) · [PRICE_3_DISC] · 9+ CTA на /spravki/ · Блок отзывов · Метадеск ≤160 символов
+                <strong>Цель: 1–3 место в Гугл / Яндекс</strong>
+                <br />
+                <span className="font-medium">Эталон:</span> ~3500 слов · 15+ H2 · 5 H3 · 10+ FAQ · 9 картинок (width/height) · [PRICE_3_DISC] · 9+ CTA на /spravki/ · Блок отзывов · Метадеск ≤160 символов
               </div>
             </div>
           </CardContent>

@@ -7,6 +7,20 @@ const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
 const FFPROBE = process.env.FFPROBE_PATH || "ffprobe";
 const OUT_DIR = path.join(process.cwd(), "public", "uploads");
 
+// Check once if drawtext filter is available (requires libfreetype)
+let _drawtextSupported: boolean | null = null;
+function isDrawtextSupported(): boolean {
+  if (_drawtextSupported === null) {
+    try {
+      const out = execFileSync(FFMPEG, ["-filters"], { encoding: "utf8", timeout: 5000 });
+      _drawtextSupported = out.includes("drawtext");
+    } catch {
+      _drawtextSupported = false;
+    }
+  }
+  return _drawtextSupported;
+}
+
 interface SlideshowVideoOptions {
   imageUrls: string[];
   textOverlays: string[];
@@ -35,7 +49,7 @@ async function generateTTSAudio(text: string, outputPath: string): Promise<void>
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: text.slice(0, 5000) }], role: "user" }],
+        contents: [{ parts: [{ text: `Say: ${text.slice(0, 4990)}` }], role: "user" }],
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
@@ -162,12 +176,13 @@ export async function generateSlideshowVideo(opts: SlideshowVideoOptions): Promi
 
     // 3. Build vf chain
     const scale = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
-    const zoomStep = (0.08 / frames).toFixed(6);
-    const kb = `zoompan=z='min(zoom+${zoomStep}\\,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30`;
+    // Aggressive Ken Burns: 25% zoom + horizontal drift left→right for cinematic energy
+    const zoomStep = (0.25 / frames).toFixed(6);
+    const kb = `zoompan=z='min(zoom+${zoomStep}\\,1.25)':x='iw/2-(iw/zoom/2)+(iw*0.08)*(zoom-1)/0.25':y='ih/2-(ih/zoom/2)':d=${frames}:s=1080x1920:fps=30`;
 
-    // Text overlays — evenly spaced
+    // Text overlays — evenly spaced (skipped if drawtext/libfreetype not available)
     const overlayFilters: string[] = [];
-    if (opts.textOverlays.length > 0) {
+    if (opts.textOverlays.length > 0 && isDrawtextSupported()) {
       const perSlide = totalDuration / opts.textOverlays.length;
       opts.textOverlays.forEach((text, i) => {
         const t0 = (i * perSlide).toFixed(1);
@@ -253,7 +268,9 @@ export async function generateStockVideo(opts: StockVideoOptions): Promise<strin
         execFileSync(FFMPEG, [
           "-y", "-i", rawClip,
           "-t", clipDuration.toFixed(1),
-          "-vf", `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=text='${label}':fontsize=48:fontcolor=white:shadowcolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=h*0.85`,
+          "-vf", isDrawtextSupported()
+            ? `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,drawtext=text='${label}':fontsize=48:fontcolor=white:shadowcolor=black:shadowx=2:shadowy=2:x=(w-text_w)/2:y=h*0.85`
+            : `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920`,
           "-c:v", "libx264", "-preset", "fast", "-crf", "24", "-an",
           clipOut,
         ], { stdio: "pipe", timeout: 60_000 });

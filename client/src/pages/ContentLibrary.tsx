@@ -124,6 +124,8 @@ export default function ContentLibrary() {
   const [addLinkValue, setAddLinkValue] = useState('');
   const [expandedPostIds, setExpandedPostIds] = useState<Set<number>>(new Set());
   const [generatingImagePostId, setGeneratingImagePostId] = useState<number | null>(null);
+  const [pendingImageUrl, setPendingImageUrl] = useState<string | null>(null);
+  const [pendingImagePostId, setPendingImagePostId] = useState<number | null>(null);
   const [previewPost, setPreviewPost] = useState<Post | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -176,20 +178,20 @@ export default function ContentLibrary() {
   const generateReelVideo = trpc.content.generateReelVideo.useMutation({
     onSuccess: (data) => {
       setReelVideoUrl(data.videoUrl);
-      toast.success('Video ready!');
+      sessionStorage.setItem('lastReelVideoUrl', data.videoUrl);
+      toast.success('Video ready! Scroll down to preview ⬇️', { duration: 5000 });
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error('Video failed: ' + e.message),
   });
 
   const generateVisual = trpc.content.generateVisual.useMutation({
-    onSuccess: async (data, variables) => {
-      // Save the generated image URL back to the post
+    onSuccess: async (data) => {
       const postId = generatingImagePostId;
-      if (postId) {
-        await updatePost.mutateAsync({ id: postId, mediaUrl: data.url });
-      }
       setGeneratingImagePostId(null);
-      toast.success('Image generated!');
+      // Show preview — user decides whether to save
+      setPendingImageUrl(data.url);
+      setPendingImagePostId(postId);
+      toast.success('Image generated! Save it to the post?');
     },
     onError: (e) => {
       setGeneratingImagePostId(null);
@@ -640,6 +642,41 @@ export default function ContentLibrary() {
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
+
+                  {/* Pending image preview — confirm before saving */}
+                  {pendingImageUrl && pendingImagePostId === post.id && (
+                    <div className="mt-3 rounded-xl border-2 border-orange-200 bg-orange-50 p-3 space-y-2">
+                      <p className="text-xs font-semibold text-orange-700">✨ Generated image — save to post?</p>
+                      <img
+                        src={pendingImageUrl}
+                        alt="Generated"
+                        className="w-full rounded-lg object-cover max-h-48"
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1 bg-orange-500 hover:bg-orange-600 text-white"
+                          onClick={async () => {
+                            await updatePost.mutateAsync({ id: post.id, mediaUrl: pendingImageUrl });
+                            setPendingImageUrl(null);
+                            setPendingImagePostId(null);
+                            toast.success('Image saved!');
+                          }}
+                          disabled={updatePost.isPending}
+                        >
+                          Save to post
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => { setPendingImageUrl(null); setPendingImagePostId(null); }}
+                        >
+                          Discard
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}

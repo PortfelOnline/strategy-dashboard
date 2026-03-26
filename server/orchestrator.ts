@@ -192,6 +192,13 @@ function tick(): void {
     if (!enabledIds.has(queue[i].botId)) queue.splice(i, 1);
   }
 
+  // 4b. Sort queue by warmup_days ascending — bots with less warmup get priority
+  queue.sort((a, b) => {
+    const dA = (getBotState(a.botId)?.warmup_days as number | undefined) ?? 0;
+    const dB = (getBotState(b.botId)?.warmup_days as number | undefined) ?? 0;
+    return dA - dB;
+  });
+
   // 5. Start from queue up to min(config.maxConcurrent, dynamic free resources)
   const effectiveMax = Math.min(config.maxConcurrent, dynamicMaxConcurrent(config.resourcePct ?? 50));
   let runningCount = runningIds.size;

@@ -125,6 +125,17 @@ export function getBotLogs(botId: number, lines = 150): string {
   return 'No logs found';
 }
 
+// Returns log file mtime in ms, or null if log doesn't exist
+export function getBotLastActivity(botId: number): number | null {
+  const logFile = path.join(BOT_DIR, 'logs', `bot_${botId}.log`);
+  try {
+    if (fs.existsSync(logFile)) {
+      return fs.statSync(logFile).mtimeMs;
+    }
+  } catch {}
+  return null;
+}
+
 export function listKnownBotIds(): number[] {
   const stateDir = path.join(BOT_DIR, 'outputs', 'bot_states');
   const ids: number[] = [];

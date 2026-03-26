@@ -400,6 +400,8 @@ export default function Bots() {
                       <tbody className="divide-y divide-slate-100">
                         {bots.map(bot => {
                           const isRunning = bot.status === 'running';
+                          const lastActivityMs = (bot as Record<string, unknown>).lastActivity as number | undefined;
+                          const isBrowsing = isRunning && lastActivityMs != null && (Date.now() - lastActivityMs) < 5 * 60 * 1000;
                           const isManaged = orchStatus?.managedBots.includes(bot.botId);
                           const warmupDays = (bot.state?.warmup_days as number | undefined) ?? 0;
                           const lastRun = bot.state?.last_run as string | undefined;
@@ -474,11 +476,11 @@ export default function Bots() {
                                   >
                                     <Terminal className="w-3.5 h-3.5" />
                                   </button>
-                                  {isRunning && (
+                                  {isBrowsing && (
                                     <button
-                                      className="p-1 rounded hover:bg-blue-100 text-blue-500"
+                                      className="p-1 rounded hover:bg-blue-100 text-blue-500 animate-pulse"
                                       onClick={() => vncStart.mutate({ botId: bot.botId })}
-                                      title="Смотреть (только когда бот активен)"
+                                      title="Смотреть — бот сейчас активен"
                                     >
                                       <Eye className="w-3.5 h-3.5" />
                                     </button>

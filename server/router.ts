@@ -44,12 +44,13 @@ export const botsRouter = t.router({
 
     const stopped = [...knownIds]
       .filter((id) => !runningIds.has(id))
-      .map((id) => ({ botId: id, status: "stopped" as const, state: botManager.getBotState(id) }));
+      .map((id) => ({ botId: id, status: "stopped" as const, state: botManager.getBotState(id), lastActivity: botManager.getBotLastActivity(id) }));
 
     const runningWithState = running.map((b) => ({
       ...b,
       status: "running" as const,
       state: botManager.getBotState(b.botId),
+      lastActivity: botManager.getBotLastActivity(b.botId),
     }));
 
     return {

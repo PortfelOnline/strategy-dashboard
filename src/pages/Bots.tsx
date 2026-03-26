@@ -341,7 +341,7 @@ export default function Bots() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold text-green-600">{warmedCount}</div>
-                    <p className="text-xs text-slate-500 mt-1">из {bots.length} (≥14 дней прогрева)</p>
+                    <p className="text-xs text-slate-500 mt-1">из {bots.length} (≥9 дней прогрева)</p>
                     <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
                       <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: bots.length > 0 ? `${Math.min(100, (warmedCount / bots.length) * 100)}%` : '0%' }} />
                     </div>

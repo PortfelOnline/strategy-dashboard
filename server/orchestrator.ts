@@ -81,7 +81,7 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   bots: [],
 };
 
-const WARMUP_DAYS_THRESHOLD = 14;
+const WARMUP_DAYS_THRESHOLD = 9;
 const TICK_INTERVAL_MS = 30_000;
 
 // Runtime state (in-memory, reset on server restart)
@@ -193,10 +193,14 @@ function tick(): void {
     if (!enabledIds.has(queue[i].botId)) queue.splice(i, 1);
   }
 
-  // 4b. Sort queue by warmup_days ascending — bots with less warmup get priority
+  // 4b. Sort queue: target-ready bots first, then warmup bots by ascending days
   queue.sort((a, b) => {
     const dA = (getBotState(a.botId)?.warmup_days as number | undefined) ?? 0;
     const dB = (getBotState(b.botId)?.warmup_days as number | undefined) ?? 0;
+    const isTargetA = dA >= WARMUP_DAYS_THRESHOLD ? 1 : 0;
+    const isTargetB = dB >= WARMUP_DAYS_THRESHOLD ? 1 : 0;
+    // Target bots first; within same group sort warmup ascending
+    if (isTargetA !== isTargetB) return isTargetB - isTargetA;
     return dA - dB;
   });
 

@@ -684,7 +684,7 @@ export default function Bots() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> Запросы по сайтам
+                      <FileText className="w-4 h-4" /> Целевые запросы по сайтам
                     </CardTitle>
                     <CardDescription>Документ с поисковыми запросами для каждого сайта</CardDescription>
                   </CardHeader>

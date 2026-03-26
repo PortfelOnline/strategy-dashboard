@@ -132,6 +132,9 @@ export default function Bots() {
   const { data: orchStatus, refetch: refetchOrchStatus } = trpc.orchestratorStatus.useQuery(undefined, {
     refetchInterval: 15_000,
   });
+  const { data: captchaData } = trpc.captchaStats.useQuery(undefined, {
+    refetchInterval: 60_000,
+  });
   const { data: detectedResources } = trpc.detectedResources.useQuery(undefined, {
     refetchInterval: 30_000,
   });
@@ -344,6 +347,27 @@ export default function Bots() {
                     </div>
                   </CardContent>
                 </Card>
+                {captchaData && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-orange-500" /> 2captcha сегодня
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className={`text-3xl font-bold ${captchaData.dailyCount >= captchaData.maxDaily ? 'text-red-600' : captchaData.dailyCount > 0 ? 'text-orange-500' : 'text-slate-400'}`}>
+                        {captchaData.dailyCount}<span className="text-lg text-slate-400">/{captchaData.maxDaily}</span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {captchaData.balance !== null ? `Баланс: $${captchaData.balance.toFixed(2)}` : captchaData.configured ? 'Баланс недоступен' : 'Не настроен'}
+                      </p>
+                      <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
+                        <div className={`h-1.5 rounded-full transition-all ${captchaData.dailyCount >= captchaData.maxDaily ? 'bg-red-500' : 'bg-orange-400'}`}
+                          style={{ width: `${Math.min(100, (captchaData.dailyCount / captchaData.maxDaily) * 100)}%` }} />
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             )}
 

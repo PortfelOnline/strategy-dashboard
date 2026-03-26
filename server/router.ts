@@ -125,6 +125,33 @@ export const botsRouter = t.router({
 
   vncStop: procedure
     .mutation(() => { botManager.stopVnc(); return { success: true }; }),
+
+  // --- Captcha Stats ---
+  captchaStats: procedure.query(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const today = new Date().toISOString().split('T')[0];
+    let dailyCount = 0;
+    const maxDaily = parseInt(process.env.CAPTCHA_2CAPTCHA_MAX_DAILY || '15');
+    try {
+      const dailyFile = path.join(process.env.BOT_DIR || '/bot_work', 'work', '2captcha_daily.json');
+      const raw = fs.readFileSync(dailyFile, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed.date === today) dailyCount = parseInt(parsed.count) || 0;
+    } catch {}
+
+    let balance: number | null = null;
+    const key = process.env.CAPTCHA_2CAPTCHA_KEY || '';
+    if (key) {
+      try {
+        const res = await fetch(`https://2captcha.com/res.php?key=${key}&action=getbalance&json=1`);
+        const parsed = await res.json() as { status: number; request: string };
+        if (parsed.status === 1) balance = parseFloat(parsed.request);
+      } catch {}
+    }
+
+    return { dailyCount, maxDaily, balance, configured: !!key };
+  }),
 });
 
 export type BotsRouter = typeof botsRouter;

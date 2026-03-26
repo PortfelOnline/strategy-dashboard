@@ -14,7 +14,7 @@ export function dynamicMaxConcurrent(pct = 50): number {
   const ratio = pct / 100;
   const ramBased = Math.floor(freeMem * ratio / RAM_PER_BOT_BYTES);
   // Each bot uses ~2 threads; cap at `pct`% of CPU cores
-  const cpuBased = Math.max(1, Math.floor(cpuCount * ratio * 2));
+  const cpuBased = Math.max(1, Math.floor(cpuCount * ratio * 4));
   return Math.max(1, Math.min(ramBased, cpuBased));
 }
 

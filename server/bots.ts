@@ -136,6 +136,31 @@ export function getBotLastActivity(botId: number): number | null {
   return null;
 }
 
+// Returns true only when the bot is actively browsing (Firefox open, doing search)
+// Detects by reading last log line — sleeping bots write "Inter-search human pause"
+const SLEEP_PATTERNS = ['Inter-search human pause', 'Bot state saved', 'finished', 'Cookies saved'];
+const ACTIVE_PATTERNS = ['Executing search', 'Browser initialized', 'ya.ru', 'CAPTCHA', 'Clicked', 'captcha', 'Checking', 'proxy', 'Proxy', 'initialized', 'search query'];
+
+export function isBotBrowsing(botId: number): boolean {
+  const logFile = path.join(BOT_DIR, 'logs', `bot_${botId}.log`);
+  try {
+    if (!fs.existsSync(logFile)) return false;
+    const stat = fs.statSync(logFile);
+    // Log must be recent (< 8 min) to consider bot active
+    if (Date.now() - stat.mtimeMs > 8 * 60 * 1000) return false;
+    // Read last few lines to find last meaningful log entry
+    const content = fs.readFileSync(logFile, 'utf8');
+    const lines = content.trimEnd().split('\n');
+    // Check last 3 lines (in case of buffering)
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 3); i--) {
+      const line = lines[i];
+      if (SLEEP_PATTERNS.some(p => line.includes(p))) return false;
+      if (ACTIVE_PATTERNS.some(p => line.includes(p))) return true;
+    }
+  } catch {}
+  return false;
+}
+
 export function listKnownBotIds(): number[] {
   const stateDir = path.join(BOT_DIR, 'outputs', 'bot_states');
   const ids: number[] = [];

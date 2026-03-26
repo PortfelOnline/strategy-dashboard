@@ -44,13 +44,14 @@ export const botsRouter = t.router({
 
     const stopped = [...knownIds]
       .filter((id) => !runningIds.has(id))
-      .map((id) => ({ botId: id, status: "stopped" as const, state: botManager.getBotState(id), lastActivity: botManager.getBotLastActivity(id) }));
+      .map((id) => ({ botId: id, status: "stopped" as const, state: botManager.getBotState(id), lastActivity: botManager.getBotLastActivity(id), isBrowsing: false }));
 
     const runningWithState = running.map((b) => ({
       ...b,
       status: "running" as const,
       state: botManager.getBotState(b.botId),
       lastActivity: botManager.getBotLastActivity(b.botId),
+      isBrowsing: botManager.isBotBrowsing(b.botId),
     }));
 
     return {
@@ -131,27 +132,88 @@ export const botsRouter = t.router({
   captchaStats: procedure.query(async () => {
     const fs = await import('fs');
     const path = await import('path');
+    const { execFileSync } = await import('child_process');
     const today = new Date().toISOString().split('T')[0];
-    let dailyCount = 0;
-    const maxDaily = parseInt(process.env.CAPTCHA_2CAPTCHA_MAX_DAILY || '15');
+    const botDir = process.env.BOT_DIR || '/bot_work';
+
+    // 2captcha daily solves (from atomic counter file)
+    let dailyCount2cap = 0;
+    const max2cap = parseInt(process.env.CAPTCHA_2CAPTCHA_MAX_DAILY || '15');
     try {
-      const dailyFile = path.join(process.env.BOT_DIR || '/bot_work', 'work', '2captcha_daily.json');
-      const raw = fs.readFileSync(dailyFile, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (parsed.date === today) dailyCount = parseInt(parsed.count) || 0;
+      const dailyFile = path.join(botDir, 'work', '2captcha_daily.json');
+      const parsed = JSON.parse(fs.readFileSync(dailyFile, 'utf-8'));
+      if (parsed.date === today) dailyCount2cap = parseInt(parsed.count) || 0;
     } catch {}
 
-    let balance: number | null = null;
-    const key = process.env.CAPTCHA_2CAPTCHA_KEY || '';
-    if (key) {
+    // Count attempts and capsolver calls from today's logs via grep
+    let attempts2cap = 0, attemptsCapsolver = 0, capsolverErrors = 0;
+    try {
+      const container = process.env.BOT_CONTAINER;
+      const logsDir = container ? '/app/logs' : path.join(botDir, 'logs');
+      const grepCmd = container ? 'docker' : 'grep';
+      const baseArgs = container ? ['exec', container, 'grep', '-rh', '--include=*.log'] : ['-rh', '--include=*.log'];
+      const getCount = (pattern: string) => {
+        try {
+          const args = [...baseArgs, pattern, logsDir];
+          const out = execFileSync(grepCmd === 'docker' ? 'docker' : 'grep', args, { encoding: 'utf8' });
+          return out.split('\n').filter(l => l.includes(today)).length;
+        } catch { return 0; }
+      };
+      attempts2cap = getCount('Calling 2captcha.com');
+      attemptsCapsolver = getCount('Calling capsolver fallback');
+      capsolverErrors = getCount('capsolver rejected task');
+    } catch {}
+
+    // History file: {date: {count2cap, attemptsCapsolver}}
+    const histFile = path.join(botDir, 'outputs', 'captcha_history.json');
+    let history: Record<string, { count2cap: number; attemptsCapsolver: number }> = {};
+    try { history = JSON.parse(fs.readFileSync(histFile, 'utf-8')); } catch {}
+    // Update today's entry
+    history[today] = { count2cap: dailyCount2cap, attemptsCapsolver };
+    // Keep last 14 days
+    const allDates = Object.keys(history).sort();
+    if (allDates.length > 14) {
+      for (const d of allDates.slice(0, allDates.length - 14)) delete history[d];
+    }
+    try { fs.writeFileSync(histFile, JSON.stringify(history, null, 2)); } catch {}
+    // Last 7 days for display
+    const last7 = Object.keys(history).sort().slice(-7).map(d => ({ date: d, ...history[d] }));
+
+    // 2captcha balance
+    let balance2cap: number | null = null;
+    const key2cap = process.env.CAPTCHA_2CAPTCHA_KEY || '';
+    if (key2cap) {
       try {
-        const res = await fetch(`https://2captcha.com/res.php?key=${key}&action=getbalance&json=1`);
+        const res = await fetch(`https://2captcha.com/res.php?key=${key2cap}&action=getbalance&json=1`);
         const parsed = await res.json() as { status: number; request: string };
-        if (parsed.status === 1) balance = parseFloat(parsed.request);
+        if (parsed.status === 1) balance2cap = parseFloat(parsed.request);
       } catch {}
     }
 
-    return { dailyCount, maxDaily, balance, configured: !!key };
+    // Capsolver balance
+    let balanceCapsolver: number | null = null;
+    const keyCap = process.env.CAPTCHA_CAPSOLVER_KEY || '';
+    if (keyCap) {
+      try {
+        const res = await fetch('https://api.capsolver.com/getBalance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientKey: keyCap }),
+        });
+        const parsed = await res.json() as { errorId: number; balance: number };
+        if (parsed.errorId === 0) balanceCapsolver = parsed.balance;
+      } catch {}
+    }
+
+    // Cost estimate: 2captcha ~$0.003/solve, capsolver ~$0.002/solve
+    const costToday = dailyCount2cap * 0.003;
+
+    return {
+      twoCaptcha: { dailyCount: dailyCount2cap, maxDaily: max2cap, attempts: attempts2cap, balance: balance2cap, configured: !!key2cap },
+      capsolver: { attempts: attemptsCapsolver, errors: capsolverErrors, balance: balanceCapsolver, configured: !!keyCap },
+      costToday,
+      history: last7,
+    };
   }),
 });
 

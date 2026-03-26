@@ -348,23 +348,67 @@ export default function Bots() {
                   </CardContent>
                 </Card>
                 {captchaData && (
-                  <Card>
+                  <Card className="col-span-1 md:col-span-2">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-orange-500" /> 2captcha сегодня
+                        <Shield className="w-4 h-4 text-orange-500" /> Капча — расход и баланс
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className={`text-3xl font-bold ${captchaData.dailyCount >= captchaData.maxDaily ? 'text-red-600' : captchaData.dailyCount > 0 ? 'text-orange-500' : 'text-slate-400'}`}>
-                        {captchaData.dailyCount}<span className="text-lg text-slate-400">/{captchaData.maxDaily}</span>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        {/* 2captcha */}
+                        <div className="bg-orange-50 rounded-lg p-3">
+                          <div className="text-xs font-semibold text-orange-700 mb-1">2captcha</div>
+                          <div className={`text-2xl font-bold ${captchaData.twoCaptcha.dailyCount >= captchaData.twoCaptcha.maxDaily ? 'text-red-600' : 'text-orange-600'}`}>
+                            {captchaData.twoCaptcha.dailyCount}
+                            <span className="text-sm font-normal text-slate-400">/{captchaData.twoCaptcha.maxDaily} решено</span>
+                          </div>
+                          <div className="mt-1.5 w-full bg-orange-200 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full transition-all ${captchaData.twoCaptcha.dailyCount >= captchaData.twoCaptcha.maxDaily ? 'bg-red-500' : 'bg-orange-500'}`}
+                              style={{ width: `${Math.min(100, (captchaData.twoCaptcha.dailyCount / captchaData.twoCaptcha.maxDaily) * 100)}%` }} />
+                          </div>
+                          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
+                            <div>Попыток: <span className="font-medium text-slate-700">{captchaData.twoCaptcha.attempts}</span></div>
+                            <div>Баланс: <span className="font-medium text-green-700">{captchaData.twoCaptcha.balance !== null ? `$${captchaData.twoCaptcha.balance.toFixed(2)}` : '—'}</span></div>
+                            <div>Расход сегодня: <span className="font-medium text-red-600">${captchaData.costToday.toFixed(4)}</span></div>
+                          </div>
+                        </div>
+                        {/* Capsolver */}
+                        <div className="bg-blue-50 rounded-lg p-3">
+                          <div className="text-xs font-semibold text-blue-700 mb-1">Capsolver</div>
+                          <div className="text-2xl font-bold text-blue-600">
+                            {captchaData.capsolver.attempts}
+                            <span className="text-sm font-normal text-slate-400"> попыток</span>
+                          </div>
+                          <div className="mt-1.5 w-full bg-blue-200 rounded-full h-1.5">
+                            <div className="h-1.5 rounded-full bg-red-400 transition-all"
+                              style={{ width: captchaData.capsolver.attempts > 0 ? `${Math.min(100, (captchaData.capsolver.errors / captchaData.capsolver.attempts) * 100)}%` : '0%' }} />
+                          </div>
+                          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
+                            <div>Ошибок: <span className="font-medium text-red-600">{captchaData.capsolver.errors}</span></div>
+                            <div>Баланс: <span className="font-medium text-green-700">{captchaData.capsolver.balance !== null ? `$${captchaData.capsolver.balance.toFixed(2)}` : '—'}</span></div>
+                            <div className="text-red-500 font-medium">YandexSmartCaptcha не поддерживается</div>
+                          </div>
+                        </div>
                       </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        {captchaData.balance !== null ? `Баланс: $${captchaData.balance.toFixed(2)}` : captchaData.configured ? 'Баланс недоступен' : 'Не настроен'}
-                      </p>
-                      <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
-                        <div className={`h-1.5 rounded-full transition-all ${captchaData.dailyCount >= captchaData.maxDaily ? 'bg-red-500' : 'bg-orange-400'}`}
-                          style={{ width: `${Math.min(100, (captchaData.dailyCount / captchaData.maxDaily) * 100)}%` }} />
-                      </div>
+                      {/* History chart - last 7 days */}
+                      {captchaData.history.length > 1 && (
+                        <div>
+                          <div className="text-xs text-slate-400 mb-1.5">История (последние {captchaData.history.length} дней)</div>
+                          <div className="flex items-end gap-1 h-10">
+                            {captchaData.history.map((d: { date: string; count2cap: number; attemptsCapsolver: number }) => {
+                              const maxVal = Math.max(...captchaData.history.map((x: typeof d) => x.count2cap), 1);
+                              const h = Math.max(4, Math.round((d.count2cap / maxVal) * 40));
+                              return (
+                                <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.count2cap} решено`}>
+                                  <div className="w-full bg-orange-400 rounded-sm" style={{ height: `${h}px` }} />
+                                  <div className="text-[9px] text-slate-400">{d.date.slice(5)}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -400,8 +444,7 @@ export default function Bots() {
                       <tbody className="divide-y divide-slate-100">
                         {bots.map(bot => {
                           const isRunning = bot.status === 'running';
-                          const lastActivityMs = (bot as Record<string, unknown>).lastActivity as number | undefined;
-                          const isBrowsing = isRunning && lastActivityMs != null && (Date.now() - lastActivityMs) < 5 * 60 * 1000;
+                          const isBrowsing = (bot as Record<string, unknown>).isBrowsing === true;
                           const isManaged = orchStatus?.managedBots.includes(bot.botId);
                           const warmupDays = (bot.state?.warmup_days as number | undefined) ?? 0;
                           const lastRun = bot.state?.last_run as string | undefined;

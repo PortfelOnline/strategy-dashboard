@@ -49,6 +49,7 @@ export interface OrchestratorConfig {
   enabled: boolean;
   maxConcurrent: number;
   resourcePct: number;     // % of free RAM/CPU to use for dynamic limit (1–100)
+  maxLoadPerCpu?: number;  // max LA per CPU before pausing new starts (default 1.5)
   restartDelayMin: number; // minutes to wait before re-queuing a finished bot
   dailyStartHour: number;  // 0–23: start of allowed window
   dailyEndHour: number;    // 1–24: end of allowed window (exclusive)
@@ -200,6 +201,14 @@ function tick(): void {
   });
 
   // 5. Start from queue up to min(config.maxConcurrent, dynamic free resources)
+  // Load average guard: don't start new bots if LA5 per CPU > maxLoadPerCpu
+  const _loadAvg5 = os.loadavg()[1];
+  const _cpuCount = os.cpus().length;
+  const _maxLoadPerCpu = config.maxLoadPerCpu ?? 1.5;
+  if (_loadAvg5 / _cpuCount > _maxLoadPerCpu) {
+    // System under load — skip starting new bots this tick
+    return;
+  }
   const effectiveMax = Math.min(config.maxConcurrent, dynamicMaxConcurrent(config.resourcePct ?? 50));
   let runningCount = runningIds.size;
   while (runningCount < effectiveMax && queue.length > 0) {

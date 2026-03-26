@@ -3,9 +3,6 @@ services:
     image: yandex_bot:latest       # сборка отдельно: cd ~/yandex_bot && docker build -t yandex_bot .
     container_name: yandex_bot
     environment:
-      - CAPTCHA_CAPSOLVER_KEY=CAP-4F301DFDC30D3B38B107895017C3B0DA01C25A3D697FE9140557965B8AD1B874
-      - CAPTCHA_CAPSOLVER_SCORE_THRESHOLD=99
-      - CAPTCHA_CAPSOLVER_MAX_DAILY=30
       - CAPTCHA_2CAPTCHA_KEY=40a98c9a3d6373ac7e5c3e210842f358
       - CAPTCHA_2CAPTCHA_MAX_DAILY=30
     volumes:

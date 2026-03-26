@@ -145,8 +145,8 @@ export const botsRouter = t.router({
       if (parsed.date === today) dailyCount2cap = parseInt(parsed.count) || 0;
     } catch {}
 
-    // Count attempts and capsolver calls from today's logs via grep
-    let attempts2cap = 0, attemptsCapsolver = 0, capsolverErrors = 0;
+    // Count attempts from today's logs via grep
+    let attempts2cap = 0;
     try {
       const container = process.env.BOT_CONTAINER;
       const logsDir = container ? '/app/logs' : path.join(botDir, 'logs');
@@ -160,16 +160,14 @@ export const botsRouter = t.router({
         } catch { return 0; }
       };
       attempts2cap = getCount('Calling 2captcha.com');
-      attemptsCapsolver = getCount('Calling capsolver fallback');
-      capsolverErrors = getCount('capsolver rejected task');
     } catch {}
 
-    // History file: {date: {count2cap, attemptsCapsolver}}
+    // History file: {date: {count2cap}}
     const histFile = path.join(botDir, 'outputs', 'captcha_history.json');
-    let history: Record<string, { count2cap: number; attemptsCapsolver: number }> = {};
+    let history: Record<string, { count2cap: number }> = {};
     try { history = JSON.parse(fs.readFileSync(histFile, 'utf-8')); } catch {}
     // Update today's entry
-    history[today] = { count2cap: dailyCount2cap, attemptsCapsolver };
+    history[today] = { count2cap: dailyCount2cap };
     // Keep last 14 days
     const allDates = Object.keys(history).sort();
     if (allDates.length > 14) {
@@ -190,27 +188,12 @@ export const botsRouter = t.router({
       } catch {}
     }
 
-    // Capsolver balance
-    let balanceCapsolver: number | null = null;
-    const keyCap = process.env.CAPTCHA_CAPSOLVER_KEY || '';
-    if (keyCap) {
-      try {
-        const res = await fetch('https://api.capsolver.com/getBalance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ clientKey: keyCap }),
-        });
-        const parsed = await res.json() as { errorId: number; balance: number };
-        if (parsed.errorId === 0) balanceCapsolver = parsed.balance;
-      } catch {}
-    }
 
-    // Cost estimate: 2captcha ~$0.003/solve, capsolver ~$0.002/solve
+    // Cost estimate: 2captcha ~$0.003/solve
     const costToday = dailyCount2cap * 0.003;
 
     return {
       twoCaptcha: { dailyCount: dailyCount2cap, maxDaily: max2cap, attempts: attempts2cap, balance: balance2cap, configured: !!key2cap },
-      capsolver: { attempts: attemptsCapsolver, errors: capsolverErrors, balance: balanceCapsolver, configured: !!keyCap },
       costToday,
       history: last7,
     };

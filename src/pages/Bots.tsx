@@ -373,30 +373,13 @@ export default function Bots() {
                             <div>Расход сегодня: <span className="font-medium text-red-600">${captchaData.costToday.toFixed(4)}</span></div>
                           </div>
                         </div>
-                        {/* Capsolver */}
-                        <div className="bg-blue-50 rounded-lg p-3">
-                          <div className="text-xs font-semibold text-blue-700 mb-1">Capsolver</div>
-                          <div className="text-2xl font-bold text-blue-600">
-                            {captchaData.capsolver.attempts}
-                            <span className="text-sm font-normal text-slate-400"> попыток</span>
-                          </div>
-                          <div className="mt-1.5 w-full bg-blue-200 rounded-full h-1.5">
-                            <div className="h-1.5 rounded-full bg-red-400 transition-all"
-                              style={{ width: captchaData.capsolver.attempts > 0 ? `${Math.min(100, (captchaData.capsolver.errors / captchaData.capsolver.attempts) * 100)}%` : '0%' }} />
-                          </div>
-                          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
-                            <div>Ошибок: <span className="font-medium text-red-600">{captchaData.capsolver.errors}</span></div>
-                            <div>Баланс: <span className="font-medium text-green-700">{captchaData.capsolver.balance !== null ? `$${captchaData.capsolver.balance.toFixed(2)}` : '—'}</span></div>
-                            <div className="text-red-500 font-medium">YandexSmartCaptcha не поддерживается</div>
-                          </div>
-                        </div>
                       </div>
                       {/* History chart - last 7 days */}
                       {captchaData.history.length > 1 && (
                         <div>
                           <div className="text-xs text-slate-400 mb-1.5">История (последние {captchaData.history.length} дней)</div>
                           <div className="flex items-end gap-1 h-10">
-                            {captchaData.history.map((d: { date: string; count2cap: number; attemptsCapsolver: number }) => {
+                            {captchaData.history.map((d: { date: string; count2cap: number }) => {
                               const maxVal = Math.max(...captchaData.history.map((x: typeof d) => x.count2cap), 1);
                               const h = Math.max(4, Math.round((d.count2cap / maxVal) * 40));
                               return (

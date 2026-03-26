@@ -364,7 +364,8 @@ function writeVncTarget(displayNum: number | null): void {
 function isBotBrowserActive(container: string): boolean {
   try {
     const { execFileSync: ef } = require("child_process");
-    ef("docker", ["exec", container, "pgrep", "-x", "firefox"], { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    // firefox-esr on Debian/Ubuntu, firefox on others
+    ef("docker", ["exec", container, "pgrep", "-f", "firefox"], { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
     return true;
   } catch { return false; }
 }

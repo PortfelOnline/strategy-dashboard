@@ -289,6 +289,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     keyword: 'как узнать владельца квартиры по адресу',
     priority: 'high',
     wordsBefore: 721,
+    wordstatExact: 193,
     reason: 'Высокий коммерческий интент — заказывают выписку ЕГРН',
   },
   {
@@ -298,6 +299,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     keyword: 'проверить собственника по кадастровому номеру',
     priority: 'medium',
     wordsBefore: 630,
+    wordstatExact: 116,
     reason: 'Покупатели недвижимости — проверка перед сделкой',
   },
   // ── Кадастровая стоимость ─────────────────────────────────────────────────
@@ -308,6 +310,7 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
     keyword: 'кадастровая стоимость недвижимости по адресу',
     priority: 'high',
     wordsBefore: 636,
+    wordstatExact: 22,
     reason: '~8000 запросов/мес — огромный трафиковый кластер',
   },
   {
@@ -392,6 +395,12 @@ export function saveProgress(progress: Record<number, ArticleProgress>): void {
 }
 
 // Seed initial known statuses
+// Positions snapshot 2026-03-25 (keys.so, Yandex):
+// 17/25 запросов в топ-100, средняя позиция 28.7
+// Лидеры: 8751/1111 (pos 4), 732 (pos 5), 5707 (pos 7), 332955/5607/333052 (pos 16-19)
+// "—" = не в топ-100 (сайт не ранжируется по запросу)
+const POS_SNAPSHOT_DATE = '2026-03-25';
+
 export const INITIAL_PROGRESS: Record<number, ArticleProgress> = {
   332861: {
     status: 'done',
@@ -399,68 +408,123 @@ export const INITIAL_PROGRESS: Record<number, ArticleProgress> = {
     seoScoreAfter: 100,
     doneAt: '2026-03-01',
     notes: 'Эталонная статья — все PageSpeed/SEO оптимизации применены. Метадеск исправлен 2026-03-25 (убран хардкод цены)',
+    yandexPos: null, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: null }],
   },
   5535: {
     status: 'done',
     wordsAfter: 2877,
     doneAt: '2026-03-25',
     notes: '17 H2, 10 FAQ, 9 тематических картинок, метадеск обновлён',
+    yandexPos: 38, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 38 }],
   },
   4299: {
     status: 'done',
     wordsAfter: 3200,
     doneAt: '2026-03-25',
     notes: '15 H2, 11 FAQ, 9 картинок, транзакционный интент. BLOCK_PRICE, [PRICE_3_DISC], отзывы',
+    yandexPos: 24, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 24 }],
   },
   4305: {
     status: 'done',
     wordsAfter: 3100,
     doneAt: '2026-03-25',
     notes: '15 H2, 3 H3, 11 FAQ, 9 картинок, how-to информационный интент. CTA=10 (доработано 2026-03-25)',
+    yandexPos: 47, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 47 }],
   },
   5607: {
     status: 'done',
     wordsAfter: 3300,
     doneAt: '2026-03-25',
     notes: '15 H2, 11 FAQ, 9 картинок, проблемный/срочный интент (арест ФССП). CTA=10 (доработано 2026-03-25)',
+    yandexPos: 19, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 19 }],
   },
   7129: {
     status: 'done',
     wordsAfter: 3000,
     doneAt: '2026-03-25',
     notes: '15 H2, 11 FAQ, 9 картинок, BOFU-сравнение сервисов. Таблица сравнения способов',
+    yandexPos: 39, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 39 }],
   },
   4302: {
     status: 'done',
     wordsAfter: 3100,
     doneAt: '2026-03-25',
     notes: '15 H2, 11 FAQ, 9 картинок, информационный+транзакционный интент. image016 из 2017/04/',
+    yandexPos: 36, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 36 }],
   },
   4308: {
     status: 'done',
     wordsAfter: 3200,
     doneAt: '2026-03-25',
     notes: '15 H2, 3 H3, 10 FAQ, 9 картинок, острая проблема — арест на квартиру',
+    yandexPos: 66, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 66 }],
   },
   5522: {
     status: 'done',
     wordsAfter: 3000,
     doneAt: '2026-03-25',
     notes: '15 H2, 10 FAQ, 9 картинок, бинарный вопрос. Таблица Арест vs Запрет',
+    yandexPos: 22, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 22 }],
   },
   5558: {
     status: 'done',
     wordsAfter: 3100,
     doneAt: '2026-03-25',
     notes: '15 H2, 10 FAQ, 9 картинок, залог/ипотека интент. Особенности по банкам (Сбер/ВТБ/Альфа)',
+    yandexPos: 50, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 50 }],
   },
-  331661: { status: 'done', wordsAfter: 2523, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2523 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
-  333041: { status: 'done', wordsAfter: 2336, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2336 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
-  332987: { status: 'done', wordsAfter: 2312, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2312 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
-  332787: { status: 'done', wordsAfter: 2622, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2622 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
-  333052: { status: 'done', wordsAfter: 2544, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2544 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
-  332955: { status: 'done', wordsAfter: 2256, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2256 слов, SEO 75/100, G#2. Опубликовано + переобход Яндекс/Google/Bing' },
-  333008: { status: 'done', wordsAfter: 2105, doneAt: '2026-03-25', notes: 'Рерайт 2026-03-25: 2105 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing' },
+  331661: {
+    status: 'done', wordsAfter: 2523, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2523 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: null, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: null }],
+  },
+  333041: {
+    status: 'done', wordsAfter: 2336, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2336 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: null, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: null }],
+  },
+  332987: {
+    status: 'done', wordsAfter: 2312, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2312 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: null, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: null }],
+  },
+  332787: {
+    status: 'done', wordsAfter: 2622, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2622 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: null, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: null }],
+  },
+  333052: {
+    status: 'done', wordsAfter: 2544, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2544 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: 19, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 19 }],
+  },
+  332955: {
+    status: 'done', wordsAfter: 2256, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2256 слов, SEO 75/100, G#2. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: 16, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: 2, yandexPos: 16 }],
+  },
+  333008: {
+    status: 'done', wordsAfter: 2105, doneAt: '2026-03-25',
+    notes: 'Рерайт 2026-03-25: 2105 слов, SEO 75/100. Опубликовано + переобход Яндекс/Google/Bing',
+    yandexPos: 37, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 37 }],
+  },
   332921: { status: 'todo', notes: 'Карта кадастровой стоимости — 537 слов' },
   332874: { status: 'todo', notes: 'Заказать кадастровую выписку — 857 слов' },
   333098: { status: 'todo', notes: 'Кадастровые выписки ЕГРН — 1213 слов' },
@@ -474,23 +538,31 @@ export const INITIAL_PROGRESS: Record<number, ArticleProgress> = {
     wordsAfter: 3100,
     doneAt: '2026-03-25',
     notes: '15 H2, 10 FAQ, 9 картинок, информационный запрос. 3 способа проверки. CTA=14, BLOCK_PRICE, отзывы',
+    yandexPos: 7, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: null, yandexPos: 7 }],
   },
   732: {
     status: 'done',
     wordsAfter: 2450,
     doneAt: '2026-03-25',
     notes: '24 H2, 11 FAQ, 9 картинок, BLOCK_PRICE, CTA=9. Охранные зоны, межевание, реестровая ошибка, таблица способов. G#3 → цель #1',
+    yandexPos: 5, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: 3, yandexPos: 5 }],
   },
   1111: {
     status: 'done',
     wordsAfter: 1800,
     doneAt: '2026-03-25',
     notes: '17 H2, 11 FAQ, 9 картинок, BLOCK_PRICE, CTA=9. Спутниковый режим, охранные зоны, сравнение с Google Maps, таблица. G#4 → цель #1/2',
+    yandexPos: 4, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: 4, yandexPos: 4 }],
   },
   8751: {
     status: 'done',
     wordsAfter: 3500,
     doneAt: '2026-03-25',
     notes: '20 H2, 5 H3, 10 FAQ, 9 картинок, BLOCK_PRICE, CTA=9. Перепланировка, наследование, суд/раздел имущества. G#4 → цель #1/2',
+    yandexPos: 4, posCheckedAt: POS_SNAPSHOT_DATE,
+    posHistory: [{ date: POS_SNAPSHOT_DATE, googlePos: 4, yandexPos: 4 }],
   },
 };

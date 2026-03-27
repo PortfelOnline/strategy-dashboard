@@ -127,7 +127,7 @@ async function fetchCompetitorArticles(
   serpResults: { url: string; domain: string; title: string }[],
   ourDomain: string,
   maxCompetitors = 5,
-): Promise<{ position: number; domain: string; title: string; headings: string; content: string; wordCount: number }[]> {
+): Promise<{ position: number; domain: string; title: string; headings: string; content: string; wordCount: number; imageCount: number; faqCount: number; hasTable: boolean }[]> {
   const competitors = serpResults
     .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
     .slice(0, maxCompetitors);
@@ -140,6 +140,7 @@ async function fetchCompetitorArticles(
         parseArticleFromUrl(r.url),
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]);
+      const html = parsed.contentHtml || '';
       const result = {
         position: i + 1,
         domain: r.domain,
@@ -147,6 +148,9 @@ async function fetchCompetitorArticles(
         headings: parsed.headings.map(h => `${h.level}: ${h.text}`).join(' | '),
         content: parsed.content.slice(0, 4000),
         wordCount: parsed.wordCount,
+        imageCount: (html.match(/<img\b/gi) || []).length,
+        faqCount: (html.match(/<details\b/gi) || []).length,
+        hasTable: /<table\b/i.test(html),
       };
       if (parsed.wordCount > 0) cacheSet(pageCache, r.url, result);
       return result;
@@ -184,10 +188,11 @@ function countWords(html: string): number {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
 }
 
-// Generate 6 contextual DALL-E image prompts based on article title
-async function generateImagePrompts(title: string): Promise<string[]> {
+// Generate contextual DALL-E image prompts based on article title, keyword and H2 sections
+async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[]): Promise<string[]> {
   const skinNote = `All people must have light/fair Slavic skin tone (Russian appearance). No dark-skinned people.`;
   const noText = `NO text, NO letters, NO words, NO labels, NO watermarks anywhere in the image.`;
+  const kw = keyword || title;
 
   const fallback = [
     `Photorealistic wide-format photo: a person sitting at a bright modern desk looking at official documents and a laptop, warm natural light, clean minimalist interior. ${skinNote} ${noText}`,
@@ -198,30 +203,38 @@ async function generateImagePrompts(title: string): Promise<string[]> {
     `Photorealistic photo: official government building exterior in Russia, blue sky, people entering, professional urban setting. ${noText}`,
   ];
 
+  const sectionsBlock = h2Sections && h2Sections.length > 0
+    ? `\nArticle sections (H2 headings): ${h2Sections.slice(0, 8).map((s, i) => `${i + 1}. ${s}`).join('; ')}\n`
+    : '';
+
+  const targetCount = h2Sections && h2Sections.length >= 6 ? 9 : 6;
+
   try {
     const resp = await invokeLLM({
       messages: [
         {
           role: 'system',
-          content: 'You are a DALL-E prompt writer for a Russian real estate / cadastral documents website. Write photorealistic, visually appealing image prompts in English. Focus on Russian context: property, documents, offices, apartments. Never include text/letters in images.',
+          content: 'You are a DALL-E prompt writer for a Russian real estate / cadastral documents website. Write photorealistic, visually appealing image prompts in English. Focus on Russian context: property, documents, offices, apartments. Each prompt must be UNIQUE and match a specific section of the article. Never include text/letters in images.',
         },
         {
           role: 'user',
           content: `Article title: "${title}"
+Search keyword: "${kw}"
+${sectionsBlock}
+The article is about ordering official Russian property/cadastral documents via kadastrmap.info.
 
-The article is about ordering official Russian property/cadastral documents (EGRN extracts, encumbrance certificates, cadastral passports etc.) via kadastrmap.info online service.
-
-Write exactly 6 different DALL-E image prompts that visually match different sections of this specific article. Each prompt must:
-- Be photorealistic, wide-format
-- Directly relate to the article topic (e.g. for "обременение" show mortgaged property, bank documents, chains on property icon; for "кадастровый паспорт" show blueprint/floor plan)
-- Show different scenes: 1) the problem/need, 2) the online ordering process (person on laptop/phone), 3) the result/benefit (receiving document), 4) related document/office scene, 5) property exterior or interior context, 6) happy outcome with family or person
+Write exactly ${targetCount} different DALL-E image prompts. Each prompt must:
+- Be photorealistic, wide-format (landscape orientation)
+- UNIQUELY match ONE specific section or aspect of this article — NOT generic property scenes
+- For keyword "${kw}": be visually specific (e.g. "обременение" → show mortgage bank documents with chains metaphor; "кадастровый паспорт" → show blueprint/floor plan; "переход прав" → show document handshake/transfer)
+- Vary the scene: person at laptop ordering, receiving document, reviewing document, property exterior, family/person satisfied, government/notary office
 - All people: light/fair Slavic skin tone. ${noText}
-- Be concise (1-2 sentences max)
+- Concise (1-2 sentences)
 
-Return ONLY a JSON array of 6 strings: ["prompt1", "prompt2", "prompt3", "prompt4", "prompt5", "prompt6"]`,
+Return ONLY a JSON array of ${targetCount} strings: ["prompt1", ...]`,
         },
       ],
-      maxTokens: 900,
+      maxTokens: 1200,
     });
 
     const content = resp?.choices[0]?.message.content;
@@ -765,7 +778,18 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     ? Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length) : 1200;
   const maxCompetitorWords = competitors.length
     ? Math.max(...competitors.map(c => c.wordCount)) : 1200;
-  const targetWords = Math.max(3200, Math.round(maxCompetitorWords * 1.3));
+  const targetWords = Math.max(3500, Math.round(maxCompetitorWords * 1.3));
+
+  // Competitor media/structure stats — used to set our target
+  const avgCompetitorImages = competitors.length
+    ? Math.round(competitors.reduce((s, c) => s + (c.imageCount || 0), 0) / competitors.length) : 8;
+  const maxCompetitorImages = competitors.length
+    ? Math.max(...competitors.map(c => c.imageCount || 0)) : 8;
+  const avgCompetitorFaq = competitors.length
+    ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
+  const competitorHasTables = competitors.some(c => c.hasTable);
+  const targetImages = Math.max(9, maxCompetitorImages + 2);
+  const targetFaq = Math.max(10, avgCompetitorFaq + 2);
 
   // Extract unique H2 headings from competitors that our article is missing
   const ourH2s = new Set(
@@ -788,7 +812,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
 
   const competitorContext = competitors.length
     ? competitors.map(c =>
-        `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content.slice(0, 3000)}`
+        `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов, ${c.imageCount} изобр., ${c.faqCount} FAQ, таблицы: ${c.hasTable ? 'есть' : 'нет'}) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content.slice(0, 3000)}`
       ).join('\n\n')
     : serpFallback
       ? `(полный текст конкурентов недоступен, используй сниппеты из SERP)\n${serpFallback}`
@@ -804,6 +828,12 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
     : '';
 
+  const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
+- Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
+- Изображений: макс. у конкурентов ${maxCompetitorImages}, наша цель ${targetImages}+ (равномерно по тексту, после каждого 2-го H2)
+- FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
+- Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО добавить' : 'добавить для сравнения способов'}\n`;
+
   const improvePrompt = competitorContext
     ? `Ключ: "${keyword}"
 
@@ -813,24 +843,25 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}
+${missingTopicsBlock}${lsiBlock}${top3Stats}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
-2. HTML: H1, H2 (7-12), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
+2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. Прямой ответ на "${keyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с минимум 10 вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>.
+5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>.
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
 7. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
 11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
-12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты (выписки ЕГРН, отчёты о недвижимости и т.д.) если они не относятся к теме. Только релевантные разделы.
+12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
     - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
     - В разделе про виды или форматы добавь <h3>📱 Срочный отчёт в твоём смартфоне</h3> с описанием мобильного доступа (80-100 слов)
     - В разделе про стоимость добавь <h3>⭐ Отзывы клиентов</h3> с 3-4 краткими отзывами (100-120 слов)
+14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2-раздела. Пиши достаточно подробно в каждом H2 — минимум 300 слов — чтобы картинка имела контекст.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
     : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через /spravki/ (вставляй как ссылку <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
@@ -999,7 +1030,18 @@ export const articlesRouter = router({
       const maxCompetitorWords = competitors.length > 0
         ? Math.max(...competitors.map(c => c.wordCount || 0))
         : 1200;
-      const targetWords = Math.max(3200, Math.round(maxCompetitorWords * 1.3));
+      const targetWords = Math.max(3500, Math.round(maxCompetitorWords * 1.3));
+
+      // Competitor media/structure stats
+      const avgCompetitorImages = competitors.length > 0
+        ? Math.round(competitors.reduce((s, c) => s + (c.imageCount || 0), 0) / competitors.length) : 8;
+      const maxCompetitorImages = competitors.length > 0
+        ? Math.max(...competitors.map(c => c.imageCount || 0)) : 8;
+      const avgCompetitorFaq = competitors.length > 0
+        ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
+      const competitorHasTables = competitors.some(c => c.hasTable);
+      const targetImages = Math.max(9, maxCompetitorImages + 2);
+      const targetFaq = Math.max(10, avgCompetitorFaq + 2);
 
       // Extract unique H2 topics from competitors missing in our article
       const ourH2s = new Set(
@@ -1022,7 +1064,7 @@ export const articlesRouter = router({
 
       const competitorContext = competitors.length > 0
         ? competitors.map(c =>
-            `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content.slice(0, 3000)}`
+            `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов, ${c.imageCount} изобр., ${c.faqCount} FAQ, таблицы: ${c.hasTable ? 'есть' : 'нет'}) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content.slice(0, 3000)}`
           ).join('\n\n')
         : serpFallback
           ? `(полный текст конкурентов недоступен, используй сниппеты из SERP)\n${serpFallback}`
@@ -1038,6 +1080,12 @@ export const articlesRouter = router({
         ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
         : '';
 
+      const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
+- Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
+- Изображений: макс. у конкурентов ${maxCompetitorImages}, наша цель ${targetImages}+
+- FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
+- Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО' : 'желательно'}\n`;
+
       const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
 
       // 3. SEO analysis + improved text — parallel, with competitor context
@@ -1046,18 +1094,20 @@ export const articlesRouter = router({
 Статья (ПОСЛЕ улучшения ИИ):
 Заголовок: ${parsed.title}
 Ключевой запрос: ${serpKeyword}
-Объём: ${parsed.wordCount} слов → целевой после улучшения: 3500+ слов
+Объём: ${parsed.wordCount} слов → целевой после улучшения: ${targetWords}+ слов
 Структура: ${ourHeadings}
+Конкуренты ТОП-3: ${maxCompetitorWords} слов, ${maxCompetitorImages} изображений, ${avgCompetitorFaq} FAQ
 
 Правила оценки score (0-100):
-- 3500+ слов → +20
-- 7+ H2 заголовков → +15
+- ${targetWords}+ слов → +20
+- 8+ H2 заголовков → +15
 - Ключ в H1 и первом абзаце → +15
-- FAQ раздел (6+ вопросов) → +10
-- Таблица сравнения → +10
-- Внешние ссылки на авторитетные источники (rosreestr.gov.ru и др.) → +10
+- FAQ раздел (${targetFaq}+ вопросов) → +10
+- 9+ изображений равномерно → +10
+- Таблица сравнения → +5
+- Внешние ссылки на авторитетные источники → +10
 - Внутренние ссылки на другие страницы сайта → +10
-- Ключевые слова в подзаголовках → +10
+- Ключевые слова в подзаголовках → +5
 
 Верни ТОЛЬКО валидный JSON:
 {"metaTitle":"до 60 симв","metaDescription":"до 160 симв","keywords":["ключ1"],"headingsSuggestions":[],"generalSuggestions":["совет"],"score":75}`;
@@ -1071,24 +1121,25 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}
+${missingTopicsBlock}${lsiBlock}${top3Stats}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
-2. HTML: H1, H2 (7-12), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
+2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. Прямой ответ на "${serpKeyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с минимум 10 вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary> (блок "Люди также спрашивают")
+5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary>
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
 7. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
 11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
-12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты (выписки ЕГРН, отчёты о недвижимости и т.д.) если они не относятся к теме. Только релевантные разделы.
+12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
     - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
     - В разделе про виды или форматы добавь <h3>📱 Срочный отчёт в твоём смартфоне</h3> с описанием мобильного доступа (80-100 слов)
     - В разделе про стоимость добавь <h3>⭐ Отзывы клиентов</h3> с 3-4 краткими отзывами (100-120 слов)
+14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2. Пиши каждый H2-раздел полностью (300+ слов) — это обеспечивает контекст для картинки.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
         : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа через <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 250-300 слов, используй <ol>]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО через /spravki/ (<a>-ссылка). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.`;
@@ -1906,6 +1957,12 @@ ${competitorContext}
         .slice(0, 3)
         .join(' ');
 
+      // Extract H2 sections from content for targeted DALL-E prompts
+      const h2Sections = extractH2Texts(input.content).slice(0, 9);
+      // Target image count: 1 per ~350 words, min 9 (etalon standard)
+      const contentWordCount = input.content.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+      const IMAGES_NEEDED = Math.max(9, Math.min(12, Math.ceil(contentWordCount / 350)));
+
       // Run meta LLM + image prompts + WP library + Wikimedia search all in parallel
       const [metaResp, imagePrompts, libraryImages, wikimediaImages] = await Promise.all([
         invokeLLM({
@@ -1915,13 +1972,13 @@ ${competitorContext}
           ],
           maxTokens: 200,
         }).catch(() => null),
-        generateImagePrompts(input.title),
-        wp.searchMedia(account.siteUrl, account.username, account.appPassword, titleKeywords, 9)
+        generateImagePrompts(input.title, focusKeyword, h2Sections),
+        wp.searchMedia(account.siteUrl, account.username, account.appPassword, titleKeywords, 12)
           .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[]),
-        searchWikimediaImages(titleKeywords, 6)
+        searchWikimediaImages(titleKeywords, 8)
           .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[]),
       ]);
-      console.log(`[Draft] WP library: ${libraryImages.length}, Wikimedia: ${wikimediaImages.length}`);
+      console.log(`[Draft] WP library: ${libraryImages.length}, Wikimedia: ${wikimediaImages.length}, IMAGES_NEEDED: ${IMAGES_NEEDED}`);
 
       // Combine candidates: WP library (positive IDs) first, then Wikimedia (negative IDs)
       const allCandidates = [...libraryImages, ...wikimediaImages];
@@ -1931,8 +1988,6 @@ ${competitorContext}
         ? await filterRelevantMedia(input.title, allCandidates)
         : [];
       console.log(`[Draft] Relevant after vision filter: ${relevantCandidates.length}/${allCandidates.length}`);
-
-      const IMAGES_NEEDED = 9;
       const selectedCandidates = relevantCandidates.slice(0, IMAGES_NEEDED);
 
       // WP library images (id > 0) are already uploaded; Wikimedia images (id < 0) need sideload

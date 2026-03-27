@@ -319,7 +319,7 @@ async function enhanceIfNeeded(
     tasks.push(`Добавь ${7 - h2Count} новых H2-раздела по теме "${keyword}" которых ещё нет в статье (минимум 250 слов каждый).`);
   }
   if (!hasExternalLinks) {
-    tasks.push(`Добавь 2 внешние ссылки на авторитетные источники: <a href="https://rosreestr.gov.ru" target="_blank" rel="noopener">rosreestr.gov.ru</a> и упоминание ФЗ-218 "О государственной регистрации недвижимости". Вставь органично в контекст.`);
+    tasks.push(`Добавь 2 внешние ссылки на авторитетные источники: <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a> и упоминание ФЗ-218 "О государственной регистрации недвижимости" со ссылкой на официальный текст закона. Вставь органично в контекст.`);
   }
 
   if (tasks.length === 0) return html;
@@ -912,7 +912,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
-11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
+11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Обязательно для E-E-A-T. НЕ добавляй атрибуты rel/target — они проставляются автоматически.
 12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
     - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
@@ -1193,7 +1193,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
-11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Это обязательно для E-E-A-T.
+11. Внешние авторитетные ссылки: добавь 2-3 ссылки на официальные источники — <a href="https://rosreestr.gov.ru">rosreestr.gov.ru</a>, ФЗ-218 "О государственной регистрации недвижимости". Обязательно для E-E-A-T. НЕ добавляй атрибуты rel/target — они проставляются автоматически.
 12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
     - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
@@ -2781,10 +2781,17 @@ function beautifyArticleHtml(html: string): string {
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 
   // -1. Convert absolute kadastrmap.info links to relative paths
+  //     + close external links with rel="nofollow noopener noreferrer" to prevent link juice leak
   $('a[href]').each((_: number, a: any) => {
     const href = $(a).attr('href') || '';
     const cleaned = href.replace(/^https?:\/\/kadastrmap\.info/i, '');
-    if (cleaned !== href) $(a).attr('href', cleaned || '/');
+    if (cleaned !== href) {
+      $(a).attr('href', cleaned || '/');
+    } else if (/^https?:\/\//i.test(href)) {
+      // External link: add nofollow to prevent PageRank leak
+      $(a).attr('rel', 'nofollow noopener noreferrer');
+      if (!$(a).attr('target')) $(a).attr('target', '_blank');
+    }
   });
 
   // 0. Style h2 headings — green left border + emoji prefix

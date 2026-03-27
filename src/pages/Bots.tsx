@@ -347,54 +347,105 @@ export default function Bots() {
                     </div>
                   </CardContent>
                 </Card>
-                {captchaData && (
+                {captchaData && (() => {
+                  const cap = captchaData.twoCaptcha;
+                  const pct = Math.min(100, Math.round((cap.dailyCount / cap.maxDaily) * 100));
+                  const isFull = cap.dailyCount >= cap.maxDaily;
+                  const remaining = Math.max(0, cap.maxDaily - cap.dailyCount);
+                  const successRate = cap.attempts > 0 ? Math.round((cap.dailyCount / cap.attempts) * 100) : null;
+                  const barColor = isFull ? 'bg-red-500' : pct >= 80 ? 'bg-orange-500' : 'bg-green-500';
+                  const countColor = isFull ? 'text-red-600' : pct >= 80 ? 'text-orange-600' : 'text-emerald-600';
+                  return (
                   <Card className="col-span-1 md:col-span-2">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-orange-500" /> Капча — расход и баланс
+                        <Shield className="w-4 h-4 text-orange-500" /> 2captcha — дневной лимит
+                        <span className="ml-auto text-xs font-normal text-slate-400">сброс в 00:00 UTC</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        {/* 2captcha */}
-                        <div className="bg-orange-50 rounded-lg p-3">
-                          <div className="text-xs font-semibold text-orange-700 mb-1">2captcha</div>
-                          <div className={`text-2xl font-bold ${captchaData.twoCaptcha.dailyCount >= captchaData.twoCaptcha.maxDaily ? 'text-red-600' : 'text-orange-600'}`}>
-                            {captchaData.twoCaptcha.dailyCount}
-                            <span className="text-sm font-normal text-slate-400">/{captchaData.twoCaptcha.maxDaily} решено</span>
+                      {/* Main counter */}
+                      <div className="flex items-baseline gap-1.5 mb-1">
+                        <span className={`text-3xl font-bold ${countColor}`}>{cap.dailyCount}</span>
+                        <span className="text-lg text-slate-400">/ {cap.maxDaily}</span>
+                        <span className="text-sm text-slate-500">решено</span>
+                        <span className={`ml-auto text-sm font-semibold ${countColor}`}>{pct}%</span>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="w-full bg-slate-100 rounded-full h-2 mb-4">
+                        <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+
+                      {/* Stats row: remaining / balance / cost */}
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="bg-slate-50 rounded-lg p-2.5 text-center">
+                          <div className={`text-lg font-bold ${isFull ? 'text-red-600' : 'text-slate-700'}`}>{remaining}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">осталось слотов</div>
+                        </div>
+                        <div className="bg-green-50 rounded-lg p-2.5 text-center">
+                          <div className="text-lg font-bold text-green-700">
+                            {cap.balance !== null ? `$${cap.balance.toFixed(2)}` : '—'}
                           </div>
-                          <div className="mt-1.5 w-full bg-orange-200 rounded-full h-1.5">
-                            <div className={`h-1.5 rounded-full transition-all ${captchaData.twoCaptcha.dailyCount >= captchaData.twoCaptcha.maxDaily ? 'bg-red-500' : 'bg-orange-500'}`}
-                              style={{ width: `${Math.min(100, (captchaData.twoCaptcha.dailyCount / captchaData.twoCaptcha.maxDaily) * 100)}%` }} />
-                          </div>
-                          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
-                            <div>Попыток: <span className="font-medium text-slate-700">{captchaData.twoCaptcha.attempts}</span></div>
-                            <div>Баланс: <span className="font-medium text-green-700">{captchaData.twoCaptcha.balance !== null ? `$${captchaData.twoCaptcha.balance.toFixed(2)}` : '—'}</span></div>
-                            <div>Расход сегодня: <span className="font-medium text-red-600">${captchaData.costToday.toFixed(4)}</span></div>
-                          </div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">баланс</div>
+                        </div>
+                        <div className="bg-slate-50 rounded-lg p-2.5 text-center">
+                          <div className="text-lg font-bold text-slate-700">${captchaData.costToday.toFixed(3)}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5">расход сегодня</div>
                         </div>
                       </div>
-                      {/* History chart - last 7 days */}
+
+                      {/* Attempts / success rate row */}
+                      {cap.attempts > 0 && (
+                        <div className="flex items-center gap-3 bg-orange-50 rounded-lg px-3 py-2 mb-3 text-xs text-slate-600">
+                          <span>Вызовов API: <strong>{cap.attempts}</strong></span>
+                          <span className="text-slate-300">|</span>
+                          <span>Решено: <strong>{cap.dailyCount}</strong></span>
+                          {successRate !== null && (
+                            <>
+                              <span className="text-slate-300">|</span>
+                              <span>Успех: <strong className={successRate >= 70 ? 'text-green-700' : 'text-orange-700'}>{successRate}%</strong></span>
+                            </>
+                          )}
+                          <span className="text-slate-300">|</span>
+                          <span>~$0.003/решение</span>
+                        </div>
+                      )}
+
+                      {/* History chart */}
                       {captchaData.history.length > 1 && (
                         <div>
-                          <div className="text-xs text-slate-400 mb-1.5">История (последние {captchaData.history.length} дней)</div>
-                          <div className="flex items-end gap-1 h-10">
+                          <div className="text-xs text-slate-400 mb-2">
+                            История (последние {captchaData.history.length} дней)
+                            <span className="ml-2 text-slate-300">— лимит: {cap.maxDaily}/день</span>
+                          </div>
+                          <div className="flex items-end gap-1.5" style={{ height: '60px' }}>
                             {captchaData.history.map((d: { date: string; count2cap: number }) => {
                               const maxVal = Math.max(...captchaData.history.map((x: typeof d) => x.count2cap), 1);
-                              const h = Math.max(4, Math.round((d.count2cap / maxVal) * 40));
+                              const h = Math.max(6, Math.round((d.count2cap / cap.maxDaily) * 56));
+                              const isToday = d.date === new Date().toISOString().split('T')[0];
                               return (
                                 <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.count2cap} решено`}>
-                                  <div className="w-full bg-orange-400 rounded-sm" style={{ height: `${h}px` }} />
-                                  <div className="text-[9px] text-slate-400">{d.date.slice(5)}</div>
+                                  <div className="text-[9px] text-slate-500 font-medium">{d.count2cap || ''}</div>
+                                  <div
+                                    className={`w-full rounded-t-sm ${isToday ? 'bg-orange-500' : 'bg-orange-300'}`}
+                                    style={{ height: `${h}px` }}
+                                  />
+                                  <div className={`text-[9px] ${isToday ? 'text-orange-600 font-semibold' : 'text-slate-400'}`}>
+                                    {d.date.slice(5)}
+                                  </div>
                                 </div>
                               );
                             })}
                           </div>
+                          {/* Limit line label */}
+                          <div className="text-[9px] text-slate-400 text-right mt-0.5">макс {cap.maxDaily}/день</div>
                         </div>
                       )}
                     </CardContent>
                   </Card>
-                )}
+                  );
+                })()}
               </div>
             )}
 

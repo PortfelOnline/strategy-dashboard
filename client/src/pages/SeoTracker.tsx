@@ -116,6 +116,7 @@ const KEYWORD_TO_POST_ID: Record<string, number> = {
   'выписка егрп обременение': 5707,
   'выписка егрн обременение': 5707,
   'заказать справку об обременении': 332861,
+  'справка об обременении недвижимости в москве': 332861,
   // Кадастровая карта
   'расположение по кадастровому номеру': 732,
   'кадастровая публичная карта со спутника': 1111,
@@ -133,10 +134,113 @@ const KEYWORD_TO_POST_ID: Record<string, number> = {
   'кадастровая стоимость по кадастровому номеру': 332921,
   // Выписка ЕГРН
   'заказать выписку из егрн онлайн': 332874,
+  'заказать кадастровую выписку онлайн цена способы получения': 332874,
   'кадастровая выписка егрн что это': 333098,
   // Кадастровый номер
   'узнать сведения по кадастровому номеру': 333070,
+  'как узнать сведения по кадастровому номеру егрн и карта': 333070,
+  // Кадастровый паспорт
+  'кадастровый паспорт на квартиру': 2162,
 };
+
+/**
+ * Parse pasted Keys.so position table (browser copy-paste).
+ * Returns { date, googlePositions } mapping postId → Google position.
+ */
+function parseKeysosTable(text: string, date: string): { updated: number; skipped: number } {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const results: { postId: number; googlePos: number | null }[] = [];
+
+  const NAV_SKIP = new Set([
+    'на главную', 'результатов не найдено', 'избранное',
+    'список запросов страниц', 'мониторинг позиций', 'мои проекты',
+    'сайты', 'ссылки', 'запросы', 'база запросов', 'кластеризатор',
+    'реклама', 'трекер ии', 'все отчёты и инструменты',
+    'настройка боковой панели', 'позиции', 'сниппеты', 'регион',
+    'яндекс', 'google', 'москва',
+  ]);
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    // Check if any known keyword is in this line
+    for (const [kw, postId] of Object.entries(KEYWORD_TO_POST_ID)) {
+      if (lower.includes(kw)) {
+        // Extract position tokens from the line
+        const tokens = line.split(/\s+/).filter(Boolean);
+        // Find 4 leading nulls (Yandex positions), then Google positions follow
+        let nullCount = 0;
+        let gStart = -1;
+        for (let i = 0; i < tokens.length; i++) {
+          if (tokens[i] === '—') { nullCount++; if (nullCount === 4) { gStart = i + 1; break; } }
+          else if (!isNaN(parseInt(tokens[i], 10))) break; // hit numbers before 4 nulls
+        }
+        let googlePos: number | null = null;
+        if (gStart >= 0 && gStart < tokens.length) {
+          const t = tokens[gStart];
+          googlePos = t === '—' ? null : parseInt(t, 10) || null;
+        }
+        results.push({ postId, googlePos });
+        break;
+      }
+    }
+  }
+
+  if (results.length === 0) return { updated: 0, skipped: 0 };
+
+  // Apply to progress (called by the handler)
+  return { updated: results.length, skipped: 0 };
+}
+
+function applyKeysosTable(
+  text: string,
+  date: string,
+  progress: Record<number, ArticleProgress>,
+  updateArticle: (id: number, update: Partial<ArticleProgress>) => void,
+): string {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  let updated = 0;
+
+  for (const [kw, postId] of Object.entries(KEYWORD_TO_POST_ID)) {
+    const kwLower = kw.toLowerCase();
+    const matchLine = lines.find(l => l.toLowerCase().includes(kwLower));
+    if (!matchLine) continue;
+
+    const tokens = matchLine.split(/\s+/).filter(Boolean);
+    let nullCount = 0;
+    let gStart = -1;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === '—') {
+        nullCount++;
+        if (nullCount === 4) { gStart = i + 1; break; }
+      } else if (!isNaN(parseInt(tokens[i], 10)) && nullCount < 4) {
+        // Yandex has actual position — find after 4 Yandex entries
+        break;
+      }
+    }
+
+    let googlePos: number | null = null;
+    if (gStart >= 0 && gStart < tokens.length) {
+      const t = tokens[gStart];
+      googlePos = t === '—' ? null : (parseInt(t, 10) || null);
+    }
+
+    const cur = progress[postId];
+    const snapshot: PosSnapshot = { date, googlePos, yandexPos: cur?.yandexPos ?? null };
+    const history = [...(cur?.posHistory ?? [])];
+    const idx = history.findLastIndex(h => h.date === date);
+    if (idx >= 0) history[idx] = snapshot; else history.push(snapshot);
+
+    updateArticle(postId, {
+      prevGooglePos: cur?.googlePos,
+      googlePos,
+      posCheckedAt: date + 'T00:00:00.000Z',
+      posHistory: history,
+    });
+    updated++;
+  }
+
+  return `Импортировано Google позиций: ${updated} статей (${date})`;
+}
 
 function parseKeysosCsv(text: string): { date: string; positions: Record<number, number | null> } | null {
   const lines = text.split('\n').filter(l => l.trim());
@@ -165,6 +269,8 @@ export default function SeoTracker() {
   const [autoChecking, setAutoChecking] = useState(false);
   const [newsProgress, setNewsProgress] = useState<Record<number, NewsProgress>>({});
   const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [showTableImport, setShowTableImport] = useState(false);
+  const [tableText, setTableText] = useState('');
   const csvInputRef = useRef<HTMLInputElement>(null);
   const checkPosMutation = trpc.articles.checkPosition.useMutation();
 
@@ -442,6 +548,14 @@ export default function SeoTracker() {
                   size="sm"
                   variant="outline"
                   className="text-xs h-7 px-2"
+                  onClick={() => setShowTableImport(v => !v)}
+                >
+                  ↑ Keys.so таблица
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-xs h-7 px-2"
                   onClick={() => csvInputRef.current?.click()}
                 >
                   ↑ keys.so CSV
@@ -449,6 +563,40 @@ export default function SeoTracker() {
               </div>
             </CardTitle>
           </CardHeader>
+          {showTableImport && (
+            <div className="px-4 pb-4 border-t space-y-2">
+              <p className="text-xs text-slate-500 pt-3">
+                Вставьте таблицу позиций из Keys.so (скопируйте страницу целиком). Дата берётся из таблицы автоматически.
+              </p>
+              <Textarea
+                value={tableText}
+                onChange={e => setTableText(e.target.value)}
+                placeholder="Вставьте сюда таблицу из Keys.so..."
+                className="text-xs font-mono h-28 resize-none"
+              />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="text-xs h-7"
+                  onClick={() => {
+                    const date = tableText.match(/(\d{2}\.\d{2}\.\d{4})/)?.[1]
+                      ?.split('.').reverse().join('-') ?? today;
+                    const msg = applyKeysosTable(tableText, date, progress, updateArticle);
+                    setImportMsg(msg);
+                    setShowTableImport(false);
+                    setTableText('');
+                    setTimeout(() => setImportMsg(null), 6000);
+                  }}
+                  disabled={!tableText.trim()}
+                >
+                  Импортировать Google позиции
+                </Button>
+                <Button size="sm" variant="ghost" className="text-xs h-7" onClick={() => { setShowTableImport(false); setTableText(''); }}>
+                  Отмена
+                </Button>
+              </div>
+            </div>
+          )}
           <CardContent className="p-0">
             <div className="divide-y">
               {KADMAP_ARTICLES.map((article) => {

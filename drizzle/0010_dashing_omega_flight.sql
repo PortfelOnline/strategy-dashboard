@@ -1,0 +1,1 @@
+ALTER TABLE `contentPosts` ADD `contentFormat` enum('carousel','reel','story','feed_post');

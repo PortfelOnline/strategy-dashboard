@@ -107,6 +107,7 @@ export async function createContentPost(
     mediaUrl: post.mediaUrl,
     scheduledAt: post.scheduledAt,
     templateId: post.templateId,
+    contentFormat: post.contentFormat,
   });
   
   return result;

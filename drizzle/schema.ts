@@ -59,6 +59,7 @@ export const contentPosts = mysqlTable("contentPosts", {
   status: mysqlEnum("status", ["draft", "scheduled", "published", "archived"]).default("draft").notNull(),
   scheduledAt: timestamp("scheduledAt"),
   publishedAt: timestamp("publishedAt"),
+  contentFormat: mysqlEnum("contentFormat", ["carousel", "reel", "story", "feed_post"]),
   hashtags: text("hashtags"),
   mediaUrl: varchar("mediaUrl", { length: 512 }),
   engagement: int("engagement").default(0),

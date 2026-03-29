@@ -33,6 +33,13 @@ const platformEmojis: Record<string, string> = {
   youtube: '▶️',
 };
 
+const formatLabels: Record<string, { icon: string; label: string; color: string }> = {
+  carousel:  { icon: '🎠', label: 'Carousel',  color: 'bg-purple-100 text-purple-700 border-purple-200' },
+  reel:      { icon: '🎬', label: 'Reel',       color: 'bg-pink-100 text-pink-700 border-pink-200' },
+  story:     { icon: '📱', label: 'Story',      color: 'bg-orange-100 text-orange-700 border-orange-200' },
+  feed_post: { icon: '📝', label: 'Feed Post',  color: 'bg-blue-100 text-blue-700 border-blue-200' },
+};
+
 interface Post {
   id: number;
   title: string;
@@ -40,6 +47,7 @@ interface Post {
   platform: 'facebook' | 'instagram' | 'whatsapp' | 'youtube';
   language: string;
   status: string;
+  contentFormat?: string | null;
   hashtags?: string | null;
   scheduledAt?: Date | string | null;
   mediaUrl?: string | null;
@@ -364,9 +372,16 @@ export default function ContentLibrary() {
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <CardTitle className="text-lg line-clamp-2">{post.title}</CardTitle>
-                    <Badge className={statusColors[post.status as Status]}>
-                      {post.status}
-                    </Badge>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {post.contentFormat && formatLabels[post.contentFormat] && (
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${formatLabels[post.contentFormat].color}`}>
+                          {formatLabels[post.contentFormat].icon} {formatLabels[post.contentFormat].label}
+                        </span>
+                      )}
+                      <Badge className={statusColors[post.status as Status]}>
+                        {post.status}
+                      </Badge>
+                    </div>
                   </div>
                   <CardDescription className="flex items-center gap-2 flex-wrap">
                     <span>{platformEmojis[post.platform] || '📱'}</span>

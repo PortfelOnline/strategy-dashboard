@@ -610,6 +610,7 @@ export const appRouter = router({
         status: z.enum(["draft", "scheduled", "published"]).default("draft"),
         scheduledAt: z.date().optional(),
         mediaUrl: z.string().optional(),
+        contentFormat: z.enum(["carousel", "reel", "story", "feed_post"]).optional(),
       }))
       .mutation(async ({ ctx, input }) => {
         const result = await createContentPost(ctx.user.id, {
@@ -621,6 +622,7 @@ export const appRouter = router({
           status: input.status,
           scheduledAt: input.scheduledAt,
           mediaUrl: input.mediaUrl,
+          contentFormat: input.contentFormat,
         });
         const insertId = (result as any)[0]?.insertId ?? (result as any)?.insertId ?? null;
         return { id: insertId as number | null };

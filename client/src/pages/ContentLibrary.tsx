@@ -96,12 +96,19 @@ function extractContentPreview(content: string | null | undefined): string {
   }
 }
 
+function sanitizeJson(s: string): string {
+  // Replace literal control chars inside JSON string values (LLM sometimes emits them)
+  return s.replace(/"((?:[^"\\]|\\.)*)"/gs, (match) =>
+    match.replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t')
+  );
+}
+
 function extractFullContent(content: string | null | undefined): { hook?: string; paragraphs?: string[]; cta?: string; hashtags?: string; textOverlays?: string[]; voiceover?: string; sections?: any[]; caption?: string; raw: string } {
   if (!content) return { raw: '' };
   try {
-    let parsed = JSON.parse(content);
+    let parsed = JSON.parse(sanitizeJson(content));
     // Handle double-stringified JSON
-    if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+    if (typeof parsed === 'string') parsed = JSON.parse(sanitizeJson(parsed));
     const rawHashtags = parsed.hashtags;
     const hashtags = Array.isArray(rawHashtags)
       ? rawHashtags.map((t: string) => t.startsWith('#') ? t : `#${t}`).join(' ')

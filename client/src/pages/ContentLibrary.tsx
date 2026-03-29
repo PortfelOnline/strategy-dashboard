@@ -60,7 +60,8 @@ interface Post {
   updatedAt?: Date | string | null;
 }
 
-function extractContentPreview(content: string): string {
+function extractContentPreview(content: string | null | undefined): string {
+  if (!content) return '';
   try {
     const parsed = JSON.parse(content);
     const parts: string[] = [];
@@ -429,18 +430,20 @@ export default function ContentLibrary() {
                       <p className={`text-sm text-slate-700 p-3 whitespace-pre-wrap ${expandedPostIds.has(post.id) ? '' : 'line-clamp-3'}`}>
                         {extractContentPreview(post.content)}
                       </p>
-                      <button
-                        className="w-full flex items-center justify-center gap-1 py-1.5 text-xs text-slate-400 hover:text-slate-600 border-t border-slate-100 transition-colors"
-                        onClick={() => setExpandedPostIds(prev => {
-                          const next = new Set(prev);
-                          next.has(post.id) ? next.delete(post.id) : next.add(post.id);
-                          return next;
-                        })}
-                      >
-                        {expandedPostIds.has(post.id)
-                          ? <><ChevronUp className="w-3 h-3" />Collapse</>
-                          : <><ChevronDown className="w-3 h-3" />Show full post</>}
-                      </button>
+                      {extractContentPreview(post.content).length > 150 && (
+                        <button
+                          className="w-full flex items-center justify-center gap-1 py-1.5 text-xs text-slate-400 hover:text-slate-600 border-t border-slate-100 transition-colors"
+                          onClick={() => setExpandedPostIds(prev => {
+                            const next = new Set(prev);
+                            next.has(post.id) ? next.delete(post.id) : next.add(post.id);
+                            return next;
+                          })}
+                        >
+                          {expandedPostIds.has(post.id)
+                            ? <><ChevronUp className="w-3 h-3" />Collapse</>
+                            : <><ChevronDown className="w-3 h-3" />Show full post</>}
+                        </button>
+                      )}
                     </div>
                   </div>
 

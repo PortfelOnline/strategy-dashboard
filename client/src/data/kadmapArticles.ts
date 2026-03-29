@@ -722,6 +722,5 @@ export const INITIAL_PROGRESS: Record<number, ArticleProgress> = {
   9769:   { status: 'in_progress', doneAt: '2026-03-29' },
   332043: { status: 'in_progress', doneAt: '2026-03-29' },
   6386:   { status: 'in_progress', doneAt: '2026-03-29' },
-  7129:   { status: 'in_progress', doneAt: '2026-03-29' },
   297781: { status: 'in_progress', doneAt: '2026-03-29' },
 };

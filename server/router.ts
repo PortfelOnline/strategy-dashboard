@@ -198,6 +198,55 @@ export const botsRouter = t.router({
       history: last7,
     };
   }),
+
+  targetStats: procedure.query(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const botDir = process.env.BOT_DIR || '/bot_work';
+    const file = path.join(botDir, 'outputs', 'search_results.txt');
+
+    type BotStat = { serpCount: number; directCount: number; total: number };
+    type DayStat = { date: string; serpCount: number; directCount: number; total: number };
+
+    const byBot: Record<string, BotStat> = {};
+    const byDay: Record<string, DayStat> = {};
+
+    try {
+      const lines = fs.readFileSync(file, 'utf-8').split('\n');
+      for (const line of lines) {
+        const parts = line.trim().split('\t');
+        if (parts.length < 4) continue;
+        const [botField, , , timestamp, flag] = parts;
+        if (!botField.startsWith('Bot ') || botField === 'Bot ID') continue;
+        const botId = botField.replace('Bot ', '').trim();
+        const isSerp = flag !== 'direct';  // no flag or 'serp' = organic
+        const date = timestamp ? timestamp.slice(0, 10) : 'unknown';
+
+        if (!byBot[botId]) byBot[botId] = { serpCount: 0, directCount: 0, total: 0 };
+        if (!byDay[date]) byDay[date] = { date, serpCount: 0, directCount: 0, total: 0 };
+
+        if (isSerp) {
+          byBot[botId].serpCount++;
+          byDay[date].serpCount++;
+        } else {
+          byBot[botId].directCount++;
+          byDay[date].directCount++;
+        }
+        byBot[botId].total++;
+        byDay[date].total++;
+      }
+    } catch {}
+
+    const bots = Object.entries(byBot)
+      .map(([botId, s]) => ({ botId, ...s }))
+      .sort((a, b) => b.total - a.total);
+
+    const days = Object.values(byDay)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(-14);
+
+    return { bots, days };
+  }),
 });
 
 export type BotsRouter = typeof botsRouter;

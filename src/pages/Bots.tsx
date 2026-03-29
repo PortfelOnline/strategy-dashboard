@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle, Eye } from 'lucide-react';
+import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle, Eye, MousePointer, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -135,6 +135,9 @@ export default function Bots() {
   const { data: captchaData } = trpc.captchaStats.useQuery(undefined, {
     refetchInterval: 60_000,
   });
+  const { data: targetStats } = trpc.targetStats.useQuery(undefined, {
+    refetchInterval: 60000,
+  });
   const { data: detectedResources } = trpc.detectedResources.useQuery(undefined, {
     refetchInterval: 30_000,
   });
@@ -215,7 +218,7 @@ export default function Bots() {
 
   const bots: BotEntry[] = data?.bots ?? [];
   const proxyStats = data?.proxyStats;
-  const warmedCount = bots.filter(b => ((b.state as Record<string, unknown>)?.warmup_days as number ?? 0) >= 14).length;
+  const warmedCount = bots.filter(b => ((b.state as Record<string, unknown>)?.warmup_days as number ?? 0) >= 9).length;
   const proxies: ProxyEntry[] = proxiesData ?? [];
   const filteredProxies = proxies.filter(p =>
     !proxySearch || p.proxy.toLowerCase().includes(proxySearch.toLowerCase())
@@ -446,6 +449,68 @@ export default function Bots() {
                   </Card>
                   );
                 })()}
+
+                {/* Target clicks card */}
+                {targetStats && (targetStats.bots.length > 0 || targetStats.days.length > 0) && (
+                  <Card className="col-span-1 md:col-span-2 lg:col-span-3">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                        <MousePointer className="w-4 h-4 text-blue-500" /> Целевые переходы
+                        <span className="ml-auto text-xs font-normal text-slate-400">
+                          всего: {targetStats.bots.reduce((s: number, b: {total: number}) => s + b.total, 0)}
+                        </span>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Per-bot stats */}
+                        <div>
+                          <div className="text-xs text-slate-400 mb-2">По ботам</div>
+                          <div className="space-y-1.5">
+                            {targetStats.bots.slice(0, 8).map((b: {botId: string; serpCount: number; directCount: number; total: number}) => (
+                              <div key={b.botId} className="flex items-center gap-2 text-xs">
+                                <span className="w-10 text-slate-500 font-mono">Bot {b.botId}</span>
+                                <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                                  <div className="h-full flex">
+                                    <div className="bg-blue-500 h-full" style={{width: `${(b.serpCount/b.total)*100}%`}} />
+                                    <div className="bg-slate-400 h-full" style={{width: `${(b.directCount/b.total)*100}%`}} />
+                                  </div>
+                                </div>
+                                <span className="w-5 text-right font-semibold text-slate-700">{b.total}</span>
+                                <span className="text-[10px] text-blue-500">{b.serpCount}↗</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex gap-3 mt-2 text-[10px] text-slate-400">
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> органика</span>
+                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-slate-400" /> прямые</span>
+                          </div>
+                        </div>
+
+                        {/* Per-day chart */}
+                        {targetStats.days.length > 1 && (
+                          <div>
+                            <div className="text-xs text-slate-400 mb-2">По дням (последние {targetStats.days.length})</div>
+                            <div className="flex items-end gap-1" style={{height: '60px'}}>
+                              {targetStats.days.map((d: {date: string; serpCount: number; directCount: number; total: number}) => {
+                                const maxVal = Math.max(...targetStats.days.map((x: typeof d) => x.total), 1);
+                                const h = Math.max(4, Math.round((d.total / maxVal) * 56));
+                                const isToday = d.date === new Date().toISOString().split('T')[0];
+                                return (
+                                  <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.total} (орг ${d.serpCount} / прям ${d.directCount})`}>
+                                    <div className="text-[9px] text-slate-500">{d.total || ''}</div>
+                                    <div className={`w-full rounded-t-sm ${isToday ? 'bg-blue-500' : 'bg-blue-300'}`} style={{height: `${h}px`}} />
+                                    <div className={`text-[9px] ${isToday ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>{d.date.slice(5)}</div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             )}
 
@@ -517,7 +582,7 @@ export default function Bots() {
                                   <div className="w-12 bg-slate-200 rounded-full h-1.5">
                                     <div
                                       className="bg-orange-400 h-1.5 rounded-full"
-                                      style={{ width: `${Math.min(100, (warmupDays / 14) * 100)}%` }}
+                                      style={{ width: `${Math.min(100, (warmupDays / 9) * 100)}%` }}
                                     />
                                   </div>
                                   <span className="text-slate-500">{warmupDays}d</span>
@@ -947,7 +1012,7 @@ export default function Bots() {
                   <Card>
                     <CardHeader className="pb-3">
                       <CardTitle className="text-base">Боты в ротации</CardTitle>
-                      <CardDescription>warmup → target переключается автоматически по warmup_days ≥ 14</CardDescription>
+                      <CardDescription>warmup → target переключается автоматически по warmup_days ≥ 9</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {orchEdits.bots.length === 0 ? (
@@ -957,7 +1022,7 @@ export default function Bots() {
                           {orchEdits.bots.map((b, i) => {
                             const state = data?.bots.find(rb => rb.botId === b.botId)?.state;
                             const warmupDays = state?.warmup_days ?? 0;
-                            const autoMode = (warmupDays as number) >= 14 ? 'target' : 'warmup';
+                            const autoMode = (warmupDays as number) >= 9 ? 'target' : 'warmup';
                             return (
                               <div key={b.botId} className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${b.enabled ? 'bg-white' : 'bg-slate-50 opacity-60'}`}>
                                 <span className="font-mono font-bold text-slate-700 w-12">#{b.botId}</span>
@@ -1098,7 +1163,7 @@ export default function Bots() {
                   <Card className="bg-slate-50 border-slate-200">
                     <CardContent className="pt-4 text-xs text-slate-500 space-y-1.5">
                       <p><span className="font-medium">Тик:</span> каждые 30 сек</p>
-                      <p><span className="font-medium">Режим:</span> warmup_days &lt; 14 → warmup, иначе target</p>
+                      <p><span className="font-medium">Режим:</span> warmup_days &lt; 9 → warmup, иначе target</p>
                       <p><span className="font-medium">Окно:</span> {orchEdits.dailyStartHour}:00 – {orchEdits.dailyEndHour}:00</p>
                       <p><span className="font-medium">Перезапуск:</span> через {orchEdits.restartDelayMin} мин после завершения</p>
                     </CardContent>

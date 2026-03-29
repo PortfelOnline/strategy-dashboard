@@ -10,6 +10,7 @@ services:
       - /root/yandex_bot/logs:/app/logs           # Логи
       - /root/yandex_bot/outputs:/app/outputs     # Состояния, кэш прокси
       - /root/yandex_bot/proxies.txt:/app/proxies.txt
+      - /root/yandex_bot/bots.db:/app/bots.db
     shm_size: '2gb'
     restart: unless-stopped
     # Resource limit: не более 50% свободного CPU и RAM

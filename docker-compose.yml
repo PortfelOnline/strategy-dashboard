@@ -4,7 +4,7 @@ services:
     container_name: yandex_bot
     environment:
       - CAPTCHA_2CAPTCHA_KEY=40a98c9a3d6373ac7e5c3e210842f358
-      - CAPTCHA_2CAPTCHA_MAX_DAILY=166
+      - CAPTCHA_2CAPTCHA_MAX_DAILY=200
     volumes:
       - /root/yandex_bot/work:/app/work          # Firefox профили ботов
       - /root/yandex_bot/logs:/app/logs           # Логи
@@ -34,7 +34,7 @@ services:
       - BOT_CONTAINER=yandex_bot
       - PORT=4000
       - CAPTCHA_2CAPTCHA_KEY=40a98c9a3d6373ac7e5c3e210842f358
-      - CAPTCHA_2CAPTCHA_MAX_DAILY=166
+      - CAPTCHA_2CAPTCHA_MAX_DAILY=200
     volumes:
       - /root/yandex_bot/outputs:/bot_work/outputs  # разделяем с yandex_bot
       - /root/yandex_bot/logs:/bot_work/logs

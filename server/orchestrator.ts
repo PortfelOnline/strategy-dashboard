@@ -193,15 +193,22 @@ function tick(): void {
     if (!enabledIds.has(queue[i].botId)) queue.splice(i, 1);
   }
 
-  // 4b. Sort queue: target-ready bots first, then warmup bots by ascending days
+  // 4b. Sort queue: target-ready bots first, then by last_run ascending (longest ago = highest priority).
+  // Sorting by last_run ensures fair rotation: bots that haven't run in a long time get priority,
+  // preventing low-warmup-day bots from monopolizing all slots when they cycle back after 30min.
   queue.sort((a, b) => {
-    const dA = (getBotState(a.botId)?.warmup_days as number | undefined) ?? 0;
-    const dB = (getBotState(b.botId)?.warmup_days as number | undefined) ?? 0;
+    const stateA = getBotState(a.botId);
+    const stateB = getBotState(b.botId);
+    const dA = (stateA?.warmup_days as number | undefined) ?? 0;
+    const dB = (stateB?.warmup_days as number | undefined) ?? 0;
     const isTargetA = dA >= WARMUP_DAYS_THRESHOLD ? 1 : 0;
     const isTargetB = dB >= WARMUP_DAYS_THRESHOLD ? 1 : 0;
-    // Target bots first; within same group sort warmup ascending
+    // Target-ready bots first
     if (isTargetA !== isTargetB) return isTargetB - isTargetA;
-    return dA - dB;
+    // Within same group: sort by last_run ascending (never run = 0 = highest priority)
+    const lastA = stateA?.last_run ? new Date(stateA.last_run as string).getTime() : 0;
+    const lastB = stateB?.last_run ? new Date(stateB.last_run as string).getTime() : 0;
+    return lastA - lastB;
   });
 
   // 5. Start from queue up to min(config.maxConcurrent, dynamic free resources)

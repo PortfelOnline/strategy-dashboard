@@ -48,6 +48,25 @@ type CompetitorData = {
   aiComparison: string | null;
 };
 
+type CompetitorMetric = {
+  engine: 'google' | 'yandex';
+  position: number;
+  domain: string;
+  title: string;
+  url: string;
+  wordCount: number;
+  h2Count: number;
+  h3Count: number;
+  faqCount: number;
+  hasTable: boolean;
+};
+type CompetitorMetricsData = {
+  keyword: string;
+  competitors: CompetitorMetric[];
+  googleError: string | null;
+  yandexError: string | null;
+};
+
 function PositionBadge({ pos }: { pos: number | null }) {
   if (pos === null) return <Badge variant="outline" className="text-xs">не найден</Badge>;
   const color = pos <= 3 ? 'bg-green-100 text-green-800' : pos <= 10 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800';
@@ -95,6 +114,77 @@ function extractKeyword(title: string): string {
   return words.join(' ');
 }
 
+function CompetitorMetricsTable({ data }: { data: CompetitorMetricsData }) {
+  if (!data.competitors.length) return null;
+
+  const maxWords = Math.max(...data.competitors.map(c => c.wordCount));
+  const maxFaq   = Math.max(...data.competitors.map(c => c.faqCount));
+  const targetWords = Math.max(3500, Math.round(maxWords * 1.3));
+  const targetFaq   = Math.max(10,   maxFaq + 2);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-orange-500" />
+          Метрики топ-3 конкурентов
+          <Badge variant="outline" className="text-xs font-normal ml-1">наша цель: {targetWords}+ слов, {targetFaq}+ FAQ</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 overflow-x-auto">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="border-b text-slate-500">
+              <th className="text-left py-1 pr-2 font-medium">Поиск</th>
+              <th className="text-left py-1 pr-2 font-medium">#</th>
+              <th className="text-left py-1 pr-2 font-medium min-w-[140px]">Домен</th>
+              <th className="text-right py-1 pr-2 font-medium">Слов</th>
+              <th className="text-right py-1 pr-2 font-medium">H2</th>
+              <th className="text-right py-1 pr-2 font-medium">H3</th>
+              <th className="text-right py-1 pr-2 font-medium">FAQ</th>
+              <th className="text-right py-1 font-medium">Табл</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.competitors.map((c, i) => (
+              <tr key={i} className="border-b last:border-0 hover:bg-slate-50">
+                <td className="py-1.5 pr-2">
+                  <span className={`inline-block px-1 rounded text-[10px] font-bold ${c.engine === 'google' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                    {c.engine === 'google' ? 'G' : 'Я'}
+                  </span>
+                </td>
+                <td className="py-1.5 pr-2 text-slate-400">{c.position}</td>
+                <td className="py-1.5 pr-2">
+                  <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline truncate block max-w-[160px]" title={c.title}>
+                    {c.domain}
+                  </a>
+                </td>
+                <td className={`py-1.5 pr-2 text-right font-mono ${c.wordCount === maxWords ? 'font-bold text-orange-600' : ''}`}>
+                  {c.wordCount.toLocaleString()}
+                </td>
+                <td className="py-1.5 pr-2 text-right font-mono">{c.h2Count}</td>
+                <td className="py-1.5 pr-2 text-right font-mono">{c.h3Count}</td>
+                <td className={`py-1.5 pr-2 text-right font-mono ${c.faqCount === maxFaq && maxFaq > 0 ? 'font-bold text-orange-600' : ''}`}>
+                  {c.faqCount}
+                </td>
+                <td className="py-1.5 text-right">{c.hasTable ? '✓' : '—'}</td>
+              </tr>
+            ))}
+            <tr className="bg-green-50 border-t-2 border-green-200">
+              <td colSpan={3} className="py-1.5 pr-2 text-green-700 font-semibold">🎯 Наша цель</td>
+              <td className="py-1.5 pr-2 text-right font-mono font-bold text-green-700">{targetWords.toLocaleString()}+</td>
+              <td className="py-1.5 pr-2 text-right font-mono text-green-700">8+</td>
+              <td className="py-1.5 pr-2 text-right font-mono text-green-700">—</td>
+              <td className="py-1.5 pr-2 text-right font-mono font-bold text-green-700">{targetFaq}+</td>
+              <td className="py-1.5 text-right text-green-700">✓</td>
+            </tr>
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CompetitorPanel({
   ourUrl, ourContent, ourTitle, onRewrite,
 }: {
@@ -105,6 +195,7 @@ function CompetitorPanel({
 }) {
   const [keyword, setKeyword] = useState(() => extractKeyword(ourTitle || ''));
   const [data, setData] = useState<CompetitorData | null>(null);
+  const [metricsData, setMetricsData] = useState<CompetitorMetricsData | null>(null);
   const lastAnalyzedRef = useRef('');
 
   const { mutate: analyze, isPending } = trpc.articles.analyzeCompetitors.useMutation({
@@ -117,6 +208,11 @@ function CompetitorPanel({
     onError: (e: any) => toast.error(e?.message || 'Ошибка'),
   });
 
+  const { mutate: fetchMetrics, isPending: isMetricsPending } = trpc.articles.getCompetitorMetrics.useMutation({
+    onSuccess: (d) => setMetricsData(d as CompetitorMetricsData),
+    onError: () => { /* silent — metrics are supplementary */ },
+  });
+
   const { mutate: rewrite, isPending: isRewriting } = trpc.articles.rewriteWithCompetitors.useMutation({
     onSuccess: (d) => {
       onRewrite?.(d.improvedContent);
@@ -124,6 +220,13 @@ function CompetitorPanel({
     },
     onError: (e: any) => toast.error(e?.message || 'Ошибка перезаписи'),
   });
+
+  const runAll = (kw: string) => {
+    setData(null);
+    setMetricsData(null);
+    analyze({ keyword: kw, ourUrl, ourContent });
+    fetchMetrics({ keyword: kw });
+  };
 
   const allCompetitors = data
     ? [...data.google.results, ...data.yandex.results]
@@ -137,8 +240,7 @@ function CompetitorPanel({
     lastAnalyzedRef.current = ourTitle;
     const kw = extractKeyword(ourTitle);
     setKeyword(kw);
-    setData(null);
-    analyze({ keyword: kw, ourUrl, ourContent });
+    runAll(kw);
   }, [ourTitle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -150,11 +252,11 @@ function CompetitorPanel({
               placeholder="Ключевое слово для поиска..."
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && keyword.trim() && analyze({ keyword: keyword.trim(), ourUrl, ourContent })}
+              onKeyDown={(e) => e.key === 'Enter' && keyword.trim() && runAll(keyword.trim())}
               className="flex-1"
             />
             <Button
-              onClick={() => keyword.trim() && analyze({ keyword: keyword.trim(), ourUrl, ourContent })}
+              onClick={() => keyword.trim() && runAll(keyword.trim())}
               disabled={isPending || !keyword.trim()}
               className="gap-2 shrink-0"
               variant="outline"
@@ -174,6 +276,21 @@ function CompetitorPanel({
             <p className="text-slate-600 text-sm">Загружаю выдачу Google и Яндекс...</p>
           </CardContent>
         </Card>
+      )}
+
+      {/* Competitor metrics table — loads in parallel with SERP */}
+      {(metricsData || isMetricsPending) && (
+        <div>
+          {isMetricsPending && !metricsData && (
+            <Card>
+              <CardContent className="flex items-center gap-2 py-3 text-sm text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Загружаю страницы конкурентов для анализа метрик...
+              </CardContent>
+            </Card>
+          )}
+          {metricsData && <CompetitorMetricsTable data={metricsData} />}
+        </div>
       )}
 
       {data && !isPending && (

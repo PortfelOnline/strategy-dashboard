@@ -1734,6 +1734,68 @@ ${competitorList}
     }),
 
   /**
+   * Fetch top-3 competitor pages from Google + Yandex SERP and return structural metrics.
+   * Used in UI to show competitor word count, H2/H3/FAQ counts before/after rewrite.
+   */
+  getCompetitorMetrics: protectedProcedure
+    .input(z.object({ keyword: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const ourDomain = 'kadastrmap.info';
+      const [google, yandex] = await Promise.all([
+        cachedGoogleSerp(input.keyword),
+        cachedYandexSerp(input.keyword),
+      ]);
+
+      const googleTop3 = google.results
+        .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
+        .slice(0, 3)
+        .map(r => ({ ...r, engine: 'google' as const }));
+      const yandexTop3 = yandex.results
+        .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
+        .slice(0, 3)
+        .map(r => ({ ...r, engine: 'yandex' as const }));
+
+      // Dedupe by URL, preserve engine label
+      const seenUrls = new Set<string>();
+      const toFetch: typeof googleTop3 = [];
+      for (const r of [...googleTop3, ...yandexTop3]) {
+        if (!seenUrls.has(r.url)) { seenUrls.add(r.url); toFetch.push(r); }
+      }
+
+      const fetched = await Promise.allSettled(
+        toFetch.map(async (r) => {
+          const cached = cacheGet(pageCache, r.url);
+          if (cached) {
+            const h2Count = (cached.headings as string || '').split(' | ').filter((h: string) => h.startsWith('H2:')).length;
+            const h3Count = (cached.headings as string || '').split(' | ').filter((h: string) => h.startsWith('H3:')).length;
+            return { engine: r.engine, position: r.position, domain: r.domain, title: cached.title || r.title, url: r.url, wordCount: cached.wordCount, h2Count, h3Count, faqCount: cached.faqCount, hasTable: cached.hasTable };
+          }
+          const parsed = await Promise.race([
+            parseArticleFromUrl(r.url),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
+          ]);
+          const h2Count = (parsed.headings || []).filter((h: { level: string }) => h.level === 'H2').length;
+          const h3Count = (parsed.headings || []).filter((h: { level: string }) => h.level === 'H3').length;
+          const html = (parsed as any).contentHtml || '';
+          const faqCount = (html.match(/<details\b/gi) || []).length;
+          const hasTable = /<table\b/i.test(html);
+          return { engine: r.engine, position: r.position, domain: r.domain, title: parsed.title || r.title, url: r.url, wordCount: parsed.wordCount, h2Count, h3Count, faqCount, hasTable };
+        })
+      );
+
+      const competitors = fetched
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+        .map(r => r.value);
+
+      return {
+        keyword: input.keyword,
+        competitors,
+        googleError: google.error ?? null,
+        yandexError: yandex.error ?? null,
+      };
+    }),
+
+  /**
    * Lightweight audit of multiple article URLs — no LLM, just parse metrics.
    * Returns word count, headings count, has meta description, duplicate detection.
    */

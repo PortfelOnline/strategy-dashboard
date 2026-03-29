@@ -154,8 +154,10 @@ function titleToQuery(title: string): string {
   const splitAt = q.search(/[:\u2014\u2013|,]/);
   if (splitAt > 10) q = q.slice(0, splitAt).trim();
 
-  // Remove trailing punctuation / partial words ending with "до"
-  q = q.replace(/\s+до\s*$/, '').replace(/[.,!?;()\[\]]+$/, '').trim();
+  // Strip "до N симв" / "до 60" Yoast counter artifacts
+  q = q.replace(/\s+до\s+\d+(\s+симв[а-я]*)?\s*$/i, '').trim();
+  // Remove trailing punctuation
+  q = q.replace(/[.,!?;()\[\]]+$/, '').trim();
 
   // Max 7 words
   const words = q.split(/\s+/);

@@ -247,6 +247,83 @@ export const botsRouter = t.router({
 
     return { bots, days };
   }),
+
+  // ── Queries management ─────────────────────────────────────────────────────
+  getQueries: procedure.query(async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const queriesDir = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'queries');
+    const read = (filename: string): string => {
+      try { return fs.readFileSync(path.join(queriesDir, filename), 'utf-8'); } catch { return ''; }
+    };
+    // List all site-specific query files
+    let siteFiles: { site: string; filename: string; content: string }[] = [];
+    try {
+      const files = fs.readdirSync(queriesDir);
+      for (const file of files) {
+        if (file.endsWith('_queries.txt') && file !== 'warmup_queries.txt') {
+          const site = file.replace('_queries.txt', '').replace(/_/g, '.');
+          siteFiles.push({ site, filename: file, content: fs.readFileSync(path.join(queriesDir, file), 'utf-8') });
+        }
+      }
+    } catch {}
+    return {
+      warmup: read('warmup_queries.txt'),
+      siteFiles,
+    };
+  }),
+
+  updateWarmupQueries: procedure
+    .input(z.object({ content: z.string() }))
+    .mutation(async ({ input }) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const queriesDir = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'queries');
+    fs.mkdirSync(queriesDir, { recursive: true });
+    fs.writeFileSync(path.join(queriesDir, 'warmup_queries.txt'), input.content.trim(), 'utf-8');
+    const lines = input.content.trim().split('\n').filter((l: string) => l.trim()).length;
+    return { success: true, lines };
+  }),
+
+  updateSiteQueries: procedure
+    .input(z.object({ filename: z.string(), content: z.string() }))
+    .mutation(async ({ input }) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    if (!input.filename.match(/^[\w.-]+_queries\.txt$/) || input.filename.includes('..')) {
+      throw new Error('Invalid filename');
+    }
+    const queriesDir = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'queries');
+    fs.mkdirSync(queriesDir, { recursive: true });
+    fs.writeFileSync(path.join(queriesDir, input.filename), input.content.trim(), 'utf-8');
+    const lines = input.content.trim().split('\n').filter((l: string) => l.trim()).length;
+    return { success: true, lines };
+  }),
+
+  addSiteQueries: procedure
+    .input(z.object({ site: z.string(), content: z.string() }))
+    .mutation(async ({ input }) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const filename = input.site.replace(/https?:\/\//, '').replace(/\./g, '_').replace(/\//g, '') + '_queries.txt';
+    const queriesDir = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'queries');
+    fs.mkdirSync(queriesDir, { recursive: true });
+    fs.writeFileSync(path.join(queriesDir, filename), input.content.trim(), 'utf-8');
+    return { success: true, filename };
+  }),
+
+  deleteSiteQueries: procedure
+    .input(z.object({ filename: z.string() }))
+    .mutation(async ({ input }) => {
+    const fs = await import('fs');
+    const path = await import('path');
+    if (!input.filename.match(/^[\w.-]+_queries\.txt$/) || input.filename.includes('..')) {
+      throw new Error('Invalid filename');
+    }
+    const queriesDir = path.join(process.env.BOT_DIR || '/bot_work', 'outputs', 'queries');
+    try { fs.unlinkSync(path.join(queriesDir, input.filename)); } catch {}
+    return { success: true };
+  }),
 });
 
 export type BotsRouter = typeof botsRouter;

@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle, Eye, MousePointer, TrendingUp } from 'lucide-react';
+import { Loader2, Play, Square, Terminal, RefreshCw, Plus, Bot, Shield, Trash2, Upload, RotateCcw, ExternalLink, Save, FileText, Zap, Clock, CheckCircle, XCircle, AlertCircle, Eye, MousePointer, TrendingUp, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 
@@ -188,6 +188,43 @@ export default function Bots() {
     onError: (e) => toast.error(e.message),
   });
 
+  // ── Queries state ──────────────────────────────────────────────────────────
+  const [warmupText, setWarmupText] = useState<string>('');
+  const [siteTexts, setSiteTexts] = useState<Record<string, string>>({});
+  const [newSite, setNewSite] = useState('');
+  const [newSiteText, setNewSiteText] = useState('');
+  const [warmupOpen, setWarmupOpen] = useState(false);
+  const [siteOpen, setSiteOpen] = useState<Record<string, boolean>>({});
+
+  const { data: queriesData, refetch: refetchQueries } = trpc.getQueries.useQuery(undefined, { refetchInterval: false });
+  useEffect(() => {
+    if (queriesData) {
+      if (!warmupText) setWarmupText(queriesData.warmup);
+      if (Object.keys(siteTexts).length === 0) {
+        const map: Record<string, string> = {};
+        for (const sf of queriesData.siteFiles) map[sf.filename] = sf.content;
+        setSiteTexts(map);
+      }
+    }
+  }, [queriesData]);
+
+  const updateWarmup = trpc.updateWarmupQueries.useMutation({
+    onSuccess: (r) => { toast.success(`Warmup сохранён: ${r.lines} запросов`); refetchQueries(); },
+    onError: () => toast.error('Ошибка сохранения'),
+  });
+  const updateSite = trpc.updateSiteQueries.useMutation({
+    onSuccess: (r) => { toast.success(`Сохранено: ${r.lines} запросов`); refetchQueries(); },
+    onError: () => toast.error('Ошибка сохранения'),
+  });
+  const addSiteQ = trpc.addSiteQueries.useMutation({
+    onSuccess: () => { toast.success('Сайт добавлен'); setNewSite(''); setNewSiteText(''); refetchQueries(); },
+    onError: () => toast.error('Ошибка'),
+  });
+  const deleteSiteQ = trpc.deleteSiteQueries.useMutation({
+    onSuccess: () => { toast.success('Удалено'); refetchQueries(); },
+    onError: () => toast.error('Ошибка'),
+  });
+
   // Google Docs mutation
   const saveDocs = trpc.setGoogleDocs.useMutation({
     onSuccess: () => { toast.success('Google Docs сохранены'); utils.googleDocs.invalidate(); },
@@ -278,9 +315,10 @@ export default function Bots() {
             <TabsTrigger value="proxies">
               Прокси {proxies.length > 0 && <Badge className="ml-2 bg-slate-200 text-slate-700 text-xs">{proxies.length}</Badge>}
             </TabsTrigger>
-            <TabsTrigger value="docs">
-              <FileText className="w-3.5 h-3.5 mr-1.5" />Google Docs
+            <TabsTrigger value="queries">
+              <FileText className="w-3.5 h-3.5 mr-1.5" />Запросы
             </TabsTrigger>
+
             <TabsTrigger value="autopilot">
               <Zap className="w-3.5 h-3.5 mr-1.5" />Автопилот
               {orchStatus?.active && <span className="ml-1.5 w-2 h-2 rounded-full bg-green-500 inline-block" />}
@@ -356,161 +394,230 @@ export default function Bots() {
                   const isFull = cap.dailyCount >= cap.maxDaily;
                   const remaining = Math.max(0, cap.maxDaily - cap.dailyCount);
                   const successRate = cap.attempts > 0 ? Math.round((cap.dailyCount / cap.attempts) * 100) : null;
-                  const barColor = isFull ? 'bg-red-500' : pct >= 80 ? 'bg-orange-500' : 'bg-green-500';
-                  const countColor = isFull ? 'text-red-600' : pct >= 80 ? 'text-orange-600' : 'text-emerald-600';
+                  const trackColor = isFull ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+                  const countColor = isFull ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-emerald-600';
+                  const today = new Date().toISOString().split('T')[0];
                   return (
-                  <Card className="col-span-1 md:col-span-2">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-orange-500" /> 2captcha — дневной лимит
-                        <span className="ml-auto text-xs font-normal text-slate-400">сброс в 00:00 UTC</span>
+                  <Card className="col-span-1 md:col-span-2 border-0 shadow-sm bg-white">
+                    <CardHeader className="pb-3 border-b border-slate-100">
+                      <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center">
+                          <Shield className="w-3.5 h-3.5 text-orange-500" />
+                        </div>
+                        Капча — расход и баланс
+                        <span className="ml-auto text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">сброс 00:00 UTC</span>
                       </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      {/* Main counter */}
-                      <div className="flex items-baseline gap-1.5 mb-1">
-                        <span className={`text-3xl font-bold ${countColor}`}>{cap.dailyCount}</span>
-                        <span className="text-lg text-slate-400">/ {cap.maxDaily}</span>
-                        <span className="text-sm text-slate-500">решено</span>
-                        <span className={`ml-auto text-sm font-semibold ${countColor}`}>{pct}%</span>
-                      </div>
-
-                      {/* Progress bar */}
-                      <div className="w-full bg-slate-100 rounded-full h-2 mb-4">
-                        <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
-                      </div>
-
-                      {/* Stats row: remaining / balance / cost */}
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className="bg-slate-50 rounded-lg p-2.5 text-center">
-                          <div className={`text-lg font-bold ${isFull ? 'text-red-600' : 'text-slate-700'}`}>{remaining}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">осталось слотов</div>
+                    <CardContent className="pt-4">
+                      {/* Counter + progress */}
+                      <div className="flex items-end justify-between mb-1.5">
+                        <div className="flex items-baseline gap-1">
+                          <span className={`text-4xl font-bold tabular-nums ${countColor}`}>{cap.dailyCount}</span>
+                          <span className="text-base text-slate-400 font-medium">/{cap.maxDaily}</span>
+                          <span className="text-xs text-slate-400 ml-1">решено сегодня</span>
                         </div>
-                        <div className="bg-green-50 rounded-lg p-2.5 text-center">
-                          <div className="text-lg font-bold text-green-700">
+                        <span className={`text-sm font-bold tabular-nums ${countColor}`}>{pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-1.5 mb-5">
+                        <div className={`h-1.5 rounded-full transition-all duration-500 ${trackColor}`} style={{ width: `${pct}%` }} />
+                      </div>
+
+                      {/* 3-col stat tiles */}
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+                          <div className={`text-xl font-bold tabular-nums ${isFull ? 'text-red-500' : 'text-slate-800'}`}>{remaining}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">осталось<br/>слотов</div>
+                        </div>
+                        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-center">
+                          <div className="text-xl font-bold tabular-nums text-emerald-700">
                             {cap.balance !== null ? `$${cap.balance.toFixed(2)}` : '—'}
                           </div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">баланс</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">баланс<br/>2captcha</div>
                         </div>
-                        <div className="bg-slate-50 rounded-lg p-2.5 text-center">
-                          <div className="text-lg font-bold text-slate-700">${captchaData.costToday.toFixed(3)}</div>
-                          <div className="text-[10px] text-slate-400 mt-0.5">расход сегодня</div>
+                        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-center">
+                          <div className="text-xl font-bold tabular-nums text-slate-800">${captchaData.costToday.toFixed(3)}</div>
+                          <div className="text-[10px] text-slate-400 mt-0.5 leading-tight">расход<br/>сегодня</div>
                         </div>
                       </div>
 
-                      {/* Attempts / success rate row */}
+                      {/* Success rate pill (only when attempts > 0) */}
                       {cap.attempts > 0 && (
-                        <div className="flex items-center gap-3 bg-orange-50 rounded-lg px-3 py-2 mb-3 text-xs text-slate-600">
-                          <span>Вызовов API: <strong>{cap.attempts}</strong></span>
-                          <span className="text-slate-300">|</span>
-                          <span>Решено: <strong>{cap.dailyCount}</strong></span>
+                        <div className="flex items-center gap-2 flex-wrap mb-4">
+                          <span className="text-[11px] text-slate-500 bg-slate-100 rounded-full px-2.5 py-1">
+                            API вызовов: <strong className="text-slate-700">{cap.attempts}</strong>
+                          </span>
+                          <span className="text-[11px] text-slate-500 bg-slate-100 rounded-full px-2.5 py-1">
+                            Решено: <strong className="text-slate-700">{cap.dailyCount}</strong>
+                          </span>
                           {successRate !== null && (
-                            <>
-                              <span className="text-slate-300">|</span>
-                              <span>Успех: <strong className={successRate >= 70 ? 'text-green-700' : 'text-orange-700'}>{successRate}%</strong></span>
-                            </>
+                            <span className={`text-[11px] rounded-full px-2.5 py-1 font-medium ${successRate >= 70 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                              Успех {successRate}%
+                            </span>
                           )}
-                          <span className="text-slate-300">|</span>
-                          <span>~$0.003/решение</span>
+                          <span className="text-[11px] text-slate-400 bg-slate-50 rounded-full px-2.5 py-1">~$0.003/шт</span>
                         </div>
                       )}
 
-                      {/* History chart */}
-                      {captchaData.history.length > 1 && (
-                        <div>
-                          <div className="text-xs text-slate-400 mb-2">
-                            История (последние {captchaData.history.length} дней)
-                            <span className="ml-2 text-slate-300">— лимит: {cap.maxDaily}/день</span>
-                          </div>
-                          <div className="flex items-end gap-1.5" style={{ height: '60px' }}>
-                            {captchaData.history.map((d: { date: string; count2cap: number }) => {
-                              const maxVal = Math.max(...captchaData.history.map((x: typeof d) => x.count2cap), 1);
-                              const h = Math.max(6, Math.round((d.count2cap / cap.maxDaily) * 56));
-                              const isToday = d.date === new Date().toISOString().split('T')[0];
-                              return (
-                                <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.count2cap} решено`}>
-                                  <div className="text-[9px] text-slate-500 font-medium">{d.count2cap || ''}</div>
-                                  <div
-                                    className={`w-full rounded-t-sm ${isToday ? 'bg-orange-500' : 'bg-orange-300'}`}
-                                    style={{ height: `${h}px` }}
-                                  />
-                                  <div className={`text-[9px] ${isToday ? 'text-orange-600 font-semibold' : 'text-slate-400'}`}>
+                      {/* History chart — 3 separate rows: values / bars / dates */}
+                      {captchaData.history.length > 1 && (() => {
+                        const hist = captchaData.history as { date: string; count2cap: number }[];
+                        const maxVal = Math.max(...hist.map(d => d.count2cap), 1);
+                        return (
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[11px] font-medium text-slate-500">История решений</span>
+                              <span className="text-[10px] text-slate-400">лимит {cap.maxDaily}/день</span>
+                            </div>
+                            {/* Value labels */}
+                            <div className="flex gap-1.5">
+                              {hist.map(d => (
+                                <div key={d.date} className="flex-1 text-center text-[9px] text-slate-500 font-medium h-3.5">
+                                  {d.count2cap > 0 ? d.count2cap : ''}
+                                </div>
+                              ))}
+                            </div>
+                            {/* Bars */}
+                            <div className="flex items-end gap-1.5" style={{ height: '52px' }}>
+                              {hist.map(d => {
+                                const h = Math.max(3, Math.round((d.count2cap / maxVal) * 50));
+                                const isToday = d.date === today;
+                                return (
+                                  <div key={d.date} className="flex-1 flex items-end h-full" title={`${d.date}: ${d.count2cap} решено`}>
+                                    <div
+                                      className={`w-full rounded-t transition-all ${isToday ? 'bg-orange-500' : 'bg-orange-200'}`}
+                                      style={{ height: `${h}px` }}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {/* Date labels */}
+                            <div className="flex gap-1.5 mt-1">
+                              {hist.map(d => {
+                                const isToday = d.date === today;
+                                return (
+                                  <div key={d.date} className={`flex-1 text-center text-[9px] ${isToday ? 'text-orange-600 font-semibold' : 'text-slate-400'}`}>
                                     {d.date.slice(5)}
                                   </div>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
                           </div>
-                          {/* Limit line label */}
-                          <div className="text-[9px] text-slate-400 text-right mt-0.5">макс {cap.maxDaily}/день</div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                   );
                 })()}
 
                 {/* Target clicks card */}
-                {targetStats && (targetStats.bots.length > 0 || targetStats.days.length > 0) && (
-                  <Card className="col-span-1 md:col-span-2 lg:col-span-3">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium text-slate-600 flex items-center gap-2">
-                        <MousePointer className="w-4 h-4 text-blue-500" /> Целевые переходы
-                        <span className="ml-auto text-xs font-normal text-slate-400">
-                          всего: {targetStats.bots.reduce((s: number, b: {total: number}) => s + b.total, 0)}
-                        </span>
+                {targetStats && (targetStats.bots.length > 0 || targetStats.days.length > 0) && (() => {
+                  const totalClicks = targetStats.bots.reduce((s: number, b: {total: number}) => s + b.total, 0);
+                  const totalSerp = targetStats.bots.reduce((s: number, b: {serpCount: number}) => s + b.serpCount, 0);
+                  const totalDirect = totalClicks - totalSerp;
+                  const today = new Date().toISOString().split('T')[0];
+                  return (
+                  <Card className="col-span-1 md:col-span-2 lg:col-span-3 border-0 shadow-sm bg-white">
+                    <CardHeader className="pb-3 border-b border-slate-100">
+                      <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center">
+                          <MousePointer className="w-3.5 h-3.5 text-blue-500" />
+                        </div>
+                        Целевые переходы
+                        <div className="ml-auto flex items-center gap-2">
+                          <span className="text-[11px] font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{totalSerp} органика</span>
+                          <span className="text-[11px] font-medium text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">{totalDirect} прямых</span>
+                          <span className="text-[11px] font-bold text-slate-800 bg-slate-200 px-2 py-0.5 rounded-full">{totalClicks} всего</span>
+                        </div>
                       </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {/* Per-bot stats */}
+                    <CardContent className="pt-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Per-bot list */}
                         <div>
-                          <div className="text-xs text-slate-400 mb-2">По ботам</div>
-                          <div className="space-y-1.5">
-                            {targetStats.bots.slice(0, 8).map((b: {botId: string; serpCount: number; directCount: number; total: number}) => (
-                              <div key={b.botId} className="flex items-center gap-2 text-xs">
-                                <span className="w-10 text-slate-500 font-mono">Bot {b.botId}</span>
-                                <div className="flex-1 bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                          <div className="text-[11px] font-medium text-slate-500 mb-3">По ботам (топ)</div>
+                          <div className="space-y-2">
+                            {targetStats.bots.slice(0, 10).map((b: {botId: string; serpCount: number; directCount: number; total: number}) => (
+                              <div key={b.botId} className="flex items-center gap-2.5">
+                                <span className="w-12 text-[11px] text-slate-400 font-mono shrink-0">Bot {b.botId}</span>
+                                <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
                                   <div className="h-full flex">
-                                    <div className="bg-blue-500 h-full" style={{width: `${(b.serpCount/b.total)*100}%`}} />
-                                    <div className="bg-slate-400 h-full" style={{width: `${(b.directCount/b.total)*100}%`}} />
+                                    <div className="bg-blue-500 h-full transition-all" style={{width: `${b.total > 0 ? (b.serpCount/b.total)*100 : 0}%`}} />
+                                    <div className="bg-slate-300 h-full transition-all" style={{width: `${b.total > 0 ? (b.directCount/b.total)*100 : 0}%`}} />
                                   </div>
                                 </div>
-                                <span className="w-5 text-right font-semibold text-slate-700">{b.total}</span>
-                                <span className="text-[10px] text-blue-500">{b.serpCount}↗</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <span className="text-xs font-bold text-slate-800 w-4 text-right">{b.total}</span>
+                                  <span className="text-[10px] text-blue-500 w-8">↗{b.serpCount}</span>
+                                </div>
                               </div>
                             ))}
                           </div>
-                          <div className="flex gap-3 mt-2 text-[10px] text-slate-400">
-                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> органика</span>
-                            <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-slate-400" /> прямые</span>
+                          <div className="flex gap-4 mt-3">
+                            <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                              <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> органика (SERP)
+                            </span>
+                            <span className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                              <span className="w-2 h-2 rounded-full bg-slate-300 inline-block" /> прямые
+                            </span>
                           </div>
                         </div>
 
-                        {/* Per-day chart */}
-                        {targetStats.days.length > 1 && (
-                          <div>
-                            <div className="text-xs text-slate-400 mb-2">По дням (последние {targetStats.days.length})</div>
-                            <div className="flex items-end gap-1" style={{height: '60px'}}>
-                              {targetStats.days.map((d: {date: string; serpCount: number; directCount: number; total: number}) => {
-                                const maxVal = Math.max(...targetStats.days.map((x: typeof d) => x.total), 1);
-                                const h = Math.max(4, Math.round((d.total / maxVal) * 56));
-                                const isToday = d.date === new Date().toISOString().split('T')[0];
-                                return (
-                                  <div key={d.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${d.date}: ${d.total} (орг ${d.serpCount} / прям ${d.directCount})`}>
-                                    <div className="text-[9px] text-slate-500">{d.total || ''}</div>
-                                    <div className={`w-full rounded-t-sm ${isToday ? 'bg-blue-500' : 'bg-blue-300'}`} style={{height: `${h}px`}} />
-                                    <div className={`text-[9px] ${isToday ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>{d.date.slice(5)}</div>
+                        {/* Per-day chart with proper 3-row layout */}
+                        {targetStats.days.length > 0 && (() => {
+                          const days = targetStats.days as {date: string; serpCount: number; directCount: number; total: number}[];
+                          const maxVal = Math.max(...days.map(d => d.total), 1);
+                          return (
+                            <div>
+                              <div className="text-[11px] font-medium text-slate-500 mb-3">
+                                По дням
+                                <span className="ml-1 text-slate-400 font-normal">(последние {days.length})</span>
+                              </div>
+                              {/* Value labels */}
+                              <div className="flex gap-1">
+                                {days.map(d => (
+                                  <div key={d.date} className="flex-1 text-center text-[9px] text-slate-500 h-3.5 font-medium">
+                                    {d.total > 0 ? d.total : ''}
                                   </div>
-                                );
-                              })}
+                                ))}
+                              </div>
+                              {/* Bars */}
+                              <div className="flex items-end gap-1" style={{height: '56px'}}>
+                                {days.map(d => {
+                                  const h = Math.max(3, Math.round((d.total / maxVal) * 54));
+                                  const isToday = d.date === today;
+                                  const serpH = d.total > 0 ? Math.round((d.serpCount / d.total) * h) : 0;
+                                  const directH = h - serpH;
+                                  return (
+                                    <div key={d.date} className="flex-1 flex items-end h-full rounded-t overflow-hidden"
+                                         title={`${d.date}: ${d.total} (орг ${d.serpCount} / прям ${d.directCount})`}>
+                                      <div className="w-full flex flex-col justify-end" style={{height: `${h}px`}}>
+                                        <div className={`w-full ${isToday ? 'bg-blue-500' : 'bg-blue-300'}`} style={{height: `${serpH}px`}} />
+                                        <div className={`w-full ${isToday ? 'bg-slate-400' : 'bg-slate-200'}`} style={{height: `${directH}px`}} />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              {/* Date labels */}
+                              <div className="flex gap-1 mt-1">
+                                {days.map(d => {
+                                  const isToday = d.date === today;
+                                  return (
+                                    <div key={d.date} className={`flex-1 text-center text-[9px] ${isToday ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
+                                      {d.date.slice(5)}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
                     </CardContent>
                   </Card>
-                )}
+                  );
+                })()}
               </div>
             )}
 
@@ -758,99 +865,151 @@ export default function Bots() {
           </TabsContent>
 
           {/* ===== GOOGLE DOCS TAB ===== */}
-          <TabsContent value="docs">
-            {!docsEdits ? (
-              <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>
-            ) : (
-              <div className="space-y-6 max-w-3xl">
-                {/* Global docs */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> Глобальные документы
-                    </CardTitle>
-                    <CardDescription>Общие для всех сайтов</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {(['warmup_queries'] as const).map(key => (
-                      <div key={key}>
-                        <label className="text-sm font-medium text-slate-700 capitalize">
-                          {'Warmup запросы'}
-                        </label>
-                        <div className="flex gap-2 mt-1">
-                          <Input
-                            className="font-mono text-xs"
-                            value={docsEdits.global[key]}
-                            onChange={e => setDocsEdits(d => d ? {
-                              ...d, global: { ...d.global, [key]: e.target.value }
-                            } : d)}
-                          />
-                          <Button variant="ghost" size="sm" className="shrink-0" asChild>
-                            <a href={docsEdits.global[key]} target="_blank" rel="noopener noreferrer">
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
+          {/* ===== QUERIES TAB ===== */}
+          <TabsContent value="queries">
+            <div className="space-y-4 max-w-3xl">
 
-                {/* Per-website docs */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="w-4 h-4" /> Целевые запросы по сайтам
-                    </CardTitle>
-                    <CardDescription>Документ с поисковыми запросами для каждого сайта</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {Object.entries(docsEdits.websites).map(([site, url]) => (
-                      <div key={site}>
-                        <label className="text-sm font-medium text-slate-700">{site}</label>
-                        <div className="flex gap-2 mt-1">
-                          <Input
-                            className="font-mono text-xs"
-                            value={url}
-                            onChange={e => setDocsEdits(d => d ? {
-                              ...d, websites: { ...d.websites, [site]: e.target.value }
-                            } : d)}
-                          />
-                          <Button variant="ghost" size="sm" className="shrink-0" asChild>
-                            <a href={url} target="_blank" rel="noopener noreferrer">
-                              <ExternalLink className="w-4 h-4" />
-                            </a>
-                          </Button>
-                          <Button
-                            variant="ghost" size="sm" className="shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-                            onClick={() => setDocsEdits(d => {
-                              if (!d) return d;
-                              const w = { ...d.websites };
-                              delete w[site];
-                              return { ...d, websites: w };
-                            })}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
+              {/* Warmup queries — collapsible */}
+              <Card className="border-0 shadow-sm">
+                <CardHeader
+                  className="pb-3 border-b border-slate-100 cursor-pointer select-none"
+                  onClick={() => setWarmupOpen(v => !v)}
+                >
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center">
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
                       </div>
-                    ))}
-                    {/* Add new site */}
-                    <AddSiteRow onAdd={(site, url) => setDocsEdits(d => d ? {
-                      ...d, websites: { ...d.websites, [site]: url }
-                    } : d)} />
+                      Warmup запросы
+                      <span className="text-xs font-normal text-slate-400 ml-1">
+                        ({warmupText.split('\n').filter(l => l.trim()).length} шт)
+                      </span>
+                    </CardTitle>
+                    <div className="flex items-center gap-2">
+                      {warmupOpen && (
+                        <Button
+                          size="sm"
+                          onClick={e => { e.stopPropagation(); updateWarmup.mutate({ content: warmupText }); }}
+                          disabled={updateWarmup.isPending}
+                        >
+                          {updateWarmup.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+                          Сохранить
+                        </Button>
+                      )}
+                      {warmupOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                    </div>
+                  </div>
+                  <CardDescription className="mt-1">Общие для всех ботов — один запрос на строку</CardDescription>
+                </CardHeader>
+                {warmupOpen && (
+                  <CardContent className="pt-4">
+                    <Textarea
+                      className="font-mono text-xs min-h-[320px] resize-y"
+                      value={warmupText}
+                      onChange={e => setWarmupText(e.target.value)}
+                      placeholder={"Породы собак\nКак ухаживать за аквариумом\n..."}
+                      spellCheck={false}
+                    />
                   </CardContent>
-                </Card>
+                )}
+              </Card>
 
-                <Button onClick={() => docsEdits && saveDocs.mutate(docsEdits)} disabled={saveDocs.isPending}>
-                  {saveDocs.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Save className="w-4 h-4 mr-1" />}
-                  Сохранить
-                </Button>
-              </div>
-            )}
+              {/* Site-specific queries — each collapsible */}
+              <Card className="border-0 shadow-sm">
+                <CardHeader className="pb-3 border-b border-slate-100">
+                  <CardTitle className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <FileText className="w-3.5 h-3.5 text-blue-500" />
+                    </div>
+                    Целевые запросы по сайтам
+                  </CardTitle>
+                  <CardDescription>Боты ищут сайт в Яндексе по этим запросам (после 9 дней прогрева)</CardDescription>
+                </CardHeader>
+                <CardContent className="pt-4 space-y-3">
+                  {queriesData?.siteFiles.map(sf => {
+                    const isOpen = !!siteOpen[sf.filename];
+                    const lineCount = (siteTexts[sf.filename] || '').split('\n').filter(l => l.trim()).length;
+                    return (
+                      <div key={sf.filename} className="border border-slate-100 rounded-lg overflow-hidden">
+                        {/* Site header — click to expand */}
+                        <div
+                          className="flex items-center justify-between px-3 py-2.5 bg-slate-50 cursor-pointer select-none hover:bg-slate-100 transition-colors"
+                          onClick={() => setSiteOpen(prev => ({ ...prev, [sf.filename]: !prev[sf.filename] }))}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-blue-700">{sf.site.replace(/_/g, '.')}</span>
+                            <span className="text-xs text-slate-400">{lineCount} запросов</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isOpen && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  onClick={e => { e.stopPropagation(); updateSite.mutate({ filename: sf.filename, content: siteTexts[sf.filename] || '' }); }}
+                                  disabled={updateSite.isPending}
+                                >
+                                  <Save className="w-3.5 h-3.5 mr-1.5" />Сохранить
+                                </Button>
+                                <Button
+                                  size="sm" variant="ghost"
+                                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  onClick={e => { e.stopPropagation(); if (confirm('Удалить?')) deleteSiteQ.mutate({ filename: sf.filename }); }}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </>
+                            )}
+                            {isOpen ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                          </div>
+                        </div>
+                        {/* Expandable textarea */}
+                        {isOpen && (
+                          <div className="p-3">
+                            <Textarea
+                              className="font-mono text-xs min-h-[200px] resize-y"
+                              value={siteTexts[sf.filename] || ''}
+                              onChange={e => setSiteTexts(prev => ({ ...prev, [sf.filename]: e.target.value }))}
+                              spellCheck={false}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Add new site */}
+                  <div className="border-t border-slate-100 pt-4">
+                    <p className="text-xs font-medium text-slate-500 mb-3">Добавить сайт</p>
+                    <div className="space-y-2">
+                      <Input
+                        placeholder="https://example.ru"
+                        className="text-xs"
+                        value={newSite}
+                        onChange={e => setNewSite(e.target.value)}
+                      />
+                      <Textarea
+                        placeholder={"запрос первый\nзапрос второй\n..."}
+                        className="font-mono text-xs min-h-[100px] resize-y"
+                        value={newSiteText}
+                        onChange={e => setNewSiteText(e.target.value)}
+                        spellCheck={false}
+                      />
+                      <Button
+                        size="sm"
+                        disabled={!newSite.trim() || !newSiteText.trim() || addSiteQ.isPending}
+                        onClick={() => addSiteQ.mutate({ site: newSite.trim(), content: newSiteText.trim() })}
+                      >
+                        <Plus className="w-3.5 h-3.5 mr-1.5" />Добавить
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
-          {/* ===== AUTOPILOT TAB ===== */}
+
+                    {/* ===== AUTOPILOT TAB ===== */}
           <TabsContent value="autopilot">
             {!orchEdits ? (
               <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-blue-600" /></div>

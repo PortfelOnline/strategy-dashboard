@@ -393,7 +393,7 @@ export default function Bots() {
                   const pct = Math.min(100, Math.round((cap.dailyCount / cap.maxDaily) * 100));
                   const isFull = cap.dailyCount >= cap.maxDaily;
                   const remaining = Math.max(0, cap.maxDaily - cap.dailyCount);
-                  const successRate = cap.attempts > 0 ? Math.round((cap.dailyCount / cap.attempts) * 100) : null;
+                  const successRate = (cap.attempts > 0 && cap.attempts > cap.dailyCount) ? Math.min(100, Math.round((cap.dailyCount / cap.attempts) * 100)) : null;
                   const trackColor = isFull ? 'bg-red-500' : pct >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
                   const countColor = isFull ? 'text-red-600' : pct >= 80 ? 'text-amber-600' : 'text-emerald-600';
                   const today = new Date().toISOString().split('T')[0];

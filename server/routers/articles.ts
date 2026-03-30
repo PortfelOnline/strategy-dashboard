@@ -450,6 +450,43 @@ function stripFirstH1(html: string): string {
   return html.replace(/<h1[^>]*>.*?<\/h1>\s*/i, '');
 }
 
+// ── Generate FAQPage + Article JSON-LD schema markup ─────────────────────────
+function generateSchemaMarkup(keyword: string, title: string, url: string, html: string): string {
+  const faqItems: { question: string; answer: string }[] = [];
+  const detailsRe = /<details[^>]*class="faq-item"[^>]*>[\s\S]*?<summary[^>]*>([\s\S]*?)<\/summary>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>[\s\S]*?<\/details>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = detailsRe.exec(html)) !== null) {
+    const q = m[1].replace(/<[^>]+>/g, '').trim();
+    const a = m[2].replace(/<[^>]+>/g, '').trim();
+    if (q && a) faqItems.push({ question: q, answer: a });
+  }
+
+  const schemas: object[] = [];
+
+  if (faqItems.length > 0) {
+    schemas.push({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqItems.map(item => ({
+        '@type': 'Question',
+        name: item.question,
+        acceptedAnswer: { '@type': 'Answer', text: item.answer.slice(0, 500) },
+      })),
+    });
+  }
+
+  schemas.push({
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: title.slice(0, 110),
+    url,
+    publisher: { '@type': 'Organization', name: 'kadastrmap.info', url: 'https://kadastrmap.info' },
+    about: keyword,
+  });
+
+  return schemas.map(s => `<script type="application/ld+json">\n${JSON.stringify(s, null, 2)}\n</script>`).join('\n');
+}
+
 // ── Extract ordered H2 text labels (no HTML) for image alt texts ─────────────
 function extractH2Texts(html: string): string[] {
   const results: string[] = [];
@@ -1105,6 +1142,10 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 
   // Add internal links to related articles on the same site
   improvedContent = await addInternalLinks(improvedContent, userId, ourDomain, parsed.title);
+
+  // Append FAQPage + Article JSON-LD schema markup (critical for Yandex rich results)
+  const schemaMarkup = generateSchemaMarkup(keyword, seo.metaTitle || parsed.title, url, improvedContent);
+  improvedContent = improvedContent + '\n' + schemaMarkup;
 
   const improvedWordCount = improvedContent
     ? improvedContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length

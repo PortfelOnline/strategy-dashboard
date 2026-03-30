@@ -1,168 +1,1659 @@
 {
-  "_comment": "Keys.so: project Kad Обр. Columns: Yandex Moscow (28,27,26,25 Mar) + Google Moscow (28,27,26,25 Mar). All Yandex = null (not in top 100). Updated 2026-03-29 with full data.",
-  "updated": "2026-03-28",
+  "_comment": "Keys.so: project Kad Обр. Columns: Yandex Moscow (30,29,28,27 Mar) + Google Moscow (30,29,28,27 Mar). All Yandex = null confirmed 30.03.2026. Updated 2026-03-30.",
+  "updated": "2026-03-30",
   "source": "keys.so",
-  "dates": ["2026-03-28", "2026-03-27", "2026-03-26", "2026-03-25"],
+  "dates": [
+    "2026-03-30",
+    "2026-03-29",
+    "2026-03-28",
+    "2026-03-27"
+  ],
   "summary": {
     "visibility": 68,
     "avgPosition": 37.7,
     "effectiveness": 5.08,
-    "top1": 2, "top5": 3, "top10": 7, "top50": 29, "top100": 380
+    "top1": 2,
+    "top5": 3,
+    "top10": 7,
+    "top50": 29,
+    "top100": 380
   },
   "queries": [
-    { "query": "удобно", "freq": 744,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "кадастровая стоимость по кадастровому номеру", "freq": 582,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "кадастровый паспорт на квартиру", "freq": 276,
-      "yandex": [null, null, null, null], "google": [48, 48, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "как узнать владельца квартиры по адресу", "freq": 193,
-      "yandex": [null, null, null, null], "google": [35, 36, 35, 20],
-      "googleDelta": [1, -1, -15, null] },
-    { "query": "проверить собственника по кадастровому номеру", "freq": 116,
-      "yandex": [null, null, null, null], "google": [25, 25, 24, 17],
-      "googleDelta": [null, -1, -7, null] },
-    { "query": "как проверить квартиру на обременение", "freq": 84,
-      "yandex": [null, null, null, null], "google": [60, 47, 30, 50],
-      "googleDelta": [-13, -17, 20, null] },
-    { "query": "как снять арест с квартиры", "freq": 68,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "снять обременение с квартиры", "freq": 52,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как узнать наложен ли арест на квартиру", "freq": 51,
-      "yandex": [null, null, null, null], "google": [71, 48, null, 69],
-      "googleDelta": [-23, null, null, null] },
-    { "query": "как узнать квартира в залоге или нет", "freq": 48,
-      "yandex": [null, null, null, null], "google": [25, 30, null, 51],
-      "googleDelta": [5, 21, null, null] },
-    { "query": "как узнать квартира в аресте или нет", "freq": 33,
-      "yandex": [null, null, null, null], "google": [31, null, 78, 23],
-      "googleDelta": [null, null, -55, null] },
-    { "query": "проверить квартиру на обременение онлайн", "freq": 22,
-      "yandex": [null, null, null, null], "google": [30, 22, 27, 25],
-      "googleDelta": [-8, 5, -2, null] },
-    { "query": "кадастровая стоимость недвижимости по адресу", "freq": 22,
-      "yandex": [null, null, null, null], "google": [91, 38, null, 38],
-      "googleDelta": [-53, null, null, null] },
-    { "query": "расположение по кадастровому номеру", "freq": 18,
-      "yandex": [null, null, null, null], "google": [8, 7, 20, 6],
-      "googleDelta": [-1, 13, -14, null] },
-    { "query": "как снять обременение после погашения ипотеки", "freq": 17,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как узнать обременение на квартиру", "freq": 13,
-      "yandex": [null, null, null, null], "google": [46, 51, null, 37],
-      "googleDelta": [5, null, null, null] },
-    { "query": "узнать сведения по кадастровому номеру", "freq": 9,
-      "yandex": [null, null, null, null], "google": [33, 35, null, null],
-      "googleDelta": [2, null, null, null] },
-    { "query": "как снять обременение с ипотечной квартиры", "freq": 8,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как проверить не в залоге ли квартира", "freq": 8,
-      "yandex": [null, null, null, null], "google": [38, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "кадастровая справка онлайн", "freq": 1,
-      "yandex": [null, null, null, null], "google": [50, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "генеральный план земельного участка что это и где получить", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "наложен ли арест на квартиру", "freq": null,
-      "yandex": [null, null, null, null], "google": [82, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "как проверить квартиру на обременение при покупке", "freq": null,
-      "yandex": [null, null, null, null], "google": [39, 31, 14, 39],
-      "googleDelta": [-8, -17, 25, null] },
-    { "query": "где проверить квартиру на обременение", "freq": null,
-      "yandex": [null, null, null, null], "google": [47, 33, 40, 40],
-      "googleDelta": [-14, 7, null, null] },
-    { "query": "справка об обременении недвижимости в Москве", "freq": null,
-      "yandex": [null, null, null, null], "google": [10, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "что нужно знать о кадастровых выписках", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "квартира под залогом справка", "freq": null,
-      "yandex": [null, null, null, null], "google": [51, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "выписка из ЕГРН на квартиру", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "план помещения и кадастровая выписка как они связаны", "freq": null,
-      "yandex": [null, null, null, null], "google": [28, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "выписка из ЕГРН быстро", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как узнать сведения по кадастровому номеру ЕГРН и карта", "freq": null,
-      "yandex": [null, null, null, null], "google": [44, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "выписка ЕГРН обременение", "freq": null,
-      "yandex": [null, null, null, null], "google": [28, 30, null, null],
-      "googleDelta": [2, null, null, null] },
-    { "query": "выписка из ЕГРН стоимость", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "заказать кадастровую выписку онлайн цена способы получения", "freq": null,
-      "yandex": [null, null, null, null], "google": [9, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "как заказать выписку ЕГРН в электронном виде через госуслуги", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как снять обременение с объекта недвижимости пошаговая инструкция", "freq": null,
-      "yandex": [null, null, null, null], "google": [73, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "карта кадастровой стоимости как узнать цену недвижимости онлайн", "freq": null,
-      "yandex": [null, null, null, null], "google": [60, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "выписка егрп обременение", "freq": null,
-      "yandex": [null, null, null, null], "google": [20, 43, 11, 8],
-      "googleDelta": [23, -32, -3, null] },
-    { "query": "выписка из ЕГРН на землю", "freq": null,
-      "yandex": [null, null, null, null], "google": [49, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "ситуационный план для строительства дома порядок и документы", "freq": null,
-      "yandex": [null, null, null, null], "google": [5, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "кадастровая выписка ЕГРН что это", "freq": null,
-      "yandex": [null, null, null, null], "google": [56, 52, 3, 57],
-      "googleDelta": [-4, -49, 54, null] },
-    { "query": "ситуационный план для ижс зачем нужен и как заказать онлайн без очередей", "freq": null,
-      "yandex": [null, null, null, null], "google": [27, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "заказать выписку из ЕГРН онлайн", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "проверить квартиру арест судебных приставов", "freq": null,
-      "yandex": [null, null, null, null], "google": [39, 30, 15, 20],
-      "googleDelta": [-9, -15, 5, null] },
-    { "query": "кадастровый план квартиры по адресу", "freq": null,
-      "yandex": [null, null, null, null], "google": [9, 5, 8, 5],
-      "googleDelta": [-4, 3, -3, null] },
-    { "query": "выписка из ЕГРН на недвижимость", "freq": null,
-      "yandex": [null, null, null, null], "google": [79, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "как проверить собственника по кадастровому номеру онлайн", "freq": null,
-      "yandex": [null, null, null, null], "google": [14, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "заказать справку об обременении", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "выписка из ЕГРН на земельный участок", "freq": null,
-      "yandex": [null, null, null, null], "google": [66, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "выписка из ЕГРН заказать онлайн", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "чем отличается ситуационный план от кадастрового плана участка", "freq": null,
-      "yandex": [null, null, null, null], "google": [2, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "росреестр 2026 проверка обременений", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "как узнать владельца квартиры по адресу законные способы и выписка", "freq": null,
-      "yandex": [null, null, null, null], "google": [44, null, null, null],
-      "googleDelta": [null, null, null, null] },
-    { "query": "как снять арест с квартиры что делать собственнику", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "кадастровая публичная карта со спутника", "freq": null,
-      "yandex": [null, null, null, null], "google": [4, 5, 5, 5],
-      "googleDelta": [1, null, null, null] },
-    { "query": "что указывается в выписке из ЕГРН на квартиру", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "кадастровая стоимость недвижимости в росреестре как узнать", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] },
-    { "query": "получить выписку о переходе прав на недвижимость онлайн быстро и удобно", "freq": null,
-      "yandex": [null, null, null, null], "google": [null, null, null, null] }
+    {
+      "query": "удобно",
+      "freq": 744,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая стоимость по кадастровому номеру",
+      "freq": 582,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на квартиру",
+      "freq": 276,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        48,
+        48
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как узнать владельца квартиры по адресу",
+      "freq": 193,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        35,
+        36
+      ],
+      "googleDelta": [
+        null,
+        null,
+        1,
+        -1
+      ]
+    },
+    {
+      "query": "проверить собственника по кадастровому номеру",
+      "freq": 116,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        25,
+        25
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        -1
+      ]
+    },
+    {
+      "query": "как проверить квартиру на обременение",
+      "freq": 84,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        60,
+        47
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -13,
+        -17
+      ]
+    },
+    {
+      "query": "как снять арест с квартиры",
+      "freq": 68,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "снять обременение с квартиры",
+      "freq": 52,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как узнать наложен ли арест на квартиру",
+      "freq": 51,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        71,
+        48
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -23,
+        null
+      ]
+    },
+    {
+      "query": "как узнать квартира в залоге или нет",
+      "freq": 48,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        25,
+        30
+      ],
+      "googleDelta": [
+        null,
+        null,
+        5,
+        21
+      ]
+    },
+    {
+      "query": "как узнать квартира в аресте или нет",
+      "freq": 33,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        31,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "проверить квартиру на обременение онлайн",
+      "freq": 22,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        30,
+        22
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -8,
+        5
+      ]
+    },
+    {
+      "query": "кадастровая стоимость недвижимости по адресу",
+      "freq": 22,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        91,
+        38
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -53,
+        null
+      ]
+    },
+    {
+      "query": "расположение по кадастровому номеру",
+      "freq": 18,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        8,
+        7
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -1,
+        13
+      ]
+    },
+    {
+      "query": "как снять обременение после погашения ипотеки",
+      "freq": 17,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как узнать обременение на квартиру",
+      "freq": 13,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        46,
+        51
+      ],
+      "googleDelta": [
+        null,
+        null,
+        5,
+        null
+      ]
+    },
+    {
+      "query": "узнать сведения по кадастровому номеру",
+      "freq": 9,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        33,
+        35
+      ],
+      "googleDelta": [
+        null,
+        null,
+        2,
+        null
+      ]
+    },
+    {
+      "query": "как снять обременение с ипотечной квартиры",
+      "freq": 8,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как проверить не в залоге ли квартира",
+      "freq": 8,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        38,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая справка онлайн",
+      "freq": 1,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        50,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "генеральный план земельного участка что это и где получить",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "наложен ли арест на квартиру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        82,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как проверить квартиру на обременение при покупке",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        39,
+        31
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -8,
+        -17
+      ]
+    },
+    {
+      "query": "где проверить квартиру на обременение",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        47,
+        33
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -14,
+        7
+      ]
+    },
+    {
+      "query": "справка об обременении недвижимости в Москве",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        10,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "что нужно знать о кадастровых выписках",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "квартира под залогом справка",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        51,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН на квартиру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "план помещения и кадастровая выписка как они связаны",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        28,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН быстро",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как узнать сведения по кадастровому номеру ЕГРН и карта",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        44,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка ЕГРН обременение",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        28,
+        30
+      ],
+      "googleDelta": [
+        null,
+        null,
+        2,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН стоимость",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "заказать кадастровую выписку онлайн цена способы получения",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        9,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как заказать выписку ЕГРН в электронном виде через госуслуги",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как снять обременение с объекта недвижимости пошаговая инструкция",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        73,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "карта кадастровой стоимости как узнать цену недвижимости онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        60,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка егрп обременение",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        20,
+        43
+      ],
+      "googleDelta": [
+        null,
+        null,
+        23,
+        -32
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН на землю",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        49,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "ситуационный план для строительства дома порядок и документы",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        5,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая выписка ЕГРН что это",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        56,
+        52
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -4,
+        -49
+      ]
+    },
+    {
+      "query": "ситуационный план для ижс зачем нужен и как заказать онлайн без очередей",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        27,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "заказать выписку из ЕГРН онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "проверить квартиру арест судебных приставов",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        39,
+        30
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -9,
+        -15
+      ]
+    },
+    {
+      "query": "кадастровый план квартиры по адресу",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        9,
+        5
+      ],
+      "googleDelta": [
+        null,
+        null,
+        -4,
+        3
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН на недвижимость",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        79,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как проверить собственника по кадастровому номеру онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        14,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "заказать справку об обременении",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН на земельный участок",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        66,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН заказать онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "чем отличается ситуационный план от кадастрового плана участка",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        2,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "росреестр 2026 проверка обременений",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как узнать владельца квартиры по адресу законные способы и выписка",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        44,
+        null
+      ],
+      "googleDelta": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как снять арест с квартиры что делать собственнику",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая публичная карта со спутника",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        4,
+        5
+      ],
+      "googleDelta": [
+        null,
+        null,
+        1,
+        null
+      ]
+    },
+    {
+      "query": "что указывается в выписке из ЕГРН на квартиру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая стоимость недвижимости в росреестре как узнать",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "получить выписку о переходе прав на недвижимость онлайн быстро и удобно",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт через интернет",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт где получить",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт как получить",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на квартиру стоимость",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на дом как получить",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт какие документы нужны",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "где заказать технический паспорт на квартиру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "где заказать технический план квартиры",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "где заказать выписку из ЕГРН",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН онлайн",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН срочно",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН об объекте недвижимости",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "выписка из ЕГРН сколько делается",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "стоимость выписки из ЕГРН",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "сколько стоит заказать кадастровый паспорт",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "справка об обременении квартиры где получить",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "справка об обременении на квартиру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "узнать собственника земельного участка по кадастровому номеру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровая выписка о земельном участке",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт дачный домик",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на дачный участок",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на даче",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на частный дом",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на гаражный бокс",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт на нежилое помещение",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт объекта недвижимости",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт по кадастровому номеру",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт срочно",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "кадастровый паспорт срок действия",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    }
   ]
 }

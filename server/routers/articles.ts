@@ -1010,7 +1010,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
   const competitorHasTables = competitors.some(c => c.hasTable);
   const targetImages = Math.max(9, maxCompetitorImages + 2);
-  const targetFaq = Math.max(10, avgCompetitorFaq + 2);
+  const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
   // Extract unique H2 headings from competitors that our article is missing
   const ourH2s = new Set(
@@ -1068,9 +1068,9 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
 2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
-3. Прямой ответ на "${keyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
+3. FEATURED SNIPPET (ОБЯЗАТЕЛЬНО): сразу после H1 — абзац 40-60 слов с прямым ответом на "${keyword}". Без вступлений типа "В этой статье...". Формат: "**${keyword}** — это [определение]. [Ключевой факт]. [CTA-намёк]." Это попадает в блок 0 Яндекса и Гугла.
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>.
+5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>. Минимум ${targetFaq} вопросов — это критично для Яндекс AI-ответов (FAQ-схема).
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
 7. Все упоминания заказа документов — ТОЛЬКО через /spravki/ (ссылка <a>). НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
@@ -1176,9 +1176,11 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
   });
 
   // Auto-publish to WordPress (batch mode: no image generation)
-  await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent).catch(
-    (e: any) => console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e)
-  );
+  await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
+    metaDescription: seo.metaDescription || undefined,
+    focusKeyword: keyword || undefined,
+    keywords: seo.keywords?.length ? seo.keywords : undefined,
+  }).catch((e: any) => console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e));
 
   // Notify search engines about the updated article
   void submitToIndexNow(url);
@@ -1285,6 +1287,7 @@ async function autoPublishToWP(
   url: string,
   title: string,
   content: string,
+  opts: { metaDescription?: string; focusKeyword?: string; keywords?: string[] } = {},
 ): Promise<void> {
   const accounts = await wordpressDb.getUserWordpressAccounts(userId);
   const account = accounts[0];
@@ -1326,17 +1329,21 @@ async function autoPublishToWP(
     ...(featuredMediaId ? { featured_media: featuredMediaId } : {}),
   });
 
-  // Update outsearch + outmap flags via custom WP endpoint
+  // Update outsearch + outmap + Yoast SEO meta via custom WP endpoint
   const showMap = shouldShowMap(slug);
   const siteBase = account.siteUrl.replace(/\/$/, '');
   const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
   const axiosInst = (await import('axios')).default;
+  const postMeta: Record<string, string> = { outsearch: '1', outmap: showMap ? '1' : '0' };
+  if (opts.metaDescription) postMeta._yoast_wpseo_metadesc = opts.metaDescription;
+  if (opts.focusKeyword)    postMeta._yoast_wpseo_focuskw  = opts.focusKeyword;
+  if (opts.keywords?.length) postMeta.meta_keywords = opts.keywords.join(', ');
   await axiosInst.post(
     `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}`,
-    { meta: { outsearch: '1', outmap: showMap ? '1' : '0' } },
+    { meta: postMeta },
     { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
   ).catch((e: any) => console.warn('[WP] meta update failed:', e?.message));
-  console.log(`[WP] outmap=${showMap} for slug="${slug}"`);
+  console.log(`[WP] outmap=${showMap} metadesc=${!!opts.metaDescription} keywords=${opts.keywords?.length ?? 0} for slug="${slug}"`);
 
   console.log(`[WP] Published: ${url} → ${account.siteUrl}`);
 }
@@ -1449,7 +1456,7 @@ export const articlesRouter = router({
         ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
       const competitorHasTables = competitors.some(c => c.hasTable);
       const targetImages = Math.max(9, maxCompetitorImages + 2);
-      const targetFaq = Math.max(10, avgCompetitorFaq + 2);
+      const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
       // Extract unique H2 topics from competitors missing in our article
       const ourH2s = new Set(

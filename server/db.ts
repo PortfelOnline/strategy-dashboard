@@ -1,5 +1,6 @@
 import { eq, and, lte, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2/promise";
 import { InsertUser, users, contentPosts, contentTemplates, savedTopics, InsertContentPost, InsertContentTemplate } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -9,7 +10,15 @@ let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      // dateStrings:true makes mysql2 return raw strings so Drizzle's
+      // mapFromDriverValue(value + "+0000") works correctly.
+      // Without it, mysql2 returns Date objects whose toString() includes
+      // the IST offset, causing a double-offset bug (UTC 14:30 → 20:00Z).
+      // The connection event sets MySQL session timezone to UTC so returned
+      // strings are already in UTC before Drizzle appends "+0000".
+      const pool = mysql.createPool({ uri: process.env.DATABASE_URL, dateStrings: true });
+      pool.on("connection", (conn) => { conn.query("SET time_zone='+00:00'"); });
+      _db = drizzle(pool);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

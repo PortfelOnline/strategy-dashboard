@@ -1,46 +1,25 @@
 {
-  "_comment": "Keys.so: project Kad Обр. Columns: Yandex Moscow (30,29,28,27 Mar) + Google Moscow (30,29,28,27 Mar). All Yandex = null confirmed 30.03.2026. Updated 2026-03-30.",
-  "updated": "2026-03-30",
+  "_comment": "Keys.so: project Kad Обр. Columns: Yandex Moscow (31,30,29,28 Mar) + Google Moscow (31,30,29,28 Mar). All Yandex = null confirmed. Updated 2026-03-31.",
+  "updated": "2026-04-01",
   "source": "keys.so",
   "dates": [
+    "2026-04-01",
+    "2026-03-31",
     "2026-03-30",
-    "2026-03-29",
-    "2026-03-28",
-    "2026-03-27"
+    "2026-03-29"
   ],
   "summary": {
     "visibility": 68,
-    "avgPosition": 44.7,
-    "effectiveness": 5.08,
-    "top1": 1,
-    "top5": 4,
-    "top10": 6,
-    "top50": 29,
-    "top100": 380
+    "avgPosition": 34.7,
+    "effectiveness": 1.67,
+    "top1": 0,
+    "top5": 1,
+    "top10": 3,
+    "top50": 18,
+    "top100": 240,
+    "date": "2026-03-31"
   },
   "queries": [
-    {
-      "query": "удобно",
-      "freq": 744,
-      "yandex": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "google": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "googleDelta": [
-        null,
-        null,
-        null,
-        null
-      ]
-    },
     {
       "query": "кадастровая стоимость по кадастровому номеру",
       "freq": 582,
@@ -73,16 +52,16 @@
         null
       ],
       "google": [
-        56,
-        49,
-        48,
-        48
+        null,
+        36,
+        36,
+        56
       ],
       "googleDelta": [
-        -7,
-        -1,
         null,
-        null
+        20,
+        -7,
+        -1
       ]
     },
     {
@@ -95,16 +74,16 @@
         null
       ],
       "google": [
-        100,
-        35,
-        35,
-        36
+        null,
+        76,
+        76,
+        100
       ],
       "googleDelta": [
-        -65,
         null,
-        1,
-        -1
+        24,
+        -65,
+        null
       ]
     },
     {
@@ -117,15 +96,15 @@
         null
       ],
       "google": [
-        31,
-        24,
-        25,
-        25
+        30,
+        28,
+        35,
+        36
       ],
       "googleDelta": [
+        2,
         -7,
         1,
-        null,
         -1
       ]
     },
@@ -139,16 +118,16 @@
         null
       ],
       "google": [
-        48,
-        51,
-        60,
-        47
+        null,
+        56,
+        56,
+        48
       ],
       "googleDelta": [
+        null,
+        -8,
         3,
-        9,
-        -13,
-        -17
+        9
       ]
     },
     {
@@ -205,16 +184,16 @@
         null
       ],
       "google": [
-        99,
-        91,
+        null,
         71,
-        48
+        71,
+        99
       ],
       "googleDelta": [
+        null,
+        28,
         -8,
-        -20,
-        -23,
-        null
+        -20
       ]
     },
     {
@@ -227,16 +206,16 @@
         null
       ],
       "google": [
+        null,
+        19,
         46,
-        32,
-        25,
-        30
+        32
       ],
       "googleDelta": [
+        null,
         -14,
         -7,
-        5,
-        21
+        5
       ]
     },
     {
@@ -249,16 +228,16 @@
         null
       ],
       "google": [
-        27,
-        28,
-        31,
-        null
+        null,
+        null,
+        null,
+        27
       ],
       "googleDelta": [
-        1,
-        3,
         null,
-        null
+        null,
+        1,
+        3
       ]
     },
     {
@@ -271,16 +250,16 @@
         null
       ],
       "google": [
-        20,
-        23,
-        30,
-        22
+        null,
+        24,
+        5,
+        27
       ],
       "googleDelta": [
-        3,
-        7,
-        -8,
-        5
+        null,
+        null,
+        -2,
+        null
       ]
     },
     {
@@ -293,16 +272,16 @@
         null
       ],
       "google": [
-        66,
-        54,
-        91,
-        38
+        23,
+        null,
+        null,
+        66
       ],
       "googleDelta": [
+        null,
+        null,
         -12,
-        37,
-        -53,
-        null
+        37
       ]
     },
     {
@@ -315,16 +294,16 @@
         null
       ],
       "google": [
-        10,
         7,
-        8,
-        7
+        29,
+        29,
+        10
       ],
       "googleDelta": [
-        -3,
-        1,
-        -1,
-        13
+        -22,
+        0,
+        -19,
+        -3
       ]
     },
     {
@@ -359,15 +338,15 @@
         null
       ],
       "google": [
-        48,
-        46,
-        46,
-        51
+        null,
+        null,
+        null,
+        48
       ],
       "googleDelta": [
-        -2,
         null,
-        5,
+        null,
+        -2,
         null
       ]
     },
@@ -381,16 +360,16 @@
         null
       ],
       "google": [
-        31,
         null,
-        33,
-        35
+        null,
+        31,
+        null
       ],
       "googleDelta": [
         null,
         null,
-        2,
-        null
+        null,
+        2
       ]
     },
     {
@@ -403,9 +382,9 @@
         null
       ],
       "google": [
+        null,
+        null,
         90,
-        null,
-        null,
         null
       ],
       "googleDelta": [
@@ -425,15 +404,15 @@
         null
       ],
       "google": [
+        34,
+        null,
         39,
-        39,
-        38,
-        null
+        39
       ],
       "googleDelta": [
         null,
-        -1,
         null,
+        -1,
         null
       ]
     },
@@ -447,14 +426,14 @@
         null
       ],
       "google": [
-        52,
-        49,
-        50,
-        null
+        null,
+        63,
+        63,
+        52
       ],
       "googleDelta": [
-        -3,
-        1,
+        null,
+        -11,
         null,
         null
       ]
@@ -507,16 +486,16 @@
         null
       ],
       "google": [
+        51,
+        33,
         44,
-        36,
-        39,
-        31
+        36
       ],
       "googleDelta": [
+        18,
+        -11,
         -8,
-        3,
-        -8,
-        -17
+        3
       ]
     },
     {
@@ -551,15 +530,15 @@
         null
       ],
       "google": [
-        16,
-        9,
+        null,
         10,
-        null
+        16,
+        9
       ],
       "googleDelta": [
+        null,
         -7,
         1,
-        null,
         null
       ]
     },
@@ -656,28 +635,6 @@
       ]
     },
     {
-      "query": "как узнать сведения по кадастровому номеру ЕГРН и карта",
-      "freq": null,
-      "yandex": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "google": [
-        null,
-        null,
-        44,
-        null
-      ],
-      "googleDelta": [
-        null,
-        null,
-        null,
-        null
-      ]
-    },
-    {
       "query": "выписка ЕГРН обременение",
       "freq": null,
       "yandex": [
@@ -766,28 +723,6 @@
         null,
         null,
         73,
-        null
-      ],
-      "googleDelta": [
-        null,
-        null,
-        null,
-        null
-      ]
-    },
-    {
-      "query": "карта кадастровой стоимости как узнать цену недвижимости онлайн",
-      "freq": null,
-      "yandex": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "google": [
-        null,
-        null,
-        60,
         null
       ],
       "googleDelta": [
@@ -955,16 +890,16 @@
         null
       ],
       "google": [
+        8,
+        55,
         34,
-        37,
-        9,
-        5
+        37
       ],
       "googleDelta": [
+        -47,
+        21,
         3,
-        -28,
-        -4,
-        3
+        -28
       ]
     },
     {
@@ -1104,28 +1039,6 @@
       ]
     },
     {
-      "query": "как узнать владельца квартиры по адресу законные способы и выписка",
-      "freq": null,
-      "yandex": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "google": [
-        null,
-        null,
-        44,
-        null
-      ],
-      "googleDelta": [
-        null,
-        null,
-        null,
-        null
-      ]
-    },
-    {
       "query": "как снять арест с квартиры что делать собственнику",
       "freq": null,
       "yandex": [
@@ -1181,22 +1094,6 @@
     },
     {
       "query": "кадастровая стоимость недвижимости в росреестре как узнать",
-      "freq": null,
-      "yandex": [
-        null,
-        null,
-        null,
-        null
-      ],
-      "google": [
-        null,
-        null,
-        null,
-        null
-      ]
-    },
-    {
-      "query": "получить выписку о переходе прав на недвижимость онлайн быстро и удобно",
       "freq": null,
       "yandex": [
         null,
@@ -1677,6 +1574,70 @@
     },
     {
       "query": "кадастровый паспорт срок действия",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "узнать сведения по кадастровому номеру 9",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "наложен ли арест на квартиру — — 81 — 82 — —",
+      "freq": null,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "справка об обременении недвижимости в москве —",
+      "freq": 1,
+      "yandex": [
+        null,
+        null,
+        null,
+        null
+      ],
+      "google": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    {
+      "query": "как снять обременение а — — — — — —",
       "freq": null,
       "yandex": [
         null,

@@ -1201,10 +1201,10 @@ export async function findAndInjectImages(
     : [];
   console.log(`[Img] Relevant after filter: ${relevant.length}/${libraryImages.length}`);
 
-  let validMedia = relevant
+  let validMedia: { id: number; url: string; width?: number; height?: number }[] = relevant
     .filter(m => m.id > 0)
     .slice(0, imagesNeeded)
-    .map(m => ({ id: m.id, url: m.url, width: m.width as number | undefined, height: m.height as number | undefined }));
+    .map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height }));
 
   // FLUX generation — sequential to avoid Fireworks rate-limit 500 errors
   if (process.env.IMAGE_API_KEY) {

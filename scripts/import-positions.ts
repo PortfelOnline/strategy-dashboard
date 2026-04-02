@@ -35,7 +35,7 @@ const SKIP_TOKENS = new Set([
 ]);
 
 // Header marker — after this token list, actual data rows begin
-const HEADER_MARKERS = ['28.03.2026', '27.03.2026', '26.03.2026', '25.03.2026'];
+const HEADER_MARKERS = ['01.04.2026', '31.03.2026', '30.03.2026', '29.03.2026'];
 
 function parseNum(s: string): number | null {
   if (!s || s === '—' || s === '-') return null;

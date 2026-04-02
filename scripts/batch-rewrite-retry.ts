@@ -5,10 +5,7 @@ import 'dotenv/config';
 import { runBatchRewrite } from '../server/routers/articles';
 
 const URLS = [
-  'https://kadastrmap.info/kadastr/kadastrovyj-plan-kvartiry-po-adresu/',
-  'https://kadastrmap.info/kadastr/kak-snyat-obremenenie-s-obekta-nedvizhimosti-poshagovaya-instruktsiya/',
-  'https://kadastrmap.info/kadastr/publichnaya-kadastrovaya-karta-novosibirskoy-oblasti/',
-  'https://kadastrmap.info/kadastr/zakazat-spravku-ob-obremenenii-nedvizhimosti-v-moskve-poshagovoe-rukovodstvo/',
+  'https://kadastrmap.info/kadastr/kadastrovyj-pasport-zdaniya-sooruzheniya-obekta-nezavershenki/',
 ];
 
 const USER_ID = 1;

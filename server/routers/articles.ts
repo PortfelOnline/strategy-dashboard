@@ -403,7 +403,14 @@ async function enhanceIfNeeded(
     const response = await invokeLLM({
       model: enhanceModel,
       messages: [
-        { role: 'system', content: 'Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML-контент для добавления в статью. НЕ пересказывай существующий текст. Используй только H2/H3 (не H1). Цены — через [BLOCK_PRICE]. Все упоминания заказа — ТОЛЬКО через /spravki/. НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа. Возвращай ТОЛЬКО новые HTML-блоки.' },
+        { role: 'system', content: `Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML-контент для статьи о "${keyword}".
+СТРОГИЕ ПРАВИЛА:
+- Все H2/H3 ОБЯЗАНЫ быть строго о теме "${keyword}" — без абстрактных секций вроде "Фермы", "Системы учёта", "Договор оферта", "Навигация", "Контроль"
+- НЕ упоминай конкурентов: справок.рф, госуслуги, МФЦ, Росреестр как способы заказа
+- Заказ — ТОЛЬКО через /spravki/. Цены — через [BLOCK_PRICE]
+- НЕ дублируй уже написанное
+- Используй только H2/H3 (не H1)
+- Возвращай ТОЛЬКО новые HTML-блоки, без <html>/<body>` },
         { role: 'user', content: `Тема: "${keyword}". Существующая статья (${wordCount} слов, начало):\n${html.slice(0, 1500)}...\n\nСгенерируй ДОПОЛНИТЕЛЬНЫЙ HTML (не дублируй то что уже есть):\n${tasks.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n\nВерни ТОЛЬКО новые HTML-блоки без <html>/<body>.` },
       ],
       maxTokens: 6000,
@@ -435,6 +442,30 @@ function extractHeadingsFromHtml(html: string): { level: string; text: string }[
     if (text) results.push({ level: m[1].toUpperCase(), text });
   }
   return results;
+}
+
+// ── Filter hallucinated/garbage H2 headings after LLM generation ────────────
+function filterGarbageH2(html: string, keyword: string): string {
+  // Remove entire H2+content block if heading is clearly off-topic
+  const garbagePatterns = [
+    /ферм[аыу]/i,           // "Фермы в ЕГРН" etc
+    /систем[аыу] учёт/i,    // "Системы учета"
+    /навигаци[яи]/i,        // "Навигация по ЕГРН"
+    /контрол[ьяе] за/i,     // "Контроль за..."
+    /мониторинг/i,          // "Мониторинг"
+    /договор\s+оферт/i,     // "Договор оферта"
+    /справок\.рф/i,         // competitor
+    /gosuslugi|gosuslugi\.ru/i,
+  ];
+  // Remove <h2> tags whose text matches garbage patterns
+  return html.replace(/<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi, (match, inner) => {
+    const text = inner.replace(/<[^>]+>/g, '').trim();
+    if (garbagePatterns.some(p => p.test(text))) {
+      console.log(`[QA] Removed garbage heading: "${text}"`);
+      return '';
+    }
+    return match;
+  });
 }
 
 // ── Normalize heading hierarchy (H1→H2 for all headings after the first H1) ─
@@ -893,6 +924,7 @@ ${missingTopicsBlock}${lsiBlock}
     : parsed.content;
 
   improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword, targetWords, 10);
+  improvedContent = filterGarbageH2(improvedContent, serpKeyword);
   improvedContent = stripFirstH1(normalizeHeadings(improvedContent));
   improvedContent = beautifyArticleHtml(improvedContent);
 
@@ -1129,6 +1161,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 
   // Post-generation quality check: fix missing content vs competitor targets
   improvedContent = await enhanceIfNeeded(improvedContent, keyword, targetWords, targetFaq);
+  improvedContent = filterGarbageH2(improvedContent, keyword);
   improvedContent = stripFirstH1(normalizeHeadings(improvedContent));
   improvedContent = beautifyArticleHtml(improvedContent);
 
@@ -1576,6 +1609,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 
       // Post-generation: fix missing content vs competitor targets
       improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword, targetWords, targetFaq);
+      improvedContent = filterGarbageH2(improvedContent, serpKeyword);
       improvedContent = normalizeHeadings(improvedContent);
       improvedContent = beautifyArticleHtml(improvedContent);
 

@@ -91,6 +91,14 @@ export async function uploadMediaFromUrl(
   imageUrl: string,
   filename: string
 ): Promise<{ id: number; url: string }> {
+  // file:// paths come from Fireworks binary image generation — upload directly
+  if (imageUrl.startsWith('file://')) {
+    return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
+  }
+  // Pexels CDN blocks server-side requests — download locally and upload via curl
+  if (imageUrl.includes('images.pexels.com')) {
+    return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
+  }
   if (ENV.wpSshHost) {
     return uploadMediaViaSsh(siteUrl, username, appPassword, imageUrl, filename);
   }
@@ -147,9 +155,18 @@ async function uploadMediaViaCurl(
   imageUrl: string,
   filename: string
 ): Promise<{ id: number; url: string }> {
-  const imgResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 30000 });
-  const buffer = Buffer.from(imgResponse.data);
-  const mimeType = (imgResponse.headers['content-type'] as string) || 'image/jpeg';
+  let buffer: Buffer;
+  let mimeType: string;
+
+  if (imageUrl.startsWith('file://')) {
+    const { readFileSync } = await import('fs');
+    buffer = readFileSync(imageUrl.replace('file://', ''));
+    mimeType = imageUrl.endsWith('.png') ? 'image/png' : 'image/jpeg';
+  } else {
+    const imgResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 30000 });
+    buffer = Buffer.from(imgResponse.data);
+    mimeType = (imgResponse.headers['content-type'] as string) || 'image/jpeg';
+  }
 
   const tmpFile = path.join(tmpdir(), `wp-upload-${Date.now()}.jpg`);
   try {
@@ -163,7 +180,8 @@ async function uploadMediaViaCurl(
       '--data-binary', `@${tmpFile}`,
       '--max-time', '60',
     ]);
-    const data = JSON.parse(result.toString()) as { id: number; source_url: string };
+    // Strip BOM that WordPress REST API sometimes prepends
+    const data = JSON.parse(result.toString().replace(/^\uFEFF/, '')) as { id: number; source_url: string };
     if (!data.id) throw new Error(`WP media upload: no id in response: ${result.toString().slice(0, 200)}`);
     return { id: data.id, url: data.source_url };
   } finally {

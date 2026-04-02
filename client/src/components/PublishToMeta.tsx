@@ -18,9 +18,19 @@ interface PublishToMetaProps {
 function extractReadableText(content: string): string {
   try {
     const parsed = JSON.parse(content);
-    if (parsed.caption) {
-      const hashtags = Array.isArray(parsed.hashtags) ? '\n\n' + parsed.hashtags.join(' ') : '';
-      return parsed.caption + hashtags;
+    const hashtags = Array.isArray(parsed.hashtags)
+      ? '\n\n' + parsed.hashtags.join(' ')
+      : (typeof parsed.hashtags === 'string' ? '\n\n' + parsed.hashtags : '');
+    // Format 1: ready-made caption
+    if (parsed.caption) return parsed.caption + hashtags;
+    // Format 2: hook + paragraphs + cta (our new posts)
+    if (parsed.hook || parsed.paragraphs) {
+      const parts: string[] = [];
+      if (parsed.hook) parts.push(parsed.hook);
+      if (Array.isArray(parsed.paragraphs)) parts.push(...parsed.paragraphs);
+      if (parsed.engagement_question) parts.push(parsed.engagement_question);
+      if (parsed.cta) parts.push(parsed.cta);
+      return parts.join('\n\n') + hashtags;
     }
   } catch {}
   return content;

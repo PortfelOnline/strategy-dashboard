@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 import { fileURLToPath } from "url";
+import { VitestReporter } from "tdd-guard-vitest";
 
 const templateRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -18,5 +19,6 @@ export default defineConfig({
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
     testTimeout: 30000,
     hookTimeout: 30000,
+    reporters: ["default", new VitestReporter(templateRoot)],
   },
 });

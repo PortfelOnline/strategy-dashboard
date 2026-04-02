@@ -111,13 +111,22 @@ export const metaRouter = router({
           });
         }
 
-        // Extract plain text from JSON carousel content if needed
+        // Extract plain text from JSON content (supports caption, hook+paragraphs+cta formats)
         let caption = input.caption;
         try {
           const parsed = JSON.parse(input.caption);
+          const hashtags = Array.isArray(parsed.hashtags)
+            ? '\n\n' + parsed.hashtags.join(' ')
+            : (typeof parsed.hashtags === 'string' ? '\n\n' + parsed.hashtags : '');
           if (parsed.caption) {
-            const hashtags = Array.isArray(parsed.hashtags) ? '\n\n' + parsed.hashtags.join(' ') : '';
             caption = parsed.caption + hashtags;
+          } else if (parsed.hook || parsed.paragraphs) {
+            const parts: string[] = [];
+            if (parsed.hook) parts.push(parsed.hook);
+            if (Array.isArray(parsed.paragraphs)) parts.push(...parsed.paragraphs);
+            if (parsed.engagement_question) parts.push(parsed.engagement_question);
+            if (parsed.cta) parts.push(parsed.cta);
+            caption = parts.join('\n\n') + hashtags;
           }
         } catch {
           // Not JSON, use as-is
@@ -178,13 +187,22 @@ export const metaRouter = router({
           });
         }
 
-        // Extract plain text from JSON carousel content if needed
+        // Extract plain text from JSON content (supports caption, hook+paragraphs+cta formats)
         let message = input.message;
         try {
           const parsed = JSON.parse(input.message);
+          const hashtags = Array.isArray(parsed.hashtags)
+            ? '\n\n' + parsed.hashtags.join(' ')
+            : (typeof parsed.hashtags === 'string' ? '\n\n' + parsed.hashtags : '');
           if (parsed.caption) {
-            const hashtags = Array.isArray(parsed.hashtags) ? '\n\n' + parsed.hashtags.join(' ') : '';
             message = parsed.caption + hashtags;
+          } else if (parsed.hook || parsed.paragraphs) {
+            const parts: string[] = [];
+            if (parsed.hook) parts.push(parsed.hook);
+            if (Array.isArray(parsed.paragraphs)) parts.push(...parsed.paragraphs);
+            if (parsed.engagement_question) parts.push(parsed.engagement_question);
+            if (parsed.cta) parts.push(parsed.cta);
+            message = parts.join('\n\n') + hashtags;
           }
         } catch {
           // Not JSON, use as-is

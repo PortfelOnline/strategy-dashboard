@@ -60,6 +60,34 @@ async function startServer() {
   // Serve locally generated images (DALL-E uploads)
   app.use("/uploads", express.static("public/uploads"));
 
+
+  // LLM proxy: POST /api/llm — calls Groq (text) or Fireworks (images via tRPC)
+  app.post("/api/llm", async (req, res) => {
+    try {
+      const { system, prompt, model } = req.body as { system?: string; prompt: string; model?: string };
+      const apiUrl = (process.env.BUILT_IN_FORGE_API_URL ?? 'https://api.groq.com/openai').replace(/\/$/, '');
+      const apiKey = process.env.BUILT_IN_FORGE_API_KEY ?? '';
+      const llmModel = model ?? 'llama-3.3-70b-versatile';
+      const messages = [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        { role: 'user', content: prompt },
+      ];
+      const upstream = await fetch(`${apiUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: llmModel, messages, temperature: 0.8 }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.text();
+        return res.status(upstream.status).json({ error: err });
+      }
+      const data = await upstream.json() as any;
+      res.json({ content: data.choices?.[0]?.message?.content ?? '' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API

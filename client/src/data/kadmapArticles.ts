@@ -415,6 +415,16 @@ export const KADMAP_ARTICLES: KadmapArticle[] = [
   { postId: 6386, slug: 'arest-kvartiry-obremeneniem', title: 'Арест квартиры с обременением', keyword: 'арест квартиры обременение', priority: 'high', reason: 'HIGH — obremenenie + arest' },
   { postId: 7129, slug: 'gde-proverit-kvartiru-na-obremenenie', title: 'Где проверить квартиру на обременение', keyword: 'проверить квартиру на обременение', priority: 'high', reason: 'HIGH — proverit obremenenie' },
   { postId: 297781, slug: 'kak-bystro-snimaetsya-obremenenie', title: 'Как быстро снимается обременение', keyword: 'как снять обременение быстро', priority: 'high', reason: 'HIGH — snyat obremenenie' },
+  // ── Batch SC (2026-04-03) — топ по потенциалу из Search Console ──────────
+  { postId: 332019, slug: 'kakaya-vypiska-nuzhna-iz-egrn-dlya-propiski', title: 'Какая выписка из ЕГРН нужна для прописки', keyword: 'какая выписка из ЕГРН нужна для прописки', priority: 'high', wordsBefore: 619, reason: 'SC: pos 1.5, 6823 имп, CTR 0.2% — аномалия, нужен реврайт' },
+  { postId: 405, slug: 'publichnaya-kadastrovaya-karta-kaliningradskoj-oblasti', title: 'Публичная кадастровая карта Калининградской области', keyword: 'кадастровая карта калининградской области', priority: 'high', wordsBefore: 228, reason: 'SC: pos 8.5, 6267 имп, потенциал +2062', needsMap: true },
+  { postId: 12208, slug: 'proverit-kvartiru-v-rosreestre-po-adresu-onlajn', title: 'Проверить квартиру в Росреестре по адресу онлайн', keyword: 'проверить квартиру в росреестре по адресу онлайн', priority: 'high', wordsBefore: 516, reason: 'SC: pos 9.3, 9031 имп, потенциал +2045' },
+  { postId: 10615, slug: 'poluchit-vypisku-egrn-po-kadastrovomu-nomeru', title: 'Получить выписку ЕГРН по кадастровому номеру', keyword: 'получить выписку ЕГРН по кадастровому номеру', priority: 'high', wordsBefore: 341, reason: 'SC: pos 11.4, 7086 имп, потенциал +2045' },
+  { postId: 698, slug: 'ploshchad-po-kadastrovomu-nomeru', title: 'Площадь по кадастровому номеру', keyword: 'площадь по кадастровому номеру', priority: 'high', wordsBefore: 207, reason: 'SC: pos 8.1, 10024 имп, потенциал +1679' },
+  { postId: 1933, slug: 'proverit-obremenenie-na-nedvizhimost', title: 'Проверить обременение на недвижимость', keyword: 'проверить обременение на недвижимость', priority: 'high', wordsBefore: 393, reason: 'SC: pos 18.4, 4675 имп, потенциал +1557' },
+  { postId: 3520, slug: 'uznat-sobstvennika-zemelnogo-uchastka-po-kadastrovomu-nomeru', title: 'Узнать собственника земельного участка по кадастровому номеру', keyword: 'узнать собственника земельного участка по кадастровому номеру', priority: 'high', wordsBefore: 400, reason: 'SC: pos 12.9, 4794 имп, потенциал +1408 — уже переписана' },
+  { postId: 10049, slug: 'kadastrovyj-nomer-zemelnogo-uchastka-proverit-po-adresu-onlajn', title: 'Кадастровый номер земельного участка проверить по адресу онлайн', keyword: 'кадастровый номер земельного участка проверить по адресу', priority: 'high', wordsBefore: 351, reason: 'SC: pos 16.1, 4162 имп, потенциал +1218' },
+  { postId: 10560, slug: 'gos-kadastr-nedvizhimosti', title: 'Гос кадастр недвижимости', keyword: 'гос кадастр недвижимости', priority: 'medium', wordsBefore: 339, reason: 'SC: pos 5.3, 3030 имп, потенциал +990' },
 ];
 
 export const STORAGE_KEY = 'kadmap_article_progress';

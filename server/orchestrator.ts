@@ -81,7 +81,7 @@ const DEFAULT_CONFIG: OrchestratorConfig = {
   bots: [],
 };
 
-const WARMUP_DAYS_THRESHOLD = 9;
+const WARMUP_DAYS_THRESHOLD = 7;
 const TICK_INTERVAL_MS = 30_000;
 
 // Runtime state (in-memory, reset on server restart)

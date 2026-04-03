@@ -255,7 +255,7 @@ export default function Bots() {
 
   const bots: BotEntry[] = data?.bots ?? [];
   const proxyStats = data?.proxyStats;
-  const warmedCount = bots.filter(b => ((b.state as Record<string, unknown>)?.warmup_days as number ?? 0) >= 9).length;
+  const warmedCount = bots.filter(b => ((b.state as Record<string, unknown>)?.warmup_days as number ?? 0) >= 7).length;
   const proxies: ProxyEntry[] = proxiesData ?? [];
   const filteredProxies = proxies.filter(p =>
     !proxySearch || p.proxy.toLowerCase().includes(proxySearch.toLowerCase())
@@ -382,7 +382,7 @@ export default function Bots() {
                   </CardHeader>
                   <CardContent>
                     <div className="text-3xl font-bold text-green-600">{warmedCount}</div>
-                    <p className="text-xs text-slate-500 mt-1">из {bots.length} (≥9 дней прогрева)</p>
+                    <p className="text-xs text-slate-500 mt-1">из {bots.length} (≥7 дней прогрева)</p>
                     <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
                       <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{ width: bots.length > 0 ? `${Math.min(100, (warmedCount / bots.length) * 100)}%` : '0%' }} />
                     </div>
@@ -515,7 +515,11 @@ export default function Bots() {
                   const totalClicks = targetStats.bots.reduce((s: number, b: {total: number}) => s + b.total, 0);
                   const totalSerp = targetStats.bots.reduce((s: number, b: {serpCount: number}) => s + b.serpCount, 0);
                   const totalDirect = totalClicks - totalSerp;
+                  const orgPct = totalClicks > 0 ? Math.round(totalSerp / totalClicks * 100) : 0;
                   const today = new Date().toISOString().split('T')[0];
+                  const todayStat = (targetStats as any).todayStat || { serpCount: 0, directCount: 0, total: 0 };
+                  const avgOrgPerDay: number = (targetStats as any).avgOrgPerDay ?? 0;
+                  const topQueries: {query: string; serpCount: number; total: number}[] = (targetStats as any).topQueries || [];
                   return (
                   <Card className="col-span-1 md:col-span-2 lg:col-span-3 border-0 shadow-sm bg-white">
                     <CardHeader className="pb-3 border-b border-slate-100">
@@ -531,8 +535,22 @@ export default function Bots() {
                         </div>
                       </CardTitle>
                     </CardHeader>
+                    <div className="grid grid-cols-3 divide-x divide-slate-100 border-b border-slate-100">
+                      <div className="px-4 py-2.5 text-center">
+                        <div className="text-lg font-bold text-blue-600">{todayStat.serpCount}</div>
+                        <div className="text-[10px] text-slate-400">органика сегодня</div>
+                      </div>
+                      <div className="px-4 py-2.5 text-center">
+                        <div className="text-lg font-bold text-slate-700">{avgOrgPerDay}</div>
+                        <div className="text-[10px] text-slate-400">ср. органика/день</div>
+                      </div>
+                      <div className="px-4 py-2.5 text-center">
+                        <div className={orgPct > 20 ? 'text-lg font-bold text-green-600' : orgPct > 0 ? 'text-lg font-bold text-amber-500' : 'text-lg font-bold text-slate-400'}>{orgPct}%</div>
+                        <div className="text-[10px] text-slate-400">% органики</div>
+                      </div>
+                    </div>
                     <CardContent className="pt-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {/* Per-bot list */}
                         <div>
                           <div className="text-[11px] font-medium text-slate-500 mb-3">По ботам (топ)</div>
@@ -562,6 +580,21 @@ export default function Bots() {
                             </span>
                           </div>
                         </div>
+
+                        {/* Top organic queries */}
+                        {topQueries.length > 0 && (
+                          <div>
+                            <div className="text-[11px] font-medium text-slate-500 mb-3">Топ запросы (органика)</div>
+                            <div className="space-y-1.5">
+                              {topQueries.map(q => (
+                                <div key={q.query} className="flex items-center gap-2">
+                                  <div className="flex-1 text-[10px] text-slate-600 truncate leading-tight" title={q.query}>{q.query}</div>
+                                  <span className="text-[11px] font-bold text-blue-600 shrink-0">{q.serpCount}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Per-day chart with proper 3-row layout */}
                         {targetStats.days.length > 0 && (() => {
@@ -689,7 +722,7 @@ export default function Bots() {
                                   <div className="w-12 bg-slate-200 rounded-full h-1.5">
                                     <div
                                       className="bg-orange-400 h-1.5 rounded-full"
-                                      style={{ width: `${Math.min(100, (warmupDays / 9) * 100)}%` }}
+                                      style={{ width: `${Math.min(100, (warmupDays / 7) * 100)}%` }}
                                     />
                                   </div>
                                   <span className="text-slate-500">{warmupDays}d</span>
@@ -923,7 +956,7 @@ export default function Bots() {
                     </div>
                     Целевые запросы по сайтам
                   </CardTitle>
-                  <CardDescription>Боты ищут сайт в Яндексе по этим запросам (после 9 дней прогрева)</CardDescription>
+                  <CardDescription>Боты ищут сайт в Яндексе по этим запросам (после 7 дней прогрева)</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-4 space-y-3">
                   {queriesData?.siteFiles.map(sf => {
@@ -1181,7 +1214,7 @@ export default function Bots() {
                           {orchEdits.bots.map((b, i) => {
                             const state = data?.bots.find(rb => rb.botId === b.botId)?.state;
                             const warmupDays = state?.warmup_days ?? 0;
-                            const autoMode = (warmupDays as number) >= 9 ? 'target' : 'warmup';
+                            const autoMode = (warmupDays as number) >= 7 ? 'target' : 'warmup';
                             return (
                               <div key={b.botId} className={`flex items-center gap-3 rounded-lg border px-3 py-2 text-sm ${b.enabled ? 'bg-white' : 'bg-slate-50 opacity-60'}`}>
                                 <span className="font-mono font-bold text-slate-700 w-12">#{b.botId}</span>

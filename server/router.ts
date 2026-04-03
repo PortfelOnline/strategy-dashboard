@@ -208,26 +208,31 @@ export const botsRouter = t.router({
     type BotStat = { serpCount: number; directCount: number; total: number };
     type DayStat = { date: string; serpCount: number; directCount: number; total: number };
 
+    type QueryStat = { query: string; serpCount: number; total: number };
     const byBot: Record<string, BotStat> = {};
     const byDay: Record<string, DayStat> = {};
+    const byQuery: Record<string, QueryStat> = {};
 
     try {
       const lines = fs.readFileSync(file, 'utf-8').split('\n');
       for (const line of lines) {
         const parts = line.trim().split('\t');
         if (parts.length < 4) continue;
-        const [botField, , , timestamp, flag] = parts;
+        const [botField, query, , timestamp, flag] = parts;
         if (!botField.startsWith('Bot ') || botField === 'Bot ID') continue;
         const botId = botField.replace('Bot ', '').trim();
-        const isSerp = flag !== 'direct';  // no flag or 'serp' = organic
+        const isSerp = flag === 'serp';
         const date = timestamp ? timestamp.slice(0, 10) : 'unknown';
 
         if (!byBot[botId]) byBot[botId] = { serpCount: 0, directCount: 0, total: 0 };
         if (!byDay[date]) byDay[date] = { date, serpCount: 0, directCount: 0, total: 0 };
 
+        if (!byQuery[query]) byQuery[query] = { query, serpCount: 0, total: 0 };
+        byQuery[query].total++;
         if (isSerp) {
           byBot[botId].serpCount++;
           byDay[date].serpCount++;
+          byQuery[query].serpCount++;
         } else {
           byBot[botId].directCount++;
           byDay[date].directCount++;
@@ -245,7 +250,18 @@ export const botsRouter = t.router({
       .sort((a, b) => a.date.localeCompare(b.date))
       .slice(-14);
 
-    return { bots, days };
+    const today = new Date().toISOString().split('T')[0];
+    const todayStat = byDay[today] || { date: today, serpCount: 0, directCount: 0, total: 0 };
+    const topQueries = Object.values(byQuery)
+      .filter(q => q.serpCount > 0)
+      .sort((a, b) => b.serpCount - a.serpCount)
+      .slice(0, 10);
+    const allDays = Object.values(byDay).filter(d => d.date !== today);
+    const avgOrgPerDay = allDays.length > 0
+      ? Math.round(allDays.reduce((s, d) => s + d.serpCount, 0) / allDays.length * 10) / 10
+      : 0;
+
+    return { bots, days, topQueries, todayStat, avgOrgPerDay };
   }),
 
   // ── Queries management ─────────────────────────────────────────────────────

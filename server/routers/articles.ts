@@ -1417,7 +1417,7 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<v
   };
   batchRewriteJobs.set(userId, state);
 
-  // Sequential (1 at a time) to avoid hammering SERP proxies
+  // Sequential (1 at a time) to avoid hammering SERP proxies + MariaDB
   while (!stopped && queue.length > 0) {
     const url = queue.shift()!;
     state.current = url;
@@ -1428,6 +1428,8 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<v
       state.errors++;
     }
     state.done++;
+    // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
+    if (queue.length > 0 && !stopped) await new Promise(r => setTimeout(r, 5000));
   }
 
   state.running = false;
@@ -3335,6 +3337,11 @@ function pickHeadingEmoji(text: string): string {
  * - "Важно:" / "Обратите внимание" → yellow info-box
  */
 function beautifyArticleHtml(html: string): string {
+  // Strip LLM placeholder images like <img src="image1.jpg"> / <img src="image12.jpg">
+  // These are hallucinated by LLM and never replaced with real uploads
+  html = html.replace(/<figure[^>]*>[\s]*<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>[\s]*(?:<figcaption[^>]*>.*?<\/figcaption>[\s]*)?<\/figure>/gis, '');
+  html = html.replace(/<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>/gi, '');
+
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 
   // -1. Convert absolute kadastrmap.info links to relative paths

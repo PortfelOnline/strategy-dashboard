@@ -66,4 +66,7 @@ const SLUGS = [
 const URLS = [...new Set(SLUGS)].map(s => `${BASE}${s}/`);
 console.log(`Batch-23: ${URLS.length} URLs`);
 
-runBatchRewrite('admin', URLS).catch(e => { console.error(e); process.exit(1); });
+const start = Date.now();
+await runBatchRewrite(1, URLS);
+const mins = ((Date.now() - start) / 60000).toFixed(1);
+console.log(`[batch-23] DONE in ${mins} min`);

@@ -10,7 +10,9 @@ services:
       - /root/yandex_bot/logs:/app/logs           # Логи
       - /root/yandex_bot/outputs:/app/outputs     # Состояния, кэш прокси
       - /root/yandex_bot/proxies.txt:/app/proxies.txt
+      - /root/yandex_bot/proxies_warmup.txt:/app/proxies_warmup.txt:ro
       - /root/yandex_bot/bots.db:/app/bots.db
+      - /root/yandex_bot/yandex_bot.py:/app/yandex_bot.py:ro
     shm_size: '2gb'
     restart: unless-stopped
     # Resource limit: не более 50% свободного CPU и RAM
@@ -43,4 +45,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock   # для docker exec
     depends_on:
       - yandex_bot
+    restart: unless-stopped
+
+  proxy_checker:
+    build:
+      context: /root/proxy-checker
+      dockerfile: Dockerfile
+    container_name: proxy_checker
+    environment:
+      - PROXIES_FILE=/data/proxies.txt
+      - DIRTY_FILE=/data/outputs/browser_dirty_proxies.json
+      - CHECK_INTERVAL=43200
+      - BATCH_SIZE=10
+      - PROXY_TTL=3600
+    volumes:
+      - /root/yandex_bot/proxies.txt:/data/proxies.txt:ro
+      - /root/yandex_bot/outputs:/data/outputs
+    ports:
+      - "8765:8765"
     restart: unless-stopped

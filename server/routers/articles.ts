@@ -289,17 +289,25 @@ function countWords(html: string): number {
 
 // Generate contextual DALL-E image prompts based on article title, keyword and H2 sections
 export async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[], bodyText?: string, countRequested?: number): Promise<string[]> {
-  const skinNote = `All people must have light/fair Slavic skin tone (Russian appearance). No dark-skinned people.`;
-  const noText = `NO text, NO letters, NO words, NO labels, NO watermarks anywhere in the image.`;
+  // Reinforced quality tags — FLUX.1 responds well to stacked descriptors of photo technique.
+  const QUALITY = 'cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded';
+  const NEGATIVE = 'no text, no letters, no words, no labels, no watermarks, no logos, no low quality, no blurry, no distorted faces, no extra limbs, no cartoon, no illustration, no stock-photo look';
+  const SLAVIC = 'Slavic Eastern European appearance, light fair skin, natural look';
   const kw = keyword || title;
 
+  // 10 diverse fallback prompts covering the common scenes for this site vertical.
+  // Used when LLM call fails or doesn't return enough items; now cycled if target > 10.
   const fallback = [
-    `Photorealistic wide-format photo: a person sitting at a bright modern desk looking at official documents and a laptop, warm natural light, clean minimalist interior. ${skinNote} ${noText}`,
-    `Aerial drone view of a Russian city residential neighborhood, rows of apartment buildings, courtyards with trees, clear blue sky, warm daylight. ${noText}`,
-    `Photorealistic close-up: a person's hands holding an official stamped document over a wooden desk with a blurred laptop in the background, warm light. ${skinNote} ${noText}`,
-    `Photorealistic wide-format photo: modern Russian apartment interior with bright living room, large windows overlooking city, clean furniture. ${noText}`,
-    `Photorealistic image: a person at a bank counter reviewing mortgage or property documents with a bank employee, professional office setting. ${skinNote} ${noText}`,
-    `Photorealistic photo: official government building exterior in Russia, blue sky, people entering, professional urban setting. ${noText}`,
+    `Official Russian EGRN property extract document on elegant wooden desk, golden hour light, ${QUALITY}, ${NEGATIVE}`,
+    `Russian woman in her 30s at bright modern home office reviewing property documents on laptop, ${SLAVIC}, warm morning light, ${QUALITY}, ${NEGATIVE}`,
+    `Aerial drone view of Moscow residential district, rows of modern apartment buildings, clear blue sky, ${QUALITY}, ${NEGATIVE}`,
+    `Close-up hands of notary stamping official document with embossing seal, wooden desk, ${SLAVIC}, ${QUALITY}, ${NEGATIVE}`,
+    `Modern Russian apartment interior living room with large windows, sunlit, minimalist Scandinavian furniture, ${QUALITY}, ${NEGATIVE}`,
+    `Young Russian family parents with child reviewing property papers at kitchen table, warm cozy home, ${SLAVIC}, ${QUALITY}, ${NEGATIVE}`,
+    `Russian government building (Росреестр) exterior, Saint Petersburg classical architecture, sunny day, ${QUALITY}, ${NEGATIVE}`,
+    `Professional real estate agent in business attire showing apartment to clients, bright empty living room, ${SLAVIC}, ${QUALITY}, ${NEGATIVE}`,
+    `Russian countryside cottage house with garden, summer daylight, picket fence, ${QUALITY}, ${NEGATIVE}`,
+    `Hand-drawn architectural floor plan of apartment on drafting desk with ruler and pencil, top-down view, ${QUALITY}, ${NEGATIVE}`,
   ];
 
   const sectionsBlock = h2Sections && h2Sections.length > 0
@@ -318,28 +326,30 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
       messages: [
         {
           role: 'system',
-          content: 'You are a Flux image prompt writer for a Russian real estate / cadastral documents website. Write cinematic, photorealistic, sharp-focus prompts in English. Use professional DSLR photography style: 8k detail, natural lighting, shallow depth of field. Focus on Russian context: property, documents, offices, apartments. Each prompt must be UNIQUE and match a specific section of the article. Add quality boosters: "cinematic lighting, sharp focus, 8k, professional DSLR, highly detailed". Never include text/letters in images.',
+          content: `You are a senior FLUX.1 image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for landscape 16:9 compositions.
+Use the following style tokens in every prompt: cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded.
+Negative tokens (must be absent): no text/letters/words/labels/watermarks/logos, no low quality, no distorted faces, no extra limbs, no cartoon/illustration/stock-photo look.
+All people must have Slavic Eastern European appearance with light/fair skin.
+Each prompt must be UNIQUE, match its specific H2 section, and feature a concrete composition + subject + environment + lighting time-of-day.`,
         },
         {
           role: 'user',
           content: `Article title: "${title}"
 Search keyword: "${kw}"
 ${sectionsBlock}${bodyBlock}
-The article is about ordering official Russian property/cadastral documents via kadastrmap.info.
+This article is about ordering official Russian property / cadastral documents via kadastrmap.info.
 
-Write exactly ${targetCount} DIFFERENT photorealistic image prompts. Requirements:
-- SHORT (10-15 words max before quality tags) — Flux works best with concise prompts
-- Each must match a SPECIFIC aspect of this article (NOT generic)
-- Vary scenes: document on desk, person at laptop, apartment exterior, notary office, bank counter, family at home reviewing papers
-- All people: light Slavic appearance. ${noText}
-- End every prompt with: "cinematic lighting, sharp focus, 8k resolution, professional DSLR"
+Write exactly ${targetCount} DIFFERENT prompts, one per H2 section in order. Each prompt MUST:
+- Be 15-25 words of content BEFORE the quality tags (describe subject, action, environment, lighting)
+- Vary scenes across prompts — don't repeat the same setting twice. Mix from: person-at-desk-with-laptop, document-close-up, notary-office, bank-counter, apartment-interior, building-exterior, aerial-drone-view, family-at-kitchen, real-estate-agent-tour, architectural-floor-plan, key-exchange-handover, moscow-skyline, countryside-cottage
+- Match the H2 section's specific topic (e.g., "Стоимость" → hands counting rubles over document; "Сроки" → clock + calendar + document; "Онлайн заказ" → laptop with property site open)
+- End EVERY prompt with EXACTLY these quality tags: "cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded"
 
-Examples of GOOD concise prompts:
-- "Official Russian EGRN property document on wooden desk, natural light, cinematic lighting, sharp focus, 8k resolution, professional DSLR"
-- "Young Russian couple signing mortgage documents at bank, modern office, cinematic lighting, sharp focus, 8k resolution, professional DSLR"
-- "Russian apartment building exterior, sunny day, blue sky, cinematic lighting, sharp focus, 8k resolution, professional DSLR"
+Examples of EXCELLENT prompts:
+- "Close-up of Slavic woman hands filling Russian EGRN property request form with ballpoint pen, wooden desk, morning sunlight through blinds, cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded"
+- "Aerial drone view of Moscow residential neighborhood at sunset, rows of modern apartment buildings, golden hour, long shadows, cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded"
 
-Return ONLY a JSON array of ${targetCount} strings: ["prompt1", ...]`,
+Return ONLY a valid JSON array of ${targetCount} strings: ["prompt1", ...]. No prose, no markdown.`,
         },
       ],
       maxTokens: 1200,
@@ -788,7 +798,8 @@ async function filterRelevantMedia(
 function injectImagesAfterH2s(
   html: string,
   media: { id: number; url: string; width?: number; height?: number }[],
-  targetH2Indexes?: number[]
+  targetH2Indexes?: number[],
+  seoContext?: { keyword?: string; articleTitle?: string },
 ): string {
   if (media.length === 0) return html;
 
@@ -822,17 +833,37 @@ function injectImagesAfterH2s(
     indexes = Array.from({ length: n }, (_, i) => 2 + i * step);
   }
 
+  // SEO alt text helper: combines keyword + section + article context for image-search ranking.
+  // Yandex and Google both use alt text heavily for image indexing. Plain H2 alone is too generic.
+  const kw = (seoContext?.keyword || '').trim();
+  const siteTag = 'kadastrmap.info';
+  const buildAlt = (sectionText: string, i: number): string => {
+    const section = sectionText.replace(/[🔹🔸📋📌⚠️✅💡⭐🕐🏠🏢📊💰⏱️🔍📄📝📱🛡️📚]/g, '').trim();
+    // Avoid repeating keyword if section already contains it
+    const sectionLower = section.toLowerCase();
+    const kwLower = kw.toLowerCase();
+    const includesKw = kwLower && sectionLower.includes(kwLower.split(/\s+/)[0] || '');
+    const parts = includesKw
+      ? [section, siteTag]
+      : [kw, section, siteTag].filter(Boolean);
+    return parts
+      .join(' — ')
+      .replace(/"/g, '&quot;')
+      .slice(0, 120);  // Google/Yandex best-practice: alt ≤ 125 chars
+  };
+
   let h2count = 0;
   return html.replace(/<\/h2>/gi, () => {
     h2count++;
     const pos = indexes.indexOf(h2count);
     if (pos !== -1 && mediaToUse[pos]) {
       const m = mediaToUse[pos];
-      const alt = (h2Texts[h2count - 1] || '').replace(/"/g, '&quot;');
+      const alt = buildAlt(h2Texts[h2count - 1] || '', pos);
       const w = m.width ?? 1792;
       const h = m.height ?? 1024;
       const loadAttr = pos === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
-      return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;" ${loadAttr}></figure>`;
+      // figcaption improves accessibility + gives Yandex/Google additional signal
+      return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" title="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;" ${loadAttr}><figcaption style="font-size:0.85em;color:#777;margin-top:0.4em;font-style:italic;">${alt}</figcaption></figure>`;
     }
     return '</h2>';
   });
@@ -1660,7 +1691,8 @@ export async function findAndInjectImages(
   }
 
   console.log(`[Img] Injecting ${validMedia.length} images into article`);
-  const htmlWithImages = injectImagesAfterH2s(html, validMedia);
+  // SEO context for alt texts: article title supplies the keyword themes
+  const htmlWithImages = injectImagesAfterH2s(html, validMedia, undefined, { articleTitle: title, keyword: titleKeywords });
   return { html: htmlWithImages, featuredMediaId: validMedia[0]?.id };
 }
 

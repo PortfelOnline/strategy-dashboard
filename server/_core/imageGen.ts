@@ -38,8 +38,11 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
           body: JSON.stringify({
             prompt,
             aspect_ratio: '16:9',
-            // flux-1-dev needs 25-28 steps for sharp results; flux-1-schnell is optimized for 4 steps
-            num_inference_steps: IMAGE_MODEL.includes('schnell') ? 4 : 28,
+            // flux-1-dev / pro benefit from more steps for fine detail & photorealism.
+            // Default 32 (was 28) — small quality bump; override via IMAGE_STEPS env.
+            num_inference_steps: IMAGE_MODEL.includes('schnell')
+              ? 4
+              : Number(process.env.IMAGE_STEPS ?? 32),
             // FLUX distilled models work best at guidance_scale 3.5 (not 7+)
             guidance_scale: IMAGE_MODEL.includes('schnell') ? 0 : 3.5,
           }),

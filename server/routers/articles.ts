@@ -388,7 +388,8 @@ function checkArticleQuality(
   const h2Count = (html.match(/<h2\b/gi) || []).length;
   const h3Count = (html.match(/<h3\b/gi) || []).length;
   const hasExternalLinks = /href="https?:\/\/(?!kadastrmap\.info)[^"]+"/i.test(html);
-  const authLinksCount = (html.match(AUTHORITY_DOMAINS) || []).length;
+  // Count all mentions (plain text or inside <a>) — needs global flag
+  const authLinksCount = (html.match(/\b(?:rosreestr\.gov\.ru|consultant\.ru|garant\.ru|nalog\.ru|pravo\.gov\.ru|minjust\.ru|mos\.ru|gosuslugi\.ru|sudrf\.ru)\b/gi) || []).length;
   // internal links: href starting with "/" or containing kadastrmap.info
   const internalLinks = Array.from(html.matchAll(/href=["'](?:\/[^"']*|https?:\/\/[^"']*kadastrmap\.info[^"']*)["']/gi));
   const internalLinkCount = internalLinks.length;

@@ -17,9 +17,14 @@ import * as wordpressDb from '../server/wordpress.db';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const USER_ID = 1;
-const COOLDOWN_DAYS = 30;
+// Short cooldown so articles get re-evaluated against a fresh top-3 every 2 weeks.
+// Self-improvement: each rewrite pulls the latest competitors + LSI + missing topics,
+// so the same article keeps closing the quality gap until it lands in top-3.
+const COOLDOWN_DAYS = 14;
 const BETWEEN_ARTICLES_MS = 5000;
 const ALL_COOLDOWN_SLEEP_MS = 60 * 60 * 1000;
+// After this many non-top-3 rewrites, switch to aggressive mode (deeper, more unique, +30% target).
+const AGGRESSIVE_PASS_THRESHOLD = 2;
 const STATE_FILE = path.join(import.meta.dirname, 'loop-state.json');
 const POSITIONS_FILE = path.join(import.meta.dirname, 'positions.json');
 const SITE_DOMAIN = 'kadastrmap.info';
@@ -32,6 +37,8 @@ interface ArticleState {
   googlePos?: number | null;
   yandexPos?: number | null;
   skipReason?: string | null;
+  rewriteCount?: number;
+  inTop3?: boolean;
 }
 interface LoopState {
   _updated: string;
@@ -94,11 +101,15 @@ function markChecked(state: LoopState, url: string, data: Partial<ArticleState>)
 }
 
 function markImproved(state: LoopState, url: string, googlePos: number | null, yandexPos: number | null): void {
+  const prev = state.articles[url] || {};
+  const inTop3 = (googlePos !== null && googlePos <= 3) || (yandexPos !== null && yandexPos <= 3);
   state.articles[url] = {
-    ...(state.articles[url] || {}),
+    ...prev,
     lastImproved: new Date().toISOString(),
     lastChecked: new Date().toISOString(),
     googlePos, yandexPos, skipReason: null,
+    rewriteCount: (prev.rewriteCount ?? 0) + 1,
+    inTop3,
   };
 }
 
@@ -261,7 +272,11 @@ async function runLoop(): Promise<void> {
           markChecked(state, post.link, { googlePos: check.googlePos, yandexPos: check.yandexPos, skipReason: check.reason });
           skipped++;
         } else {
-          console.log(`${prefix} REWRITE | ${shortTitle} | ${check.reason}`);
+          const priorCount = state.articles[post.link]?.rewriteCount ?? 0;
+          const aggressive = priorCount >= AGGRESSIVE_PASS_THRESHOLD;
+          console.log(`${prefix} REWRITE${aggressive ? '+AGG' : ''} | ${shortTitle} | ${check.reason} | prior:${priorCount}`);
+          if (aggressive) process.env.LOOP_AGGRESSIVE_MODE = '1';
+          else delete process.env.LOOP_AGGRESSIVE_MODE;
           await runBatchRewrite(USER_ID, [post.link]);
           markImproved(state, post.link, check.googlePos, check.yandexPos);
           rewritten++;

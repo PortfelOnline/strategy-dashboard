@@ -242,9 +242,16 @@ function extractLsiKeywords(serpResults: { snippet?: string; title?: string }[])
 
 // ── Post-generation quality check + fix ──────────────────────────────────────
 
-// Guard: detect LLM placeholder titles like 'до 60 симв.'
+// Guard: detect LLM placeholder titles like 'до 60 симв.' or 'в 60 символов или меньше'
 function isPlaceholderTitle(t: string | null | undefined): boolean {
-  return !t || /до\s*\d+\s*(симв|символ)|placeholder|\[.*\]/i.test(t) || t.length < 5;
+  if (!t || t.length < 5) return true;
+  return /\b\d+\s*(симв|символ|знак|char)|или\s*меньше|или\s*менее|less\s*than|not\s*exceed|placeholder|example[_\s-]?title|metaTitle|заголовок\s*с\s*ключом|\[.*\]/i.test(t);
+}
+
+// Guard: detect LLM placeholder meta descriptions
+function isPlaceholderMeta(t: string | null | undefined): boolean {
+  if (!t || t.length < 20) return true;
+  return /\b\d+\s*(симв|символ|знак|char)|или\s*меньше|или\s*менее|less\s*than|not\s*exceed|placeholder|example[_\s-]?desc|metaDescription|мета[-\s]?описание\s*с|до\s*\d+/i.test(t);
 }
 
 function countWords(html: string): number {
@@ -930,8 +937,9 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
     seo = { metaTitle: parsed.title, metaDescription: parsed.metaDescription, keywords: [], headingsSuggestions: [], generalSuggestions: [], score: 0 };
   }
 
-  // Guard: if LLM returned placeholder text instead of a real title, discard it
+  // Guard: if LLM returned placeholder text instead of a real title/meta, discard it
   if (isPlaceholderTitle(seo.metaTitle)) seo.metaTitle = parsed.title;
+  if (isPlaceholderMeta(seo.metaDescription)) seo.metaDescription = parsed.metaDescription || '';
 
   let improvedContent = typeof improvedResponse.choices[0]?.message.content === 'string'
     ? improvedResponse.choices[0].message.content.trim()
@@ -1040,7 +1048,10 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     ? Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length) : 1200;
   const maxCompetitorWords = competitors.length
     ? Math.max(...competitors.map(c => c.wordCount)) : 1200;
-  const targetWords = Math.max(3500, Math.round(maxCompetitorWords * 1.3));
+  // Aggressive mode (set by loop-improve after 2+ non-top-3 attempts): push deeper.
+  const aggressive = process.env.LOOP_AGGRESSIVE_MODE === '1';
+  const wordMultiplier = aggressive ? 1.6 : 1.3;
+  const targetWords = Math.max(aggressive ? 4500 : 3500, Math.round(maxCompetitorWords * wordMultiplier));
 
   // Competitor media/structure stats — used to set our target
   const avgCompetitorImages = competitors.length
@@ -1096,6 +1107,18 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
 - FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
 - Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО добавить' : 'добавить для сравнения способов'}\n`;
 
+  const aggressiveBlock = aggressive
+    ? `\n🔥 AGGRESSIVE MODE (предыдущие попытки не попали в топ-3):
+- Пиши РАДИКАЛЬНО глубже и уникальнее конкурентов — минимум ${targetWords} слов (это +60% к лучшему конкуренту)
+- Добавь 2-3 уникальных H2-раздела которых НЕТ ни у одного конкурента (чек-листы, готовые шаблоны, сравнительные таблицы, реальные кейсы с разбором)
+- В каждом H2 — минимум 350 слов (вместо 250), больше конкретики: цифры, даты, статьи законов, примеры из судебной практики
+- Featured snippet (первый <p>) — 55-70 слов, максимально конкретный ответ
+- FAQ: минимум ${targetFaq + 3} вопросов, ответы 100-130 слов каждый
+- Добавь раздел «Чек-лист перед заказом» с <ul><li> из 8-12 пунктов
+- Добавь раздел «Типичные ошибки» с 5-7 пунктами и объяснениями
+- Добавь раздел «Юридическая база» — перечисли ВСЕ применимые ФЗ, постановления, приказы с номерами и датами\n`
+    : '';
+
   const improvePrompt = competitorContext
     ? `Ключ: "${keyword}"
 
@@ -1105,9 +1128,9 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}${top3Stats}
+${missingTopicsBlock}${lsiBlock}${top3Stats}${aggressiveBlock}
 ТРЕБОВАНИЯ:
-1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
+1. Объём: минимум ${targetWords} слов — это ${aggressive ? '60' : '30'}% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
 2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. FEATURED SNIPPET (ОБЯЗАТЕЛЬНО): сразу после H1 — абзац 40-60 слов с прямым ответом на "${keyword}". Без вступлений типа "В этой статье...". Формат: "**${keyword}** — это [определение]. [Ключевой факт]. [CTA-намёк]." Это попадает в блок 0 Яндекса и Гугла.
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
@@ -1139,14 +1162,14 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
   // SEO analysis: fast 8B (simple JSON task)
   // Article generation: best available model for TOP-3 quality
   const mainModel = process.env.LLM_MAIN_MODEL ?? 'openai/gpt-oss-120b';
-  const seoModel  = process.env.LLM_SEO_MODEL  ?? 'llama-3.1-8b-instant';
+  const seoModel  = process.env.LLM_SEO_MODEL  ?? 'openai/gpt-oss-120b';
 
   const [seoResponse, improvedResponse] = await Promise.all([
     invokeLLM({
       model: seoModel,
       messages: [
-        { role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON.' },
-        { role: 'user', content: `Ты SEO-эксперт. Проанализируй статью и верни JSON:\nЗаголовок: ${parsed.title}\nКлюч: ${keyword}\nОбъём: ${parsed.wordCount} слов (целевой объём: 3500+ слов)\n\nВерни ТОЛЬКО валидный JSON:\n{"metaTitle":"до 60 симв","metaDescription":"до 160 симв","keywords":["ключ1"],"headingsSuggestions":[],"generalSuggestions":["совет"],"score":75}` },
+        { role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай ТОЛЬКО валидным JSON без markdown. НЕ копируй шаблонные строки (типа "до 60 символов") — подставляй реальные значения.' },
+        { role: 'user', content: `Напиши мета-данные для статьи. Верни ТОЛЬКО JSON (без пояснений, без markdown-блоков).\n\nСТАТЬЯ:\nЗаголовок: ${parsed.title}\nКлюч: ${keyword}\nОбъём: ${parsed.wordCount} слов\n\nПРАВИЛА:\n- metaTitle: РЕАЛЬНЫЙ заголовок с ключом "${keyword}" в начале, длина 45-60 символов. Без фраз "в N символов", "или меньше".\n- metaDescription: РЕАЛЬНОЕ описание с призывом к действию и ключом, длина 120-155 символов, заканчивается точкой. Без фраз "до N символов".\n- keywords: массив из 5-10 LSI-ключей.\n- score: число 50-95.\n\nФОРМАТ (подставь реальные значения вместо <...>):\n{"metaTitle":"<реальный title>","metaDescription":"<реальное описание>","keywords":["<ключ1>","<ключ2>"],"headingsSuggestions":[],"generalSuggestions":[],"score":<число>}` },
       ],
     }),
     invokeLLM({
@@ -1155,7 +1178,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
         { role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь длинные подробные статьи 3500+ слов для топа поиска. Каждый H2-раздел минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE], не вставляй конкретные цифры цен.' },
         { role: 'user', content: improvePrompt },
       ],
-      maxTokens: 6000,
+      maxTokens: 8192,
     }),
   ]);
 
@@ -1168,6 +1191,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
     seo = { metaTitle: parsed.title, metaDescription: parsed.metaDescription, keywords: [], headingsSuggestions: [], generalSuggestions: [], score: 0 };
   }
   if (isPlaceholderTitle(seo.metaTitle)) seo.metaTitle = parsed.title;
+  if (isPlaceholderMeta(seo.metaDescription)) seo.metaDescription = parsed.metaDescription || '';
 
   let improvedContent = typeof improvedResponse.choices[0]?.message.content === 'string'
     ? improvedResponse.choices[0].message.content.trim()
@@ -1335,10 +1359,17 @@ export async function findAndInjectImages(
 
 /** Truncate meta description to ≤155 chars at word boundary (Google shows ~155-160 chars). */
 function truncateMetaDesc(text: string, max = 155): string {
-  if (!text || text.length <= max) return text;
-  const cut = text.slice(0, max);
+  if (!text) return text;
+  const clean = text.replace(/\s+/g, ' ').trim();
+  if (clean.length <= max) return clean;
+  const cut = clean.slice(0, max);
+  // Prefer end of sentence: last . ! ? within the cut
+  const lastSentence = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('!'), cut.lastIndexOf('?'));
+  if (lastSentence >= 100) return cut.slice(0, lastSentence + 1).trim();
+  // Fallback: last word boundary + ellipsis
   const lastSpace = cut.lastIndexOf(' ');
-  return (lastSpace > 100 ? cut.slice(0, lastSpace) : cut).replace(/[,;:–—\-]+$/, '').trim();
+  const base = (lastSpace > 100 ? cut.slice(0, lastSpace) : cut).replace(/[,;:–—\-]+$/, '').trim();
+  return base.endsWith('.') || base.endsWith('!') || base.endsWith('?') ? base : base + '…';
 }
 
 /**

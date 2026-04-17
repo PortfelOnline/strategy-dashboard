@@ -288,7 +288,7 @@ function countWords(html: string): number {
 }
 
 // Generate contextual DALL-E image prompts based on article title, keyword and H2 sections
-export async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[], bodyText?: string): Promise<string[]> {
+export async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[], bodyText?: string, countRequested?: number): Promise<string[]> {
   const skinNote = `All people must have light/fair Slavic skin tone (Russian appearance). No dark-skinned people.`;
   const noText = `NO text, NO letters, NO words, NO labels, NO watermarks anywhere in the image.`;
   const kw = keyword || title;
@@ -303,13 +303,15 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
   ];
 
   const sectionsBlock = h2Sections && h2Sections.length > 0
-    ? `\nArticle sections (H2 headings): ${h2Sections.slice(0, 8).map((s, i) => `${i + 1}. ${s}`).join('; ')}\n`
+    ? `\nArticle sections (H2 headings): ${h2Sections.slice(0, 15).map((s, i) => `${i + 1}. ${s}`).join('; ')}\n`
     : '';
   const bodyBlock = bodyText
     ? `\nArticle intro (first 400 chars): "${bodyText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400)}"\n`
     : '';
 
-  const targetCount = h2Sections && h2Sections.length >= 6 ? 9 : 6;
+  const targetCount = countRequested && countRequested >= 6
+    ? Math.min(countRequested, 15)
+    : (h2Sections && h2Sections.length >= 6 ? 9 : 6);
 
   try {
     const resp = await invokeLLM({
@@ -347,11 +349,17 @@ Return ONLY a JSON array of ${targetCount} strings: ["prompt1", ...]`,
     const raw = (typeof content === 'string' ? content : '').trim();
     const cleaned = raw.replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(cleaned);
-    if (Array.isArray(parsed) && parsed.length >= 6) return parsed.slice(0, 6);
+    if (Array.isArray(parsed) && parsed.length >= 6) return parsed.slice(0, targetCount);
   } catch {
     // fall through to fallback
   }
-  return fallback;
+  // Pad fallback if more images requested than fallback has (cycle+vary)
+  if (targetCount > fallback.length) {
+    const padded = [...fallback];
+    while (padded.length < targetCount) padded.push(fallback[padded.length % fallback.length]);
+    return padded.slice(0, targetCount);
+  }
+  return fallback.slice(0, targetCount);
 }
 
 // ── Article quality check: log pass/fail per criterion ───────────────────────
@@ -1358,11 +1366,16 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
     yandexPos: findPos(yandexSerp.results),
   });
 
-  // Auto-publish to WordPress (batch mode: no image generation)
+  // Auto-publish to WordPress (batch mode: no image generation).
+  // imagesNeeded from competitor data (max competitor images + 2), capped at MAX_FLUX_IMAGES
+  // to prevent runaway FLUX generation (each image ≈ 30s sequential). Default cap 15.
+  const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 15);
+  const imagesForWp = Math.min(Math.max(targetImages, 9), fluxCap);
   await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
     focusKeyword: keyword || undefined,
     keywords: seo.keywords?.length ? seo.keywords : undefined,
+    imagesNeeded: imagesForWp,
   }).catch((e: any) => console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e));
 
   // Post-publish image check: compare actual <img> count on the live page
@@ -1457,12 +1470,14 @@ export async function findAndInjectImages(
     const fluxNeeded = validMedia.length < imagesNeeded
       ? imagesNeeded - validMedia.length
       : 1;
-    const h2Sections = extractH2Texts(html).slice(0, 9);
+    const h2Sections = extractH2Texts(html).slice(0, Math.max(fluxNeeded, 9));
     const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
     // Check cache first — allows per-article prompt customization
     const cachedPrompts = getImagePromptsFromCache(slug);
-    const prompts = cachedPrompts ?? await generateImagePrompts(title, titleKeywords, h2Sections, bodyText);
-    if (!cachedPrompts) saveImagePromptsToCache(slug, prompts);
+    const prompts = cachedPrompts && cachedPrompts.length >= fluxNeeded
+      ? cachedPrompts
+      : await generateImagePrompts(title, titleKeywords, h2Sections, bodyText, fluxNeeded);
+    if (!cachedPrompts || cachedPrompts.length < fluxNeeded) saveImagePromptsToCache(slug, prompts);
     console.log(`[Img] Generating ${fluxNeeded} FLUX images (sequential)`);
     const fluxValid: { id: number; url: string; width?: number; height?: number }[] = [];
     for (let i = 0; i < Math.min(fluxNeeded, prompts.length); i++) {
@@ -1513,7 +1528,7 @@ async function autoPublishToWP(
   url: string,
   title: string,
   content: string,
-  opts: { metaDescription?: string; focusKeyword?: string; keywords?: string[] } = {},
+  opts: { metaDescription?: string; focusKeyword?: string; keywords?: string[]; imagesNeeded?: number } = {},
 ): Promise<void> {
   const accounts = await wordpressDb.getUserWordpressAccounts(userId);
   const account = accounts[0];
@@ -1538,10 +1553,10 @@ async function autoPublishToWP(
     injectCtasIntoHtml(content, ctaTexts, ctaBlock)
   );
 
-  // Find and inject images
+  // Find and inject images — imagesNeeded driven by competitor stats from rewriteArticle
   const { html: htmlWithImages, featuredMediaId } = await findAndInjectImages(
     account.siteUrl, account.username, account.appPassword,
-    slug, title, htmlContent,
+    slug, title, htmlContent, opts.imagesNeeded,
   ).catch((e: any) => {
     console.warn('[WP] Image injection failed:', e?.message);
     return { html: htmlContent, featuredMediaId: undefined };

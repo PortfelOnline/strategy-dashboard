@@ -194,6 +194,25 @@ async function uploadMediaViaCurl(
 /**
  * Update an existing WP post
  */
+/** Strip characters that make WP REST return "Invalid JSON body":
+ *  - null byte, control chars (except \t \n \r) are illegal in JSON values
+ *  - orphan surrogate halves (broken UTF-16 from LLM) break JSON.parse on server
+ */
+function sanitizeForJson(v: unknown): unknown {
+  if (typeof v === 'string') {
+    return v
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')  // control chars
+      .replace(/[\uD800-\uDFFF]/g, '');                                 // orphan surrogates
+  }
+  if (Array.isArray(v)) return v.map(sanitizeForJson);
+  if (v && typeof v === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) out[k] = sanitizeForJson(val);
+    return out;
+  }
+  return v;
+}
+
 export async function updatePost(
   siteUrl: string,
   username: string,
@@ -201,18 +220,25 @@ export async function updatePost(
   postId: number,
   data: { title?: string; content?: string; excerpt?: string; featured_media?: number; categories?: number[]; meta?: Record<string, string> }
 ): Promise<WpPost> {
+  // Pre-sanitize: remove illegal control chars / orphan surrogates that
+  // LLM output occasionally contains. These pass JSON.stringify but WP's
+  // json_decode rejects them with "Invalid JSON body".
+  const cleanData = sanitizeForJson(data) as typeof data;
+  // Also: serialize manually to guarantee body is a valid JSON string.
+  // axios v1 sometimes refuses to stringify or uses qs for certain shapes.
+  const body = JSON.stringify(cleanData);
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const response = await axios.post(
         `${apiBase(siteUrl)}/posts/${postId}`,
-        data,
+        body,
         {
           headers: {
             Authorization: basicAuth(username, appPassword),
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/json; charset=utf-8',
           },
-          // Fresh agent per attempt: avoids TLS session reuse causing bad_record_mac
+          transformRequest: [(d) => d],  // body is already a string — don't re-stringify
           httpsAgent: new https.Agent({ keepAlive: false, rejectUnauthorized: false }),
         }
       );

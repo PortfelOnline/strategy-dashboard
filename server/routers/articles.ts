@@ -318,7 +318,7 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
     : '';
 
   const targetCount = countRequested && countRequested >= 6
-    ? Math.min(countRequested, 15)
+    ? Math.min(countRequested, 20)
     : (h2Sections && h2Sections.length >= 6 ? 9 : 6);
 
   try {
@@ -1735,8 +1735,10 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
 
   // Auto-publish to WordPress (batch mode: no image generation).
   // imagesNeeded from competitor data (max competitor images + 2), capped at MAX_FLUX_IMAGES
-  // to prevent runaway FLUX generation (each image ≈ 30s sequential). Default cap 15.
-  const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 15);
+  // to prevent runaway FLUX generation (each image ≈ 30s sequential). Default cap 20 —
+  // matches top-3 competitors' image count (our audit found some have 23+ images).
+  // Each +5 images costs ~2-3 min per article, trade-off vs matching competitor parity.
+  const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 20);
   const imagesForWp = Math.min(Math.max(targetImages, 9), fluxCap);
   await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,

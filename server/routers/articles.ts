@@ -560,7 +560,6 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
   // BreadcrumbList — critical for Yandex rich results and Google sitelinks
   try {
     const u = new URL(url);
-    const slug = u.pathname.replace(/^\/|\/$/g, '').split('/').pop() || '';
     schemas.push({
       '@context': 'https://schema.org',
       '@type': 'BreadcrumbList',
@@ -571,6 +570,26 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
       ],
     });
   } catch { /* bad URL → skip breadcrumb */ }
+
+  // HowTo — for "how to order/get" articles. Steps derived from H2 texts that
+  // look like instructions (verb-starting or containing "шаг").
+  const isInstructional = /(?:как\s+(?:заказать|получить|оформить|проверить|узнать|сделать))|инструкция|пошагов/i.test(keyword + ' ' + title);
+  if (isInstructional) {
+    const h2Texts = extractH2Texts(html);
+    const stepTexts = h2Texts.filter(t =>
+      /^(?:шаг|как|куда|где|когда|почему|что\s+|выбер|заполн|отправ|получ|провер|зарег|опла|подай|подпиш)/i.test(t)
+      && t.length >= 10 && t.length <= 120
+    ).slice(0, 8);
+    if (stepTexts.length >= 3) {
+      schemas.push({
+        '@context': 'https://schema.org',
+        '@type': 'HowTo',
+        name: title,
+        description: keyword,
+        step: stepTexts.map((name, i) => ({ '@type': 'HowToStep', position: i + 1, name })),
+      });
+    }
+  }
 
   // Article schema is omitted here — the WP theme outputs a full Article JSON-LD
   // in <head> via kadmap_article_jsonld(). Duplicating it in body content causes
@@ -3416,6 +3435,17 @@ function beautifyArticleHtml(html: string): string {
   html = html.replace(/<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>/gi, '');
 
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
+
+  // -2. Add loading="lazy" and decoding="async" to all <img> — LCP/CWV optimization.
+  //     Skip first image (usually above-the-fold hero) to preserve LCP speed.
+  $('img').each((i: number, img: any) => {
+    if (i === 0) {
+      $(img).attr('fetchpriority', 'high');  // First image: prioritize for LCP
+    } else {
+      if (!$(img).attr('loading'))  $(img).attr('loading',  'lazy');
+      if (!$(img).attr('decoding')) $(img).attr('decoding', 'async');
+    }
+  });
 
   // -1. Convert absolute kadastrmap.info links to relative paths
   //     + close external links with rel="nofollow noopener noreferrer" to prevent link juice leak

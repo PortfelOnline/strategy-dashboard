@@ -632,12 +632,20 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
       && t.length >= 10 && t.length <= 120
     ).slice(0, 8);
     if (stepTexts.length >= 3) {
+      // Pair each step with a nearby <img> URL if present — Google HowTo rich
+      // result with step images shows visual cards in SERP (much higher CTR
+      // than text-only HowTo).
+      const imgSrcs = Array.from(html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi)).map(m => m[1]);
       schemas.push({
         '@context': 'https://schema.org',
         '@type': 'HowTo',
         name: title,
         description: keyword,
-        step: stepTexts.map((name, i) => ({ '@type': 'HowToStep', position: i + 1, name })),
+        step: stepTexts.map((name, i) => {
+          const step: Record<string, unknown> = { '@type': 'HowToStep', position: i + 1, name };
+          if (imgSrcs[i]) step.image = imgSrcs[i];
+          return step;
+        }),
       });
     }
   }
@@ -931,11 +939,12 @@ function addTopMatterBlocks(html: string, title: string, url: string): string {
     return `<h2${attrs} id="${id}">${inner}</h2>`;
   });
 
-  // 2. Build TOC <nav> — only if 4+ anchors (no point for short articles)
+  // 2. Build TOC <nav> — only if 4+ anchors (no point for short articles).
+  // Using <ol> (not <details>) to avoid colliding with FAQ <details> counter in QA.
   const tocBlock = tocEntries.length >= 4
     ? `\n<nav class="article-toc" aria-label="Содержание статьи" style="background:#f7f9fc;border-left:4px solid #4CAF50;padding:1em 1.5em;margin:1.5em 0;border-radius:6px;">
 <strong style="font-size:1.05em;display:block;margin-bottom:0.5em;">📋 Содержание статьи</strong>
-<ol style="margin:0;padding-left:1.2em;">
+<ol style="margin:0;padding-left:1.2em;column-count:1;">
 ${tocEntries.map(e => `<li style="margin:0.3em 0;"><a href="#${e.id}" style="color:#2E7D32;text-decoration:none;">${e.text}</a></li>`).join('\n')}
 </ol>
 </nav>\n`

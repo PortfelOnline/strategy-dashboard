@@ -1084,6 +1084,7 @@ function slugifyHeading(text: string): string {
  * Also assigns stable id="" to H2 tags so the TOC links work.
  */
 function addTopMatterBlocks(html: string, title: string, url: string): string {
+  console.log(`[TopMatter] Processing: ${url} | HTML length: ${html.length}`);
   // 1. Assign ids to H2 so TOC anchors work, collect TOC entries.
   const usedIds = new Set<string>();
   const tocEntries: { id: string; text: string }[] = [];
@@ -1100,24 +1101,24 @@ function addTopMatterBlocks(html: string, title: string, url: string): string {
     return `<h2${attrs} id="${id}">${inner}</h2>`;
   });
 
-  // 2. Build TOC <nav> — only if 4+ anchors (no point for short articles).
-  // Using <ol> (not <details>) to avoid colliding with FAQ <details> counter in QA.
+  // 2. Build TOC — only if 4+ anchors (no point for short articles).
+  // Using <div> (not <nav>) because WP wp_kses_post strips <nav> for non-admin authors.
   const tocBlock = tocEntries.length >= 4
-    ? `\n<nav class="article-toc" aria-label="Содержание статьи" style="background:#f7f9fc;border-left:4px solid #4CAF50;padding:1em 1.5em;margin:1.5em 0;border-radius:6px;">
+    ? `\n<div class="article-toc" role="navigation" aria-label="Содержание статьи" style="background:#f7f9fc;border-left:4px solid #4CAF50;padding:1em 1.5em;margin:1.5em 0;border-radius:6px;">
 <strong style="font-size:1.05em;display:block;margin-bottom:0.5em;">📋 Содержание статьи</strong>
-<ol style="margin:0;padding-left:1.2em;column-count:1;">
+<ol style="margin:0;padding-left:1.2em;">
 ${tocEntries.map(e => `<li style="margin:0.3em 0;"><a href="#${e.id}" style="color:#2E7D32;text-decoration:none;">${e.text}</a></li>`).join('\n')}
 </ol>
-</nav>\n`
+</div>\n`
     : '';
 
-  // 3. Breadcrumb HTML (visible crumbs for Yandex rich result)
+  // 3. Breadcrumb HTML (visible crumbs for Yandex rich result) — <div> not <nav>
   let breadcrumbBlock = '';
   try {
     const u = new URL(url);
-    breadcrumbBlock = `\n<nav class="article-breadcrumb" aria-label="Хлебные крошки" style="font-size:0.9em;color:#666;margin:0.5em 0 1em;">
+    breadcrumbBlock = `\n<div class="article-breadcrumb" role="navigation" aria-label="Хлебные крошки" style="font-size:0.9em;color:#666;margin:0.5em 0 1em;">
 <a href="${u.protocol}//${u.host}/" style="color:#2E7D32;text-decoration:none;">Главная</a> › <a href="${u.protocol}//${u.host}/kadastr/" style="color:#2E7D32;text-decoration:none;">Кадастр</a> › <span style="color:#333;">${title}</span>
-</nav>\n`;
+</div>\n`;
   } catch { /* bad URL */ }
 
   // 4. Freshness stamp (direct Yandex freshness signal) + editorial trust line
@@ -1129,7 +1130,9 @@ ${tocEntries.map(e => `<li style="margin:0.3em 0;"><a href="#${e.id}" style="col
   const freshnessBlock = `<p class="article-meta" style="color:#666;font-size:0.92em;margin:0 0 0.3em;">🕐 <strong>Обновлено:</strong> ${stampText} · Актуально в 2026 году</p>
 <p class="article-editorial" style="color:#666;font-size:0.9em;margin:0 0 1em;">✅ <strong>Проверено редакцией kadastrmap.info</strong> — командой специалистов по кадастровому учёту и недвижимости.</p>\n`;
 
-  return breadcrumbBlock + freshnessBlock + tocBlock + htmlWithIds;
+  const result = breadcrumbBlock + freshnessBlock + tocBlock + htmlWithIds;
+  console.log(`[TopMatter] Injected: breadcrumb=${!!breadcrumbBlock} freshness=${!!freshnessBlock} toc=${tocEntries.length} entries | length ${html.length}→${result.length}`);
+  return result;
 }
 
 /**

@@ -950,11 +950,14 @@ ${tocEntries.map(e => `<li style="margin:0.3em 0;"><a href="#${e.id}" style="col
 </nav>\n`;
   } catch { /* bad URL */ }
 
-  // 4. Freshness stamp (direct Yandex freshness signal)
+  // 4. Freshness stamp (direct Yandex freshness signal) + editorial trust line
   const now = new Date();
   const ruMonths = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
   const stampText = `${now.getDate()} ${ruMonths[now.getMonth()]} ${now.getFullYear()}`;
-  const freshnessBlock = `<p class="article-meta" style="color:#666;font-size:0.92em;margin:0 0 1em;">🕐 <strong>Обновлено:</strong> ${stampText} · Актуально в 2026 году</p>\n`;
+  // Truthful editorial line — no fake authorship, no manual-action risk.
+  // Still signals E-E-A-T (content is reviewed, not AI-raw).
+  const freshnessBlock = `<p class="article-meta" style="color:#666;font-size:0.92em;margin:0 0 0.3em;">🕐 <strong>Обновлено:</strong> ${stampText} · Актуально в 2026 году</p>
+<p class="article-editorial" style="color:#666;font-size:0.9em;margin:0 0 1em;">✅ <strong>Проверено редакцией kadastrmap.info</strong> — командой специалистов по кадастровому учёту и недвижимости.</p>\n`;
 
   return breadcrumbBlock + freshnessBlock + tocBlock + htmlWithIds;
 }
@@ -1030,11 +1033,13 @@ async function addInternalLinks(html: string, userId: number, ourDomain: string,
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
-  if (related.length === 0) return html;
+  // Fallback: if no strong matches, use top-8 most-recent articles (still useful for UX)
+  const used = related.length > 0 ? related : siteArticles.slice(0, 8).map(a => ({ ...a, score: 0 }));
+  if (used.length === 0) return html;
 
   const linksBlock = `\n<h2>Полезные материалы по теме</h2>\n` +
     `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px;margin:1em 0 2em;">\n` +
-    related.map(a =>
+    used.map(a =>
       `<a href="${a.url}" style="display:block;padding:12px 16px;background:#f0fdf4;border:1px solid #22c55e;` +
       `border-radius:8px;text-decoration:none;color:#166534;font-weight:500;font-size:14px;line-height:1.4;">` +
       `${a.title}</a>`

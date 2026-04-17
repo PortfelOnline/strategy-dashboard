@@ -805,32 +805,17 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
     }
   }
 
-  // AggregateRating — star rating in SERP (+30% CTR).
-  // Only injected when the article actually shows a reviews block (H3 "Отзывы клиентов"
-  // which the prompt instructs the LLM to add). Fake ratings = manual action risk,
-  // so we require visible review content as ground truth.
-  const hasReviewsBlock = /<h3[^>]*>[^<]*отзыв[^<]*<\/h3>/i.test(html);
-  if (hasReviewsBlock) {
-    // Use deterministic but realistic rating tied to URL hash so it doesn't fluctuate
-    let hash = 0;
-    for (let i = 0; i < url.length; i++) hash = ((hash << 5) - hash + url.charCodeAt(i)) | 0;
-    const ratingValue = (4.6 + (Math.abs(hash) % 40) / 100).toFixed(1);  // 4.60–4.99
-    const reviewCount = 80 + (Math.abs(hash) % 180);                     // 80–259
-    schemas.push({
-      '@context': 'https://schema.org',
-      '@type': 'Product',
-      name: title,
-      description: `Услуга заказа справки/выписки: ${keyword}`,
-      brand: { '@type': 'Brand', name: 'kadastrmap.info' },
-      aggregateRating: {
-        '@type': 'AggregateRating',
-        ratingValue,
-        reviewCount,
-        bestRating: 5,
-        worstRating: 1,
-      },
-    });
-  }
+  // AggregateRating schema REMOVED (2026-04-17).
+  // Previous version hash-generated rating 4.6-4.99 + 80-259 reviews whenever the
+  // article had an "отзывы" H3 block. But those reviews are LLM-written, not real
+  // customer feedback (kadastrmap.info has 0 WP comments). Publishing aggregate
+  // ratings that aren't tied to verifiable reviews is a manual-action risk under
+  // Google's spam policies and Yandex's "honesty of ratings" guideline.
+  //
+  // To re-enable: wire a real review source (WP comments, WooCommerce reviews, or
+  // a reviews plugin) and compute ratingValue/reviewCount from actual data.
+  // The visual "⭐ Отзывы клиентов" H3 block stays in the prompt for UX/trust but
+  // no longer claims a schema.org rating.
 
   // Article schema is omitted here — the WP theme outputs a full Article JSON-LD
   // in <head> via kadmap_article_jsonld(). Duplicating it in body content causes

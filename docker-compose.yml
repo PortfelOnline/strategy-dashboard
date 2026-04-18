@@ -1,10 +1,13 @@
+x-captcha-env: &captcha-env
+  CAPTCHA_2CAPTCHA_KEY: 40a98c9a3d6373ac7e5c3e210842f358
+  CAPTCHA_2CAPTCHA_MAX_DAILY: 150
+
 services:
   yandex_bot:
     image: yandex_bot:latest       # сборка отдельно: cd ~/yandex_bot && docker build -t yandex_bot .
     container_name: yandex_bot
     environment:
-      - CAPTCHA_2CAPTCHA_KEY=40a98c9a3d6373ac7e5c3e210842f358
-      - CAPTCHA_2CAPTCHA_MAX_DAILY=200
+      <<: *captcha-env
     volumes:
       - /root/yandex_bot/work:/app/work          # Firefox профили ботов
       - /root/yandex_bot/logs:/app/logs           # Логи
@@ -31,12 +34,11 @@ services:
     ports:
       - "4000:4000"
     environment:
-      - AUTH_PASSWORD=${AUTH_PASSWORD:-admin}
-      - BOT_DIR=/bot_work
-      - BOT_CONTAINER=yandex_bot
-      - PORT=4000
-      - CAPTCHA_2CAPTCHA_KEY=40a98c9a3d6373ac7e5c3e210842f358
-      - CAPTCHA_2CAPTCHA_MAX_DAILY=200
+      <<: *captcha-env
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-admin}
+      BOT_DIR: /bot_work
+      BOT_CONTAINER: yandex_bot
+      PORT: 4000
     volumes:
       - /root/yandex_bot/outputs:/bot_work/outputs  # разделяем с yandex_bot
       - /root/yandex_bot/logs:/bot_work/logs

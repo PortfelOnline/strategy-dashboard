@@ -69,14 +69,31 @@ interface CheckResult {
 // ── Commercial intent scoring ─────────────────────────────────────────────────
 
 /**
- * Score a slug by commercial keyword intent.
- * Returns 0 for SKIP (maps/free/gosuslugi), 1–3 for commercial value.
+ * Score a slug by commercial keyword intent (revenue potential).
+ * 2026-04-20: contrast усилен с 3:1 до ~20:1, чтобы прибыльные статьи
+ * гарантированно обрабатывались первыми при ограниченном runtime (180 мин).
+ *
+ * Weights:
+ *   0  — SKIP: карты/бесплатно/госуслуги (не приведут заказы)
+ *   1  — LOW: общая информация (что-такое, почему, зачем, история)
+ *   5  — MED: проблема-aware без прямого заказа (проверить, обременение, арест, снять)
+ *  20  — HIGH: прямой заказ документа + ценовой intent
+ *  30  — TOP-HIGH: "заказать + стоимость/цена" + "срочно" — максимальная конверсия
  */
 function commercialScore(slug: string): number {
   const s = slug.toLowerCase();
+  // SKIP — пустые запросы с т.з. конверсии
   if (/\bkarta\b|kadastrovaya-karta|publichnaya|besplatno|gosuslugi|cherez-mfc|sputnikovaya/.test(s)) return 0;
-  if (/zakazat|poluchit|oformit|spravka|vypiska|pasport/.test(s)) return 3;
-  if (/proverit|obremenenie|arest|zalog|sobstvennik|snyat/.test(s)) return 2;
+  // TOP-HIGH — commercial intent + price OR urgency (самые прибыльные)
+  if (
+    /(zakazat|poluchit|oformit).*(tsena|stoimost|srochno|bystro|onlajn)|(tsena|stoimost).*(zakazat|poluchit|vypisk|spravk|pasport)/.test(s)
+    || /srochno|bystro-online/.test(s)
+  ) return 30;
+  // HIGH — прямой заказ документа
+  if (/zakazat|poluchit|oformit|spravka|vypiska|pasport|kupit/.test(s)) return 20;
+  // MED — проблема-aware (владелец в поиске решения, но пока без intent купить)
+  if (/proverit|obremenenie|arest|zalog|sobstvennik|snyat|vosstanovit/.test(s)) return 5;
+  // LOW — информационные (дефолт)
   return 1;
 }
 
@@ -260,6 +277,17 @@ async function runLoop(): Promise<void> {
       .sort((a, b) => b.score - a.score);
 
     console.log(`[loop] Eligible: ${eligible.length} | On cooldown: ${allPosts.length - eligible.length}`);
+    // 2026-04-20: логируем topN чтобы видеть что самые прибыльные идут первыми
+    if (eligible.length > 0) {
+      const top5 = eligible.slice(0, 5).map(e => `${e.score.toFixed(1)} · ${e.post.slug}`).join('\n    ');
+      const scoreBuckets = eligible.reduce<Record<string, number>>((acc, e) => {
+        const bucket = e.score >= 30 ? 'TOP-HIGH' : e.score >= 20 ? 'HIGH' : e.score >= 5 ? 'MED' : 'LOW';
+        acc[bucket] = (acc[bucket] || 0) + 1;
+        return acc;
+      }, {});
+      console.log(`[loop] Priority queue: TOP-HIGH=${scoreBuckets['TOP-HIGH'] || 0} HIGH=${scoreBuckets['HIGH'] || 0} MED=${scoreBuckets['MED'] || 0} LOW=${scoreBuckets['LOW'] || 0}`);
+      console.log(`[loop] Top 5 by score:\n    ${top5}`);
+    }
 
     if (eligible.length === 0) {
       console.log(`[loop] All on cooldown — sleeping 1h...`);

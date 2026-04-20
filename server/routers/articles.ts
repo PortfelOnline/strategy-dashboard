@@ -184,7 +184,7 @@ const AUTHORITY_DOMAINS = /\b(?:rosreestr\.gov\.ru|consultant\.ru|garant\.ru|nal
 async function fetchCompetitorArticles(
   serpResults: { url: string; domain: string; title: string }[],
   ourDomain: string,
-  maxCompetitors = 5,
+  maxCompetitors = 3,
 ): Promise<{ position: number; domain: string; title: string; headings: string; content: string; wordCount: number; imageCount: number; faqCount: number; hasTable: boolean; altSamples: string[]; authLinkCount: number; internalLinkCount: number; videoCount: number; listCount: number; authDomains: string[] }[]> {
   // Try 2x more candidates so blocked top-5 (cian, domclick, etc.) get replaced
   // by lower-ranked pages that allow crawling
@@ -1460,7 +1460,10 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     ...yandexSerp.results.filter((r: any) => r.url && !seenDomains.has(r.domain)),
   ];
 
-  const competitors = await fetchCompetitorArticles(mergedSerp, ourDomain, 5);
+  // Анализируем ровно топ-3 конкурентов (fetchCompetitorArticles возьмёт 6 кандидатов
+  // как запас на случай блокировки парсинга у cian/domclick/rosreestr).
+  // 2026-04-20: 5 → 3, чтобы копировать стандарт ТОП-3, а не размывать средним по top-5.
+  const competitors = await fetchCompetitorArticles(mergedSerp, ourDomain, 3);
   const avgCompetitorWords = competitors.length
     ? Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length) : 1200;
   const maxCompetitorWords = competitors.length

@@ -123,29 +123,64 @@ export interface ParsedArticle {
 /**
  * Fetch a URL and extract article content using cheerio
  */
+// 2026-04-20: расширен пул UA + Yandex Browser для рус. сайтов.
+// Убран "ContentAnalyzer/1.0" — обнаружитель блокирует.
 const UA_LIST = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (compatible; ContentAnalyzer/1.0)',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:133.0) Gecko/20100101 Firefox/133.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 YaBrowser/25.1.0.0 Yowser/2.5 Safari/537.36',
 ];
 
 export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
+  // Skip punycode (cyrillic) домены — Node DNS нестабильно их резолвит (ENOTFOUND),
+  // тратим 3 × 45s = 2.25 мин на попытки. Fail fast.
+  try {
+    const hostname = new URL(url).hostname;
+    if (hostname.startsWith('xn--') || hostname.includes('.xn--')) {
+      console.warn(`[articleParser] SKIP punycode domain: ${hostname}`);
+      throw new Error(`punycode domain not supported: ${hostname}`);
+    }
+  } catch (e: any) {
+    if (e.message?.includes('punycode')) throw e;
+    // если URL.parse упал — пускай axios вернёт нормальную ошибку
+  }
+
   let lastError: any;
-  for (let attempt = 0; attempt < UA_LIST.length; attempt++) {
+  // Shuffle UA per call, чтобы cian/avito не запоминали "наш" первый UA.
+  const uas = [...UA_LIST].sort(() => Math.random() - 0.5);
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       const response = await axios.get(url, {
         headers: {
-          'User-Agent': UA_LIST[attempt],
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'User-Agent': uas[attempt],
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Cache-Control': 'no-cache',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
         },
-        timeout: 45000,
+        timeout: 25000, // было 45000 — Cian/Avito либо отвечают быстро, либо 403/429
         maxRedirects: 5,
+        validateStatus: (s) => s < 400,
       });
       return parseHtml(url, response.data as string);
     } catch (err: any) {
       lastError = err;
-      console.warn(`[articleParser] attempt ${attempt + 1} failed for ${url}: ${err?.message}`);
+      // 401/403/429 — сайт нас блокирует, повтор не поможет, bail early
+      const status = err?.response?.status;
+      if (status === 401 || status === 403 || status === 429) {
+        console.warn(`[articleParser] ${status} blocked ${url} — bailout`);
+        throw err;
+      }
+      console.warn(`[articleParser] attempt ${attempt + 1}/${MAX_ATTEMPTS} failed for ${url}: ${err?.message?.slice(0, 80)}`);
     }
   }
   throw lastError;

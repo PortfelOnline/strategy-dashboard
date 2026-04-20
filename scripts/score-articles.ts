@@ -14,7 +14,7 @@ import * as wp from '../server/_core/wordpress';
 import { getGoogleOpportunity, loadPositions } from './search-metrics';
 
 // Already improved — exclude from queue
-const IMPROVED = new Set([
+export const IMPROVED = new Set([
   'kak-snyat-obremenenie-s-obekta-nedvizhimosti-poshagovaya-instruktsiya',
   'kadastrovaya-stoimost-nedvizhimosti-v-rosreestre-kak-uznat',
   'kak-snyat-obremenenie-s-ipotechnoj-kvartiry',

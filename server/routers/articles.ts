@@ -1921,16 +1921,39 @@ export async function findAndInjectImages(
       ? cachedPrompts
       : await generateImagePrompts(title, titleKeywords, h2Sections, bodyText, fluxNeeded, h2Bodies);
     if (!cachedPrompts || cachedPrompts.length < fluxNeeded) saveImagePromptsToCache(slug, prompts);
-    console.log(`[Img] Generating ${fluxNeeded} FLUX images (sequential)`);
+    // 2026-04-20: параллельно по 2 (было sequential из-за прежних 500-ошибок Fireworks).
+    // Schnell отвечает быстрее → rate-limit менее чувствителен. Если серия 500 — автоматически
+    // падём на sequential для остатка.
+    const BATCH_SIZE = Number(process.env.FLUX_BATCH_SIZE ?? 2);
+    console.log(`[Img] Generating ${fluxNeeded} FLUX images (parallel batch=${BATCH_SIZE})`);
     const fluxValid: { id: number; url: string; width?: number; height?: number }[] = [];
-    for (let i = 0; i < Math.min(fluxNeeded, prompts.length); i++) {
-      try {
-        const imgUrl = await generateDallEImage(prompts[i]);
-        const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-flux-${i + 1}.jpg`);
-        fluxValid.push(up);
-        console.log(`[Img] FLUX[${i}] uploaded → WP id ${up.id}`);
-      } catch (e: any) {
-        console.warn(`[Img] FLUX[${i}] failed:`, e?.message);
+    const totalImgs = Math.min(fluxNeeded, prompts.length);
+    let rateLimitHits = 0;
+    let useSequential = false;
+    for (let start = 0; start < totalImgs; start += useSequential ? 1 : BATCH_SIZE) {
+      const batchEnd = Math.min(totalImgs, start + (useSequential ? 1 : BATCH_SIZE));
+      const indices = Array.from({ length: batchEnd - start }, (_, k) => start + k);
+      const results = await Promise.allSettled(
+        indices.map(async (i) => {
+          const imgUrl = await generateDallEImage(prompts[i]);
+          const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-flux-${i + 1}.jpg`);
+          return { i, up };
+        })
+      );
+      for (const [k, r] of results.entries()) {
+        const i = indices[k];
+        if (r.status === 'fulfilled') {
+          fluxValid.push(r.value.up);
+          console.log(`[Img] FLUX[${i}] uploaded → WP id ${r.value.up.id}`);
+        } else {
+          const msg = (r.reason as any)?.message || '';
+          console.warn(`[Img] FLUX[${i}] failed:`, msg);
+          if (/rate.?limit|500|429/i.test(msg)) rateLimitHits++;
+        }
+      }
+      if (!useSequential && rateLimitHits >= 2) {
+        console.warn(`[Img] 2+ rate-limit hits — switching to sequential for remaining`);
+        useSequential = true;
       }
     }
     // FLUX images go first — first one becomes the featured image

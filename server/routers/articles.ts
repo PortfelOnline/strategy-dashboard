@@ -4152,6 +4152,13 @@ function pickHeadingEmoji(text: string): string {
  * - "Важно:" / "Обратите внимание" → yellow info-box
  */
 function beautifyArticleHtml(html: string): string {
+  // Strip any inline JSON-LD script blocks the LLM may have hallucinated.
+  // We always (re)generate structured data programmatically in generateSchemaMarkup()
+  // via JSON.stringify — trusting LLM-authored JSON leads to invalid syntax (unescaped
+  // quotes inside HTML attrs, raw \n, bogus \ escapes). Confirmed on 14 kadastrmap posts
+  // flagged by GSC "Unparsable structured data" on 2026-04-20.
+  html = html.replace(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi, '');
+
   // Strip LLM placeholder images like <img src="image1.jpg"> / <img src="image12.jpg">
   // These are hallucinated by LLM and never replaced with real uploads
   html = html.replace(/<figure[^>]*>[\s]*<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>[\s]*(?:<figcaption[^>]*>.*?<\/figcaption>[\s]*)?<\/figure>/gis, '');

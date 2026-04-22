@@ -96,7 +96,8 @@ async function startServer() {
       const posts = await getLastNPublished("dzen", 20);
       res.set("Content-Type", "application/rss+xml; charset=utf-8");
       res.send(buildRssFeed(posts));
-    } catch {
+    } catch (err) {
+      console.error("[RSS /rss/dzen]", err);
       res.status(500).send("RSS error");
     }
   });

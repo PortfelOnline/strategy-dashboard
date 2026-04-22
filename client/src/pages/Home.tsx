@@ -101,6 +101,12 @@ export default function Home() {
                   Статьи
                 </Button>
                 <Button
+                  onClick={() => navigate('/backlinks')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  Backlinks
+                </Button>
+                <Button
                   onClick={() => window.open('http://localhost:3001', '_blank')}
                   className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
                 >

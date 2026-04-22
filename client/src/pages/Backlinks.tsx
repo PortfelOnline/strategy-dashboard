@@ -1,5 +1,4 @@
 import { useState } from "react";
-// @ts-ignore — backlinks router will be wired into appRouter in Task 9
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,20 +18,13 @@ export default function Backlinks() {
   const [genPl, setGenPl]         = useState<Platform>("dzen");
   const [busy, setBusy]           = useState(false);
 
-  // @ts-ignore
   const { data: queue, refetch } = trpc.backlinks.getQueue.useQuery();
-  // @ts-ignore
   const { data: stats }          = trpc.backlinks.getStats.useQuery();
 
-  // @ts-ignore
   const genMut    = trpc.backlinks.generate.useMutation();
-  // @ts-ignore
   const pubMut    = trpc.backlinks.publish.useMutation();
-  // @ts-ignore
   const retryMut  = trpc.backlinks.retry.useMutation();
-  // @ts-ignore
   const delMut    = trpc.backlinks.delete.useMutation();
-  // @ts-ignore
   const pubNext   = trpc.backlinks.publishNext.useMutation();
 
   const wrap = async (fn: () => Promise<unknown>, msg: string) => {

@@ -14,6 +14,9 @@ import { getSessionCookieOptions } from "./cookies";
 import { initOrchestrator } from "../orchestrator";
 import { initArticleScheduler } from "../articleScheduler";
 import { initContentScheduler } from "../contentScheduler";
+import { getLastNPublished } from "../backlinks.db";
+import { buildRssFeed } from "../publishers/rss";
+import { initBacklinkScheduler } from "../backlinkScheduler";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -88,6 +91,16 @@ async function startServer() {
     }
   });
 
+  app.get("/rss/dzen", async (_req, res) => {
+    try {
+      const posts = await getLastNPublished("dzen", 20);
+      res.set("Content-Type", "application/rss+xml; charset=utf-8");
+      res.send(buildRssFeed(posts));
+    } catch {
+      res.status(500).send("RSS error");
+    }
+  });
+
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
   // tRPC API
@@ -126,6 +139,7 @@ async function startServer() {
     initOrchestrator();
     initArticleScheduler();
     initContentScheduler();
+    initBacklinkScheduler();
   });
 }
 

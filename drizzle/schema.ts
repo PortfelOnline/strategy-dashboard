@@ -152,18 +152,18 @@ export const savedTopics = mysqlTable("savedTopics", {
 export type SavedTopic = typeof savedTopics.$inferSelect;
 export type InsertSavedTopic = typeof savedTopics.$inferInsert;
 
-export const backlinkPosts = mysqlTable("backlink_posts", {
+export const backlinkPosts = mysqlTable("backlinkPosts", {
   id:           int("id").autoincrement().primaryKey(),
   platform:     mysqlEnum("platform", ["dzen", "spark", "kw"]).notNull(),
-  targetUrl:    varchar("target_url", { length: 512 }).notNull(),
-  anchorText:   varchar("anchor_text", { length: 512 }).notNull(),
+  targetUrl:    varchar("targetUrl", { length: 512 }).notNull(),
+  anchorText:   varchar("anchorText", { length: 512 }).notNull(),
   title:        varchar("title", { length: 512 }),
   article:      text("article"),
   status:       mysqlEnum("status", ["pending", "publishing", "published", "failed"]).notNull().default("pending"),
-  publishedUrl: varchar("published_url", { length: 512 }),
-  publishedAt:  timestamp("published_at"),
-  errorMsg:     text("error_msg"),
-  createdAt:    timestamp("created_at").defaultNow().notNull(),
+  publishedUrl: varchar("publishedUrl", { length: 512 }),
+  publishedAt:  timestamp("publishedAt"),
+  errorMsg:     text("errorMsg"),
+  createdAt:    timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type BacklinkPost = typeof backlinkPosts.$inferSelect;

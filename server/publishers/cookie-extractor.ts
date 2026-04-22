@@ -1,11 +1,12 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 
 const execFileAsync = promisify(execFile);
 
-const SCRIPT_DIR   = path.join(process.cwd(), "server", "publishers");
+const SCRIPT_DIR   = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT_PATH  = path.join(SCRIPT_DIR, "extract-cookies.py");
 const COOKIES_PATH = path.join(SCRIPT_DIR, ".safari-cookies.json");
 const MAX_AGE_MS   = 6 * 60 * 60 * 1000; // 6 hours

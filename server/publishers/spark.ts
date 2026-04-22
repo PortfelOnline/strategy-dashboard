@@ -12,9 +12,9 @@ export async function publishToSpark(post: BacklinkPost): Promise<string> {
   );
 
   const browser = await (puppeteer as any).launch({ headless: true, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
-  const page    = await browser.newPage();
-
+  let page: any;
   try {
+    page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.setCookie(...sparkCookies.map((c: any) => ({
       name: c.name, value: c.value, domain: c.domain, path: c.path,
@@ -47,7 +47,7 @@ export async function publishToSpark(post: BacklinkPost): Promise<string> {
 
     return page.url();
   } catch (err) {
-    await page.screenshot({ path: `/tmp/backlinks-error-spark-${Date.now()}.png` }).catch(() => {});
+    if (page) await page.screenshot({ path: `/tmp/backlinks-error-spark-${Date.now()}.png` }).catch(() => {});
     throw err;
   } finally {
     await browser.close();

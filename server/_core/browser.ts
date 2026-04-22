@@ -8,16 +8,26 @@ let browser: Browser | null = null;
 let launchPromise: Promise<Browser> | null = null;
 
 async function launch(): Promise<Browser> {
+  const executablePath = process.env.CHROMIUM_PATH
+    || ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']
+        .find(p => { try { require('fs').accessSync(p); return true; } catch { return false; } });
   const b = await (puppeteer as any).launch({
     headless: true,
+    ...(executablePath ? { executablePath } : {}),
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-accelerated-2d-canvas',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-sync',
+      '--disable-translate',
+      '--mute-audio',
       '--no-first-run',
       '--disable-gpu',
-      '--window-size=1366,768',
+      '--single-process',
+      '--window-size=1280,720',
     ],
   });
   b.on('disconnected', () => { browser = null; launchPromise = null; });

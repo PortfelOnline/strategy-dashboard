@@ -138,19 +138,6 @@ async function fetchGoogleSerpPuppeteer(keyword: string): Promise<SerpData> {
 }
 
 export async function fetchGoogleSerp(keyword: string): Promise<SerpData> {
-  if (SERPAPI_KEY) {
-    try {
-      const data = await fetchViaSerpApi({ engine: 'google', q: keyword, hl: 'ru', gl: 'ru', num: '50' });
-      const organicResults: SerpResult[] = (data.organic_results || []).slice(0, 50).map((r: any, i: number) => ({
-        position: r.position ?? i + 1, title: r.title ?? '', url: r.link ?? '',
-        domain: extractDomain(r.link ?? ''), snippet: r.snippet ?? '',
-      }));
-      if (organicResults.length > 0) return { engine: 'google', keyword, results: organicResults };
-    } catch (err: any) {
-      console.warn('[SERP] SerpAPI Google error:', err?.message);
-    }
-  }
-  console.log('[SERP] Falling back to Puppeteer for Google:', keyword);
   return fetchGoogleSerpPuppeteer(keyword);
 }
 
@@ -238,25 +225,10 @@ async function fetchYandexSerpPuppeteer(keyword: string): Promise<SerpData> {
 }
 
 /**
- * Fetch Yandex search results — SerpAPI first, Puppeteer-stealth fallback
+ * Fetch Yandex search results — Yandex Cloud API, Puppeteer fallback
  */
 export async function fetchYandexSerp(keyword: string): Promise<SerpData> {
-  // Try Yandex Cloud Search API first (most reliable, $0.25/1000 deferred)
   const cloudResult = await fetchYandexCloudSerp(keyword);
   if (cloudResult) return cloudResult;
-
-  if (SERPAPI_KEY) {
-    try {
-      const data = await fetchViaSerpApi({ engine: 'yandex', text: keyword, lr: '213', lang: 'ru', numdoc: '50' });
-      const organicResults: SerpResult[] = (data.organic_results || []).slice(0, 50).map((r: any, i: number) => ({
-        position: r.position ?? i + 1, title: r.title ?? '', url: r.link ?? '',
-        domain: extractDomain(r.link ?? ''), snippet: r.snippet ?? '',
-      }));
-      if (organicResults.length > 0) return { engine: 'yandex', keyword, results: organicResults };
-    } catch (err: any) {
-      console.warn('[SERP] SerpAPI Yandex error:', err?.message);
-    }
-  }
-  console.log('[SERP] Falling back to Puppeteer for Yandex:', keyword);
   return fetchYandexSerpPuppeteer(keyword);
 }

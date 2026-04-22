@@ -6,6 +6,7 @@ import { buildRssFeed } from "./rss";
 import { publishToDzen } from "./dzen";
 import { publishToSpark } from "./spark";
 import { publishToKw } from "./kw";
+import { publishToTelegram } from "./telegram";
 import type { BacklinkPost } from "../../drizzle/schema";
 
 export type Platform = "dzen" | "spark" | "kw";
@@ -30,6 +31,17 @@ async function deployRss(): Promise<void> {
     console.log(`[Backlinks] RSS deployed (${posts.length} posts) → https://kadastrmap.info/rss-dzen.xml`);
   } catch (err: any) {
     console.error("[Backlinks] RSS deploy failed (non-fatal):", err.message);
+  }
+}
+
+async function deployTelegram(postId: number): Promise<void> {
+  try {
+    const { getBacklinkPost } = await import("../backlinks.db");
+    const post = await getBacklinkPost(postId);
+    if (!post) return;
+    await publishToTelegram(post);
+  } catch (err: any) {
+    console.error("[Backlinks] Telegram deploy failed (non-fatal):", err.message);
   }
 }
 
@@ -60,7 +72,8 @@ export async function generateAndQueue(platform: Platform, targetUrl?: string): 
   const id = await insertBacklinkPost({ platform, targetUrl: page.url, anchorText: page.anchor, title, article, status: "pending" });
 
   if (platform === "dzen") {
-    deployRss(); // fire-and-forget, non-blocking
+    deployRss();                   // fire-and-forget RSS deploy
+    deployTelegram(id);            // fire-and-forget Telegram post
   }
 
   return id;

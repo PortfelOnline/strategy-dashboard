@@ -80,8 +80,10 @@ export async function getStatsByPlatform(): Promise<{ dzen: number; spark: numbe
 export async function getLastNPublished(platform: "dzen" | "spark" | "kw", limit = 20): Promise<BacklinkPost[]> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  // Include pending+published so RSS feed has content even before Puppeteer publishing
+  const { inArray } = await import("drizzle-orm");
   return db.select().from(backlinkPosts)
-    .where(and(eq(backlinkPosts.platform, platform), eq(backlinkPosts.status, "published")))
-    .orderBy(desc(backlinkPosts.publishedAt))
+    .where(and(eq(backlinkPosts.platform, platform), inArray(backlinkPosts.status, ["pending", "published"])))
+    .orderBy(desc(backlinkPosts.createdAt))
     .limit(limit);
 }

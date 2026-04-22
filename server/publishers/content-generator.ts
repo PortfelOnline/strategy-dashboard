@@ -43,7 +43,9 @@ async function callLLM(system: string, user: string): Promise<string> {
     messages:  [{ role: "system", content: system }, { role: "user", content: user }],
   });
   const content = resp.choices[0]?.message.content;
-  return typeof content === "string" ? content : JSON.stringify(content);
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((c: any) => c.text ?? "").join("");
+  return "";
 }
 
 function parseJson(raw: string): any {

@@ -107,6 +107,12 @@ export default function Home() {
                   Backlinks
                 </Button>
                 <Button
+                  onClick={() => navigate('/aitrading')}
+                  className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
+                >
+                  AiTrading
+                </Button>
+                <Button
                   onClick={() => window.open('http://localhost:3001', '_blank')}
                   className="bg-white text-blue-600 hover:bg-blue-50 font-semibold"
                 >

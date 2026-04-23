@@ -110,3 +110,4 @@ temp/
 public/uploads/
 gen_image_temp.ts
 server/publishers/.safari-cookies.json
+.worktrees/

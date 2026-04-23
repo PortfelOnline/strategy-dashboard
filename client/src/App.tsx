@@ -15,6 +15,7 @@ import Bots from "@/pages/Bots";
 import Analytics from "@/pages/Analytics";
 import SeoTracker from "@/pages/SeoTracker";
 import Backlinks from "@/pages/Backlinks";
+import AiTrading from "@/pages/AiTrading";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/analytics" component={Analytics} />
       <Route path="/seo-tracker" component={SeoTracker} />
       <Route path="/backlinks" component={Backlinks} />
+      <Route path="/aitrading" component={AiTrading} />
       <Route path="/404" component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

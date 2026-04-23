@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { BarChart2, BookOpen, Bot, Brain, Calendar, FileText, Globe, LogOut, PanelLeft, Sparkles, TrendingUp, Users } from "lucide-react";
+import { BarChart2, BookOpen, Bot, Brain, Calendar, CandlestickChart, FileText, Globe, LogOut, PanelLeft, Sparkles, TrendingUp, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
@@ -34,6 +34,7 @@ const menuItems = [
   { icon: Calendar, label: "Calendar", path: "/calendar" },
   { icon: BarChart2, label: "Analytics", path: "/analytics" },
   { icon: TrendingUp, label: "SEO Tracker", path: "/seo-tracker" },
+  { icon: CandlestickChart, label: "AiTrading", path: "/aitrading" },
   { icon: Globe, label: "WordPress", path: "/wordpress" },
   { icon: Users, label: "Meta Accounts", path: "/accounts" },
   { icon: Bot, label: "Bots", path: null, href: "http://167.86.116.15:4000/login" },

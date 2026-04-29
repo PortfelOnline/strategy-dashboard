@@ -71,7 +71,7 @@ describe("generateDallEImage (Fireworks)", () => {
     expect(body.aspect_ratio).toBe("16:9");
   });
 
-  it("uses guidance_scale >= 7 for better prompt adherence", async () => {
+  it("uses guidance_scale 3.5 for distilled FLUX models (not schnell)", async () => {
     const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -80,13 +80,14 @@ describe("generateDallEImage (Fireworks)", () => {
     } as any);
 
     vi.resetModules();
-    setupEnv();
+    setupEnv({ IMAGE_MODEL: "accounts/fireworks/models/flux-1-pro-fp8" });
     const { generateDallEImage } = await import("./_core/imageGen");
     await generateDallEImage("person reviewing cadastral document");
 
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(options.body as string);
-    expect(body.guidance_scale).toBeGreaterThanOrEqual(7);
+    // FLUX distilled models work best at guidance_scale 3.5 (not 7+)
+    expect(body.guidance_scale).toBe(3.5);
   });
 
   it("throws if IMAGE_API_KEY is not configured", async () => {

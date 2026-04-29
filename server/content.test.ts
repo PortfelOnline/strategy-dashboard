@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
+vi.mock("./_core/llm", () => ({
+  invokeLLM: vi.fn().mockResolvedValue({
+    choices: [{ message: { content: JSON.stringify({ content: "test content", hashtags: ["#test"], platform: "instagram", language: "hinglish" }) } }],
+  }),
+}));
+
+vi.mock("./db", () => ({
+  createContentPost: vi.fn().mockResolvedValue({ insertId: 1 }),
+  getUserContentPosts: vi.fn().mockResolvedValue([]),
+  getContentTemplates: vi.fn().mockResolvedValue([]),
+  createContentTemplate: vi.fn().mockResolvedValue({ insertId: 1 }),
+}));
+
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
 function createAuthContext(): { ctx: TrpcContext } {

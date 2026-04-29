@@ -1,5 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { removePlaceholders } from './fix-placeholder-images';
+
+// Source has top-level await getAllPosts() at line 37 — must return empty data to load
+vi.mock('axios', () => ({
+  default: {
+    get: vi.fn().mockResolvedValue({
+      data: [],
+      headers: { 'x-wp-totalpages': '1' },
+    }),
+  },
+}));
 
 describe('removePlaceholders', () => {
   it('removes bare img tags with imageN.jpg src', () => {

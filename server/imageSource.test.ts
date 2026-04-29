@@ -4,7 +4,7 @@
  * All images must come from FLUX (Fireworks) or WP library only.
  * FLUX calls must be sequential (not parallel) to avoid Fireworks rate-limit 500 errors.
  */
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterAll } from 'vitest';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -21,8 +21,22 @@ vi.mock('./_core/wordpress', () => ({
 }));
 
 vi.mock('./_core/llm', () => ({
-  invokeLLM: vi.fn().mockResolvedValue('[]'),
+  invokeLLM: vi.fn().mockResolvedValue({
+    choices: [{ message: { content: '["prompt about cadastral document", "prompt about building", "third prompt", "fourth prompt", "fifth prompt", "sixth prompt"]' } }],
+  }),
 }));
+
+// Mock the file-based cache so it always misses
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    readFileSync: vi.fn().mockImplementation((path: string, ...args: any[]) => {
+      if (path.includes('article-image-prompts.json')) throw new Error('Cache miss');
+      return actual.readFileSync(path, ...args);
+    }),
+  };
+});
 
 describe('Image source policy', () => {
   beforeEach(() => {
@@ -79,6 +93,17 @@ describe('Image source policy', () => {
 });
 
 describe('generateImagePrompts — article-specific unique prompts', () => {
+  const OLD_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...OLD_ENV };
+    process.env.IMAGE_API_KEY = 'test_key';
+  });
+
+  afterAll(() => {
+    process.env = OLD_ENV;
+  });
+
   it('generateImagePrompts is exported and accepts h2Sections for article-specific prompts', async () => {
     vi.resetModules();
     const mod = await import('./routers/articles');
@@ -91,7 +116,7 @@ describe('generateImagePrompts — article-specific unique prompts', () => {
     const llmMock = llmModule.invokeLLM as ReturnType<typeof vi.fn>;
     llmMock.mockClear();
     llmMock.mockResolvedValueOnce({
-      choices: [{ message: { content: '["prompt about cadastral document", "prompt about building"]' } }],
+      choices: [{ message: { content: '["prompt about cadastral document", "prompt about building", "third prompt", "fourth prompt", "fifth prompt", "sixth prompt", "seventh prompt", "eighth prompt", "ninth prompt"]' } }],
     } as any);
 
     const { generateImagePrompts } = (await import('./routers/articles')) as any;
@@ -109,7 +134,7 @@ describe('generateImagePrompts — article-specific unique prompts', () => {
     const llmMock = llmModule.invokeLLM as ReturnType<typeof vi.fn>;
     llmMock.mockClear();
     llmMock.mockResolvedValueOnce({
-      choices: [{ message: { content: '["prompt with body context", "another prompt"]' } }],
+      choices: [{ message: { content: '["prompt with body context", "another prompt", "third prompt", "fourth prompt", "fifth prompt", "sixth prompt", "seventh prompt", "eighth prompt", "ninth prompt"]' } }],
     } as any);
 
     const { generateImagePrompts } = (await import('./routers/articles')) as any;
@@ -126,13 +151,12 @@ describe('generateImagePrompts — article-specific unique prompts', () => {
     const llmModule = await import('./_core/llm');
     const llmMock = llmModule.invokeLLM as ReturnType<typeof vi.fn>;
     llmMock.mockClear();
-    // First call = generateImagePrompts; return prompts array
-    llmMock.mockResolvedValueOnce({
-      choices: [{ message: { content: '["unique prompt from body text"]' } }],
+    // Mock needs to return enough prompts (>=6) to pass the length check in generateImagePrompts
+    llmMock.mockResolvedValue({
+      choices: [{ message: { content: '["unique prompt from body text", "second prompt", "third prompt", "fourth prompt", "fifth prompt", "sixth prompt", "seventh prompt", "eighth prompt", "ninth prompt"]' } }],
     } as any);
 
     const { findAndInjectImages } = await import('./routers/articles');
-    process.env.IMAGE_API_KEY = 'test_key';
     const bodyContent = 'Межевой план необходим для постановки земельного участка на кадастровый учёт';
     const html = `<h2>Что такое межевой план</h2><p>${bodyContent}</p>`;
     await findAndInjectImages('https://kadastrmap.info', 'user', 'pass', 'mezhevoj-plan', 'Межевой план', html, 1);
@@ -150,7 +174,7 @@ describe('generateImagePrompts — article-specific unique prompts', () => {
     const llmMock = llmModule.invokeLLM as ReturnType<typeof vi.fn>;
     llmMock.mockClear();
     llmMock.mockResolvedValueOnce({
-      choices: [{ message: { content: '["cinematic photo, sharp focus, 8k", "another"]' } }],
+      choices: [{ message: { content: '["cinematic photo, sharp focus, 8k", "another", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"]' } }],
     } as any);
 
     const { generateImagePrompts } = (await import('./routers/articles')) as any;

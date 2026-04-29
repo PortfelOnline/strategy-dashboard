@@ -34,29 +34,33 @@ async function getAllPosts() {
   return posts;
 }
 
-const posts = await getAllPosts();
-const affected = posts.filter(p => /<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>/.test(p.content));
-console.log(`\n[scan] Found ${affected.length} articles with placeholder images:\n`);
-for (const a of affected) console.log(`  ${a.slug} (id=${a.id})`);
+// Guard: only run CLI when executed directly, not when imported for tests
+const isMainModule = process.argv[1]?.replace(/\\/g, '/').includes('fix-placeholder-images');
+if (isMainModule) {
+  const posts = await getAllPosts();
+  const affected = posts.filter(p => /<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>/.test(p.content));
+  console.log(`\n[scan] Found ${affected.length} articles with placeholder images:\n`);
+  for (const a of affected) console.log(`  ${a.slug} (id=${a.id})`);
 
-if (affected.length === 0) {
-  console.log('\n✅ All clean!');
-  process.exit(0);
-}
-
-let fixed = 0, errors = 0;
-for (const a of affected) {
-  const cleaned = removePlaceholders(a.content);
-  try {
-    await axios.post(`${API}/posts/${a.id}`, { content: cleaned }, {
-      headers: { Authorization: AUTH, 'Content-Type': 'application/json' },
-    });
-    console.log(`  ✅ ${a.slug}`);
-    fixed++;
-  } catch (e: any) {
-    console.error(`  ❌ ${a.slug}: ${e?.response?.data?.message ?? e.message}`);
-    errors++;
+  if (affected.length === 0) {
+    console.log('\n✅ All clean!');
+    process.exit(0);
   }
-  await new Promise(r => setTimeout(r, 300));
+
+  let fixed = 0, errors = 0;
+  for (const a of affected) {
+    const cleaned = removePlaceholders(a.content);
+    try {
+      await axios.post(`${API}/posts/${a.id}`, { content: cleaned }, {
+        headers: { Authorization: AUTH, 'Content-Type': 'application/json' },
+      });
+      console.log(`  ✅ ${a.slug}`);
+      fixed++;
+    } catch (e: any) {
+      console.error(`  ❌ ${a.slug}: ${e?.response?.data?.message ?? e.message}`);
+      errors++;
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+  console.log(`\n[fix] Done: ${fixed} fixed, ${errors} errors`);
 }
-console.log(`\n[fix] Done: ${fixed} fixed, ${errors} errors`);

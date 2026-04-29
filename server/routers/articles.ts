@@ -2756,7 +2756,7 @@ ${competitorList}
 
       // Dedupe by URL, preserve engine label
       const seenUrls = new Set<string>();
-      const toFetch: typeof googleTop3 = [];
+      const toFetch: (typeof googleTop3[number] | typeof yandexTop3[number])[] = [];
       for (const r of [...googleTop3, ...yandexTop3]) {
         if (!seenUrls.has(r.url)) { seenUrls.add(r.url); toFetch.push(r); }
       }

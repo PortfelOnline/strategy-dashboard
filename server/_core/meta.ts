@@ -326,11 +326,12 @@ export async function getPagePosts(pageId: string, accessToken: string): Promise
   id: string;
   permalink_url: string;
   created_time: string;
+  message?: string;
 }>> {
   try {
     const response = await axios.get(`${META_FACEBOOK_API_URL}/${pageId}/feed`, {
       params: {
-        fields: 'id,permalink_url,created_time',
+        fields: 'id,permalink_url,created_time,message',
         limit: 100,
         access_token: accessToken,
       },
@@ -349,11 +350,12 @@ export async function getInstagramMedia(igAccountId: string, accessToken: string
   id: string;
   permalink: string;
   timestamp: string;
+  caption?: string;
 }>> {
   try {
     const response = await axios.get(`${META_GRAPH_API_URL}/${igAccountId}/media`, {
       params: {
-        fields: 'id,permalink,timestamp',
+        fields: 'id,permalink,timestamp,caption',
         limit: 100,
         access_token: accessToken,
       },

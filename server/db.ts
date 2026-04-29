@@ -18,7 +18,7 @@ export async function getDb() {
       // strings are already in UTC before Drizzle appends "+0000".
       const pool = mysql.createPool({ uri: process.env.DATABASE_URL, dateStrings: true });
       pool.on("connection", (conn) => { conn.query("SET time_zone='+00:00'"); });
-      _db = drizzle(pool);
+      _db = drizzle(pool) as unknown as ReturnType<typeof drizzle>;
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;

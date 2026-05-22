@@ -56,7 +56,7 @@ export default function Home() {
         <div className="container max-w-6xl mx-auto">
           <div className="flex justify-between items-center mb-4">
             <h1 className="text-3xl md:text-4xl font-bold">AI Consultant India Strategy</h1>
-            {isAuthenticated && (
+            {(
               <div className="flex gap-3 flex-wrap">
                 <Button
                   onClick={() => navigate('/generator')}

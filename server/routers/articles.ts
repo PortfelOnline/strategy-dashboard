@@ -2195,6 +2195,17 @@ async function autoPublishToWP(
   });
   htmlContent = htmlWithImages;
 
+  // Last-chance guard: never publish a placeholder title to WP. parsed.title can be
+  // already corrupted from a previous bad run and the upstream fallback may surface it.
+  if (isPlaceholderTitle(title)) {
+    console.warn(`[WP] BLOCKED placeholder title for "${slug}": "${title}". Skipping wp.updatePost.`);
+    return;
+  }
+  if (opts.metaDescription && isPlaceholderMeta(opts.metaDescription)) {
+    console.warn(`[WP] Dropping placeholder metaDescription for "${slug}": "${opts.metaDescription}"`);
+    delete opts.metaDescription;
+  }
+
   await wp.updatePost(account.siteUrl, account.username, account.appPassword, post.id, {
     title,
     content: htmlContent,

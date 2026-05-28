@@ -6,6 +6,7 @@ import { parseArticleFromUrl, scanCatalog } from "../_core/articleParser";
 import { fetchGoogleSerp, fetchYandexSerp, SerpData } from "../_core/serpParser";
 import { fetchGscPageQueries, formatGscBlock } from "../_core/gscClient";
 import { invokeLLM } from "../_core/llm";
+import { ensureMinFaq } from "../_core/quality-fixers";
 import { generateDallEImage } from "../_core/imageGen";
 import * as wp from "../_core/wordpress";
 import { createContentPost } from "../db";
@@ -1564,6 +1565,9 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
   improvedContent = stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent)));
   improvedContent = beautifyArticleHtml(improvedContent);
 
+  // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+  improvedContent = ensureMinFaq(improvedContent, serpKeyword, 10);
+
   // QA log
   checkArticleQuality(improvedContent, url, targetWords, 10);
 
@@ -1674,7 +1678,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   // максимум +25% в aggressive, +15% в обычном. Floor учитывает минимум для коммерч. статей.
   const aggressive = process.env.LOOP_AGGRESSIVE_MODE === '1';
   const wordMultiplier = aggressive ? 1.25 : 1.15;
-  const targetWords = Math.max(aggressive ? 2800 : 2200, Math.round(maxCompetitorWords * wordMultiplier));
+  const targetWords = Math.max(aggressive ? 3000 : 2400, Math.round(maxCompetitorWords * wordMultiplier));
 
   // Competitor media/structure stats — used to set our target
   const avgCompetitorImages = competitors.length
@@ -1687,7 +1691,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   // 2026-04-20 v2: не отстаём от конкурентов — floor 8, cap 16, target = maxCompetitor+1.
   // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
   // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
-  const targetImages = Math.max(8, Math.min(16, maxCompetitorImages + 1));
+  const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
   const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
   // New deep-competitor stats (auth links, internal links, videos, alts)
@@ -1896,6 +1900,9 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
 
   improvedContent = beautifyArticleHtml(improvedContent);
 
+  // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+  improvedContent = ensureMinFaq(improvedContent, keyword, targetFaq);
+
   // QA log: verify article meets TOP-3 standards
   checkArticleQuality(improvedContent, url, targetWords, targetFaq);
 
@@ -1949,7 +1956,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   // Each +5 images costs ~2-3 min per article, trade-off vs matching competitor parity.
   // 2026-04-20 v2: cap 12→16, floor 6→8 (sync with targetImages — паритет с конкурентами)
   const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 16);
-  const imagesForWp = Math.min(Math.max(targetImages, 8), fluxCap);
+  const imagesForWp = Math.min(Math.max(targetImages, 10), fluxCap);
   console.log(`[Img] Competitors: max=${maxCompetitorImages}, avg=${avgCompetitorImages} → our target=${imagesForWp}`);
   await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
@@ -2223,7 +2230,7 @@ async function autoPublishToWP(
   if (opts.focusKeyword)    postMeta._yoast_wpseo_focuskw  = opts.focusKeyword;
   if (opts.keywords?.length) postMeta.meta_keywords = opts.keywords.join(', ');
   await axiosInst.post(
-    `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}`,
+    `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}/`,
     { meta: postMeta },
     { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
   ).catch((e: any) => console.warn('[WP] meta update failed:', e?.message));
@@ -2344,7 +2351,7 @@ export const articlesRouter = router({
       // 2026-04-20 v2: не отстаём от конкурентов — floor 8, cap 16, target = maxCompetitor+1.
   // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
   // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
-  const targetImages = Math.max(8, Math.min(16, maxCompetitorImages + 1));
+  const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
       const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
       // Extract unique H2 topics from competitors missing in our article
@@ -2493,6 +2500,9 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
       improvedContent = filterGarbageH2(improvedContent, serpKeyword);
       improvedContent = normalizeHeadings(improvedContent);
       improvedContent = beautifyArticleHtml(improvedContent);
+
+      // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+      improvedContent = ensureMinFaq(improvedContent, serpKeyword, targetFaq);
 
       // QA log: verify article meets TOP-3 standards
       checkArticleQuality(improvedContent, input.url, targetWords, targetFaq);
@@ -3306,7 +3316,7 @@ ${competitorContext}
         };
         if (metaDescription) metaPayload['_yoast_wpseo_metadesc'] = metaDescription;
         await axiosInst2.post(
-          `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}`,
+          `${siteBase}/wp-json/kadastrmap/v1/post-meta/${post.id}/`,
           { meta: metaPayload },
           { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
         ).catch((e: any) => console.warn('[Articles] meta update failed:', e?.message));
@@ -3482,7 +3492,7 @@ ${competitorContext}
       if (metaDesc)     yoastMeta._yoast_wpseo_metadesc = metaDesc;
       if (focusKeyword) yoastMeta._yoast_wpseo_focuskw  = focusKeyword;
       await axiosInst.post(
-        `${siteBase}/wp-json/kadastrmap/v1/post-meta/${draft.id}`,
+        `${siteBase}/wp-json/kadastrmap/v1/post-meta/${draft.id}/`,
         { meta: yoastMeta },
         { headers }
       ).catch((e: any) => console.warn('[Draft] meta update failed:', e?.message));

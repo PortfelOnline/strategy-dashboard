@@ -7,7 +7,7 @@ import { fetchGoogleSerp, fetchYandexSerp, SerpData } from "../_core/serpParser"
 import { fetchGscPageQueries, formatGscBlock } from "../_core/gscClient";
 import { invokeLLM } from "../_core/llm";
 import { ensureMinFaq } from "../_core/quality-fixers";
-import { generateDallEImage } from "../_core/imageGen";
+import { generateImageWithFallback } from "../_core/imageGen";
 import * as wp from "../_core/wordpress";
 import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
@@ -2052,7 +2052,7 @@ export async function findAndInjectImages(
     .slice(0, imagesNeeded)
     .map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height }));
 
-  // FLUX generation — sequential to avoid Fireworks rate-limit 500 errors
+  // Image generation via agy (Gemini CLI) — fills gap when WP library is short — sequential to avoid Fireworks rate-limit 500 errors
   if (process.env.IMAGE_API_KEY) {
     const fluxNeeded = validMedia.length < imagesNeeded
       ? imagesNeeded - validMedia.length
@@ -2083,7 +2083,7 @@ export async function findAndInjectImages(
       const indices = Array.from({ length: batchEnd - start }, (_, k) => start + k);
       const results = await Promise.allSettled(
         indices.map(async (i) => {
-          const imgUrl = await generateDallEImage(prompts[i]);
+          const imgUrl = await generateImageWithFallback(prompts[i]);
           const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-flux-${i + 1}.jpg`);
           return { i, up };
         })
@@ -2102,7 +2102,7 @@ export async function findAndInjectImages(
               // One retry с усиленным промптом — добавляем "STRICTLY NO <issue>"
               const retryPrompt = prompts[i] + `. STRICT REJECT ON: ${check.issues.map(x => `NO ${x}`).join(', ')}. Russian middle-class context only, no western/EU aesthetic.`;
               try {
-                const newUrl = await generateDallEImage(retryPrompt);
+                const newUrl = await generateImageWithFallback(retryPrompt);
                 const newUp = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, newUrl, `${slug}-flux-${i + 1}-v2.jpg`);
                 fluxValid.push(newUp);
                 console.log(`[Img] FLUX[${i}] regenerated → WP id ${newUp.id} (v2)`);
@@ -3206,7 +3206,7 @@ ${competitorContext}
       const imageResults = await Promise.all(
         input.generateImage
           ? (imagePrompts as string[]).map((p) =>
-              generateDallEImage(p).catch((e) => { console.error('[Articles] DALL-E failed:', e.message); return null; })
+              generateImageWithFallback(p).catch((e) => { console.error('[Articles] ImgGen failed:', e.message); return null; })
             )
           : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)]
       );
@@ -3434,9 +3434,9 @@ ${competitorContext}
         console.log(`[Draft] Generating ${dalleNeeded} DALL-E images (confirmed: ${confirmedImages.length})`);
         const dalleUrls = await Promise.all(
           imagePrompts.slice(0, dalleNeeded).map((p: string, i: number) =>
-            generateDallEImage(p)
-              .then(url => { console.log(`[Draft] DALL-E[${i}] OK`); return url; })
-              .catch((e: any) => { console.warn(`[Draft] DALL-E[${i}] failed:`, e?.message); return null; })
+            generateImageWithFallback(p)
+              .then(url => { console.log(`[Draft] ImgGen[${i}] OK`); return url; })
+              .catch((e: any) => { console.warn(`[Draft] ImgGen[${i}] failed:`, e?.message); return null; })
           )
         );
         uploadedDalle = await Promise.all(

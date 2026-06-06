@@ -127,6 +127,14 @@ function tick(): void {
 
 export function initArticleScheduler(): void {
   if (tickTimer) return;
+  const config = getSchedulerConfig();
+  const next = nextRunIso(config);
+  console.log(
+    `[ArticleScheduler] Init — enabled=${config.enabled}, ` +
+    `${config.articlesPerNight} статей/ночь в ${String(config.hour).padStart(2, '0')}:00, ` +
+    `skipImprovedDays=${config.skipImprovedDays}, lastRun=${getLastRunDate() ?? 'никогда'}, ` +
+    `nextRun=${next ?? 'отключён'} (tick каждые ${TICK_MS / 60000} мин)`,
+  );
   tickTimer = setInterval(tick, TICK_MS);
   tick();
 }

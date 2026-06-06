@@ -2143,6 +2143,53 @@ export async function findAndInjectImages(
   return { html: htmlWithImages, featuredMediaId: validMedia[0]?.id };
 }
 
+/**
+ * Pre-publish broken-image guard: HEAD-checks every absolute <img> URL and removes
+ * any that don't return 2xx (404, 5xx, DNS fail). Bare-filename placeholders are already
+ * stripped in beautifyArticleHtml; this catches dead absolute URLs (deleted WP media,
+ * failed FLUX uploads, expired stock URLs) before they reach the live page.
+ * Returns the cleaned HTML and a list of removed URLs for logging.
+ */
+async function removeBrokenImages(html: string): Promise<{ html: string; removed: string[] }> {
+  const $ = cheerio.load(html, { xml: { decodeEntities: false } });
+  const imgs = $('img').toArray();
+  const srcs = Array.from(new Set(
+    imgs.map((el) => $(el).attr('src') || '').filter((s) => /^https?:\/\//i.test(s)),
+  ));
+  if (srcs.length === 0) return { html, removed: [] };
+
+  const checkOne = async (src: string): Promise<boolean> => {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      let r = await fetch(src, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal });
+      // Some servers reject HEAD (405) but serve GET — retry with a ranged GET
+      if (r.status === 405 || r.status === 501) {
+        r = await fetch(src, { method: 'GET', redirect: 'follow', signal: ctrl.signal, headers: { Range: 'bytes=0-0' } });
+      }
+      return r.ok || r.status === 206;
+    } catch {
+      return false; // network/DNS/timeout → treat as broken
+    } finally {
+      clearTimeout(t);
+    }
+  };
+
+  const results = await Promise.allSettled(srcs.map(checkOne));
+  const broken = new Set<string>();
+  results.forEach((r, i) => { if (r.status === 'fulfilled' && r.value === false) broken.add(srcs[i]); });
+  if (broken.size === 0) return { html, removed: [] };
+
+  $('img').each((_: number, el: any) => {
+    const src = $(el).attr('src') || '';
+    if (broken.has(src)) {
+      const fig = $(el).closest('figure');
+      if (fig.length) fig.remove(); else $(el).remove();
+    }
+  });
+  return { html: $.html(), removed: Array.from(broken) };
+}
+
 /** Truncate meta description to ≤155 chars at word boundary (Google shows ~155-160 chars). */
 function truncateMetaDesc(text: string, max = 155): string {
   if (!text) return text;
@@ -2201,6 +2248,13 @@ async function autoPublishToWP(
     return { html: htmlContent, featuredMediaId: undefined };
   });
   htmlContent = htmlWithImages;
+
+  // Broken-image guard: drop any <img> whose absolute URL is dead (404/5xx/timeout)
+  // before publishing — prevents the "?" broken-image box on the live page.
+  const { html: htmlChecked, removed: brokenImgs } = await removeBrokenImages(htmlContent)
+    .catch((e: any) => { console.warn('[Img] Broken-image check failed:', e?.message); return { html: htmlContent, removed: [] as string[] }; });
+  if (brokenImgs.length) console.warn(`[Img] Removed ${brokenImgs.length} broken image(s) for "${slug}": ${brokenImgs.join(', ')}`);
+  htmlContent = htmlChecked;
 
   // Last-chance guard: never publish a placeholder title to WP. parsed.title can be
   // already corrupted from a previous bad run and the upstream fallback may surface it.
@@ -4187,8 +4241,11 @@ function beautifyArticleHtml(html: string): string {
 
   // Strip LLM placeholder images like <img src="image1.jpg"> / <img src="image12.jpg">
   // These are hallucinated by LLM and never replaced with real uploads
-  html = html.replace(/<figure[^>]*>[\s]*<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>[\s]*(?:<figcaption[^>]*>.*?<\/figcaption>[\s]*)?<\/figure>/gis, '');
-  html = html.replace(/<img[^>]*src=["']image\d+\.jpg["'][^>]*\/?>/gi, '');
+  // Match any bare-filename src (no path separator "/", no protocol "://") — real images are
+  // ALWAYS absolute URLs or theme paths containing "/", so a bare "name.ext" is always an artifact.
+  // (Incident 2026-06-06: karta-po-kadastrovomu-nomeru had 8 live placeholderN.jpg → broken images.)
+  html = html.replace(/<figure[^>]*>\s*<img[^>]*\ssrc=["'][^"':\/]+\.(?:jpe?g|png|webp|gif|avif)["'][^>]*\/?>\s*(?:<figcaption[^>]*>.*?<\/figcaption>\s*)?<\/figure>/gis, '');
+  html = html.replace(/<img[^>]*\ssrc=["'][^"':\/]+\.(?:jpe?g|png|webp|gif|avif)["'][^>]*\/?>/gi, '');
 
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 

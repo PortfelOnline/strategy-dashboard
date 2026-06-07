@@ -1,0 +1,33 @@
+# strategy-dashboard на сервере n (EU). Запросы (Gemini и пр.) идут из EU нативно.
+# ВАЖНО: перед запуском перенести БД strategy_dashboard с мака:
+#   mac:  mysqldump -u root strategy_dashboard > sd.sql
+#   n:    docker compose exec -T db mysql -uroot -p<pass> strategy_dashboard < sd.sql
+services:
+  db:
+    image: mariadb:10.6
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${SD_DB_PASSWORD}
+      MARIADB_DATABASE: strategy_dashboard
+    volumes:
+      - sd_db:/var/lib/mysql
+    networks: [sdnet]
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # переопределяем локальный DATABASE_URL на контейнерный
+      DATABASE_URL: mysql://root:${SD_DB_PASSWORD}@db:3306/strategy_dashboard
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on: [db]
+    networks: [sdnet]
+
+networks:
+  sdnet:
+
+volumes:
+  sd_db:

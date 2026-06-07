@@ -4429,11 +4429,15 @@ function injectCtasIntoHtml(
   ctaTexts: string[],
   ctaBlock: (text: string) => string
 ): string {
-  // Split at </h2> to find injection points
+  // ВАЖНО: НЕ добавляем CTA в самом конце статьи — шаблон сайта (/kadastr/ wrapper)
+  // уже выводит кнопку заказа документов в конце. Иначе две кнопки подряд (дубль).
+  // Ставим только середину статьи (pos1, pos2).
   const parts = html.split('</h2>');
   if (parts.length <= 2) {
-    // Few headings — inject at end only
-    return html + ctaBlock(ctaTexts[2] || ctaTexts[0]);
+    // Мало заголовков — одна CTA в середине, без концевой (шаблон даёт концевую)
+    return parts.length === 2
+      ? parts[0] + '</h2>' + ctaBlock(ctaTexts[0]) + parts[1]
+      : html;
   }
 
   const total = parts.length - 1; // number of </h2> occurrences
@@ -4441,7 +4445,7 @@ function injectCtasIntoHtml(
   const pos2 = Math.max(pos1 + 1, Math.floor((total * 2) / 3));
 
   return parts.reduce((acc, part, i) => {
-    if (i === parts.length - 1) return acc + part + ctaBlock(ctaTexts[2] || ctaTexts[0]);
+    if (i === parts.length - 1) return acc + part; // конец — без CTA (шаблон добавит сам)
     const closing = '</h2>';
     if (i === pos1 - 1) return acc + part + closing + ctaBlock(ctaTexts[0]);
     if (i === pos2 - 1) return acc + part + closing + ctaBlock(ctaTexts[1] || ctaTexts[0]);

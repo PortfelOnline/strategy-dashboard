@@ -184,6 +184,7 @@ export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
         timeout: 25000, // было 45000 — Cian/Avito либо отвечают быстро, либо 403/429
         maxRedirects: 5,
         validateStatus: (s) => s < 400,
+        proxy: false, // фетчить напрямую (датацентр-прокси мёртв → таймауты 0/3 конкурентов; домашний IP лучше для скрейпинга)
       });
       return parseHtml(url, response.data as string);
     } catch (err: any) {

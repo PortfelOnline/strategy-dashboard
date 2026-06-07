@@ -18,28 +18,33 @@ async function main() {
   if (!acc) throw new Error('No WP account for userId=1');
   const base = acc.siteUrl.replace(/\/$/, '');
 
-  const urls: string[] = [];
+  const axios = (await import('axios')).default;
+  const apiBase = `${base}/wp-json/wp/v2`;
+  const authH = 'Basic ' + Buffer.from(`${acc.username}:${acc.appPassword}`).toString('base64');
+
+  // По ОДНОЙ: опубликовать stub → сразу сгенерировать → следующая.
+  // Так тонкая заглушка живёт публично только ~время её собственной генерации (минимум для URL-fetch),
+  // а не висит, пока очередь дойдёт. Новые страницы — без трафика, без индексации (outsearch ставится в конце).
   for (const t of topics.slice(0, limit)) {
-    const existing = await wp.findPostBySlug(acc.siteUrl, acc.username, acc.appPassword, t.slug);
     const url = `${base}/kadastr/${t.slug}/`;
+    const existing = await wp.findPostBySlug(acc.siteUrl, acc.username, acc.appPassword, t.slug);
     if (existing) {
-      console.log(`[New] уже существует slug=${t.slug} (id ${existing.id}) — в рерайт без пересоздания`);
-      urls.push(url);
-      continue;
+      // черновик/существующий → опубликовать (нужен публичный URL для rewriteArticle)
+      await axios.post(`${apiBase}/posts/${existing.id}/`, { status: 'publish' },
+        { headers: { Authorization: authH, 'Content-Type': 'application/json' }, maxRedirects: 0, proxy: false });
+      console.log(`[New] существует slug=${t.slug} (id ${existing.id}) → publish`);
+    } else {
+      const seed = `<h1>${t.title}</h1>\n<p>${t.keyword} — подробное практическое руководство 2026 года.</p>`;
+      const post = await wp.publishPost(acc.siteUrl, acc.username, acc.appPassword, {
+        title: t.title, content: seed, status: 'publish', slug: t.slug, categories: [2],
+      });
+      console.log(`[New] stub создан id=${post.id} slug=${t.slug}`);
     }
-    const seed = `<h1>${t.title}</h1>\n<p>${t.keyword} — подробное практическое руководство 2026 года.</p>`;
-    const post = await wp.publishPost(acc.siteUrl, acc.username, acc.appPassword, {
-      title: t.title, content: seed, status: 'publish', slug: t.slug, categories: [2],
-    });
-    console.log(`[New] stub создан id=${post.id} slug=${t.slug} → ${url}`);
-    urls.push(url);
-    await new Promise(r => setTimeout(r, 3000));
+    if (stubOnly) continue;
+    await new Promise(r => setTimeout(r, 2000));
+    console.log(`[New] → генерация ${t.slug}`);
+    await runBatchRewrite(1, [url]);  // сразу заполнить эту одну
   }
-
-  if (stubOnly) { console.log(`[New] stub-only: ${urls.length} URL созданы, рерайт пропущен.`); return; }
-
-  console.log(`[New] ${urls.length} URL → запуск rewriteArticle (генерация из конкурентов)`);
-  await runBatchRewrite(1, urls);
   console.log('[New] Готово.');
 }
 

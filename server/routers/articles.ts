@@ -13,24 +13,48 @@ import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
 import * as wordpressDb from "../wordpress.db";
 
-// ── IndexNow: submit URLs to Yandex + Bing + Google sitemap ping ─────────────
-async function submitToIndexNow(url: string): Promise<void> {
-  const key = process.env.INDEXNOW_API_KEY;
-  if (!key) return;
-  const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
-  if (!host) return;
-  const body = JSON.stringify({ host, key, keyLocation: `https://${host}/${key}.txt`, urlList: [url] });
+// ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
+//    который Google отключил в 2023). Требует, чтобы service account был OWNER ресурса в GSC.
+async function submitToGoogleIndexing(url: string): Promise<void> {
+  const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_KEY || process.env.GSC_KEY_FILE;
+  if (!keyFile) return;
   try {
-    await Promise.all([
-      fetch('https://yandex.com/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
-      fetch('https://api.indexnow.org/indexnow', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }),
-      // Google sitemap ping — notifies Google of updated content
-      fetch(`https://www.google.com/ping?sitemap=https://${host}/sitemap_index.xml`),
-    ]);
-    console.log(`[IndexNow] Submitted to Yandex+Bing+Google: ${url}`);
-  } catch (err) {
-    console.warn(`[IndexNow] Failed for ${url}:`, err);
+    const { google } = await import('googleapis');
+    const auth = new google.auth.GoogleAuth({
+      keyFile,
+      scopes: ['https://www.googleapis.com/auth/indexing'],
+    });
+    const client = await auth.getClient();
+    const res = await (client as any).request({
+      url: 'https://indexing.googleapis.com/v3/urlNotifications:publish',
+      method: 'POST',
+      data: { url, type: 'URL_UPDATED' },
+    });
+    console.log(`[Reindex:Google] ${url} → HTTP ${res.status}`);
+  } catch (err: any) {
+    console.warn(`[Reindex:Google] Failed for ${url}: ${err?.response?.data?.error?.message || err?.message}`);
   }
+}
+
+// ── Переобход: Яндекс+Bing через IndexNow, Google через Indexing API ─────────────
+async function submitToIndexNow(url: string): Promise<void> {
+  const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+  const key = process.env.INDEXNOW_API_KEY;
+  const tasks: Promise<unknown>[] = [];
+
+  if (key && host) {
+    const body = JSON.stringify({ host, key, keyLocation: `https://${host}/${key}.txt`, urlList: [url] });
+    const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body } as const;
+    tasks.push(
+      fetch('https://yandex.com/indexnow', opts),      // Яндекс
+      fetch('https://api.indexnow.org/indexnow', opts), // Bing + общий IndexNow
+    );
+  }
+  tasks.push(submitToGoogleIndexing(url));              // Google Indexing API
+
+  const results = await Promise.allSettled(tasks);
+  const ok = results.filter(r => r.status === 'fulfilled').length;
+  console.log(`[Reindex] ${url} → ${ok}/${results.length} (Яндекс/Bing IndexNow + Google Indexing API)`);
 }
 
 // ── In-memory cache: SERP results + competitor pages (no TTL — lives until server restart) ───

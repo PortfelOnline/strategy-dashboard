@@ -374,21 +374,26 @@ export async function publishPost(
   siteUrl: string,
   username: string,
   appPassword: string,
-  post: { title: string; content: string; status: 'publish' | 'draft' }
+  post: { title: string; content: string; status: 'publish' | 'draft'; slug?: string; categories?: number[] }
 ): Promise<WpPost> {
   try {
     const response = await axios.post(
-      `${apiBase(siteUrl)}/posts`,
+      // Trailing slash required (см. updatePost): без него nginx 301 → POST→GET → пост НЕ создаётся.
+      `${apiBase(siteUrl)}/posts/`,
       {
         title: post.title,
         content: post.content,
         status: post.status,
+        ...(post.slug ? { slug: post.slug } : {}),
+        ...(post.categories ? { categories: post.categories } : {}),
       },
       {
         headers: {
           Authorization: basicAuth(username, appPassword),
           'Content-Type': 'application/json',
         },
+        maxRedirects: 0,
+        proxy: false,
       }
     );
     return { id: response.data.id, link: response.data.link };

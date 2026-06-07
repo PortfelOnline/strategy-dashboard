@@ -117,17 +117,26 @@ export async function generateGeminiImage(prompt: string, timeoutMs = 90_000): P
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  // Gemini API гео-блокирует часть локаций (FAILED_PRECONDITION "User location is not
+  // supported"). GEMINI_PROXY (HTTP-прокси в поддерживаемом регионе, напр. EU-сервер n)
+  // направляет запрос через разрешённый IP.
+  const fetchOpts: any = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseModalities: ['IMAGE'] },
+    }),
+    signal: controller.signal,
+  };
+  if (process.env.GEMINI_PROXY) {
+    const { ProxyAgent } = await import('undici');
+    fetchOpts.dispatcher = new ProxyAgent(process.env.GEMINI_PROXY);
+  }
+
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseModalities: ['IMAGE'] },
-      }),
-      signal: controller.signal,
-    });
+    response = await fetch(url, fetchOpts);
   } finally {
     clearTimeout(timer);
   }

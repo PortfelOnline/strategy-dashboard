@@ -2078,17 +2078,21 @@ export async function findAndInjectImages(
     .slice(0, 3)
     .join(' ');
 
-  // WP Media Library first
-  const libraryImages = await wp.searchMedia(siteUrl, username, appPassword, titleKeywords, 8)
-    .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[]);
-
-  console.log(`[Img] WP library: ${libraryImages.length}`);
+  // По умолчанию форсим СВЕЖИЕ FLUX-картинки (релевантные теме), НЕ переиспользуем
+  // старый generic-сток из WP-библиотеки (2018-е jpg). Включить библиотеку обратно:
+  // USE_WP_LIBRARY_IMAGES=1.
+  const useLibrary = process.env.USE_WP_LIBRARY_IMAGES === '1';
+  const libraryImages = useLibrary
+    ? await wp.searchMedia(siteUrl, username, appPassword, titleKeywords, 8)
+        .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[])
+    : [];
+  console.log(`[Img] WP library: ${libraryImages.length}${useLibrary ? '' : ' (отключена — форсим FLUX)'}`);
 
   // Vision-filter for relevance
   const relevant = libraryImages.length > 0
     ? await filterRelevantMedia(title, libraryImages).catch(() => libraryImages.slice(0, imagesNeeded))
     : [];
-  console.log(`[Img] Relevant after filter: ${relevant.length}/${libraryImages.length}`);
+  if (useLibrary) console.log(`[Img] Relevant after filter: ${relevant.length}/${libraryImages.length}`);
 
   let validMedia: { id: number; url: string; width?: number; height?: number }[] = relevant
     .filter(m => m.id > 0)

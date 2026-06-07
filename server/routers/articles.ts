@@ -4245,6 +4245,27 @@ function beautifyArticleHtml(html: string): string {
 
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 
+  // -3. Визуальное оформление FAQ-аккордеона и таблиц инлайн-стилями (не зависим от
+  //     темы сайта — на /kadastr/ .faq-item рендерился плоско). Применяется и при
+  //     генерации, и при обходе-улучшении (beautify вызывается в обоих путях).
+  $('details.faq-item, details').each((_: number, el: any) => {
+    const d = $(el);
+    d.attr('style', 'border:1px solid #e6e8eb;border-radius:10px;margin:10px 0;padding:0 16px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.05);');
+    const sum = d.find('summary').first();
+    if (sum.length) {
+      sum.attr('style', 'cursor:pointer;font-weight:600;padding:14px 0;list-style:none;color:#101828;outline:none;');
+      // ▾-маркер вместо дефолтного треугольника
+      if (!sum.find('.faq-mark').length) sum.append('<span class="faq-mark" style="float:right;color:#667085;transition:transform .2s;">▾</span>');
+    }
+    d.find('p').attr('style', 'padding:0 0 14px;margin:0;color:#475467;line-height:1.65;');
+  });
+  $('table').each((_: number, el: any) => {
+    const t = $(el);
+    t.attr('style', 'width:100%;border-collapse:collapse;margin:18px 0;font-size:15px;');
+    t.find('th').attr('style', 'background:#f7f9fc;border:1px solid #e6e8eb;padding:10px 12px;text-align:left;font-weight:600;color:#101828;');
+    t.find('td').attr('style', 'border:1px solid #e6e8eb;padding:10px 12px;color:#344054;');
+  });
+
   // -2. Add loading="lazy" and decoding="async" to all <img> — LCP/CWV optimization.
   //     Skip first image (usually above-the-fold hero) to preserve LCP speed.
   $('img').each((i: number, img: any) => {

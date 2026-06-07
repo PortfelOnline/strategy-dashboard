@@ -19,7 +19,9 @@ ENV PUPPETEER_SKIP_DOWNLOAD=1 \
     NODE_ENV=production
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev --legacy-peer-deps || npm ci --legacy-peer-deps
+# Ставим ВСЕ зависимости: esbuild бандлит с --packages=external, поэтому пакеты
+# (включая googleapis и др., которые в devDependencies) нужны в node_modules в рантайме.
+RUN npm ci --legacy-peer-deps
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle
 EXPOSE 3000

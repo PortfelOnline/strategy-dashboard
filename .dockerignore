@@ -1,0 +1,14 @@
+node_modules
+.git
+graphify-out
+server/graphify-out
+dist
+*.log
+.env
+.env.*
+analytics-sa.json
+.DS_Store
+client/.claude
+server/.claude
+scripts/.claude
+**/*.test.ts

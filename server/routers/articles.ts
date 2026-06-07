@@ -1015,13 +1015,23 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
 // ── Replace hardcoded price tables with [BLOCK_PRICE] shortcode ───────────────
 // LLMs often ignore the [BLOCK_PRICE] instruction and generate real tables.
 function replacePriceTableWithShortcode(html: string): string {
-  return html.replace(/<table[\s\S]*?<\/table>/gi, (match) => {
+  let out = html.replace(/<table[\s\S]*?<\/table>/gi, (match) => {
     const lower = match.toLowerCase();
     if (lower.includes('руб') || lower.includes('стоимост') || lower.includes('цен') || lower.includes('price')) {
       return '\n[BLOCK_PRICE]\n';
     }
     return match;
   });
+  // Только ОДИН блок цен на статью: оставляем первый [BLOCK_PRICE], дубликаты убираем
+  // (LLM иногда вставляет шорткод/таблицу цен в нескольких разделах → блок «Стоимость
+  // справок» рендерился по 2-3 раза).
+  let seen = false;
+  out = out.replace(/\n?\[BLOCK_PRICE\]\n?/g, () => {
+    if (seen) return '';
+    seen = true;
+    return '\n[BLOCK_PRICE]\n';
+  });
+  return out;
 }
 
 // ── Vision-based image relevance filter ─────────────────────────────────────

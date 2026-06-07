@@ -2129,6 +2129,24 @@ export async function findAndInjectImages(
   }
   validMedia = [...agValid, ...validMedia];
 
+  // Retry-гард: транзиентный сбой (как izhs — параллельный rate-limit дал 0 картинок)
+  // → один повторный проход SEQUENTIAL (по одной, с паузой), прежде чем сдаться.
+  if (validMedia.length === 0 && prompts.length > 0) {
+    const retryN = Math.min(Math.max(imagesNeeded, 8), prompts.length);
+    console.warn(`[Img] 0 картинок после 1-го прохода — повторная генерация ${retryN} (sequential)`);
+    for (let i = 0; i < retryN; i++) {
+      try {
+        const imgUrl = await generateImageWithFallback(prompts[i]);
+        const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-r${i + 1}.webp`);
+        validMedia.push(up);
+        console.log(`[Img] retry[${i}] uploaded → WP id ${up.id}`);
+      } catch (e: any) {
+        console.warn(`[Img] retry[${i}] failed:`, e?.message?.slice(0, 80));
+      }
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
   if (validMedia.length === 0) {
     console.log('[Img] No images found, skipping injection');
     return { html, featuredMediaId: undefined };

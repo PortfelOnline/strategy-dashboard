@@ -1,0 +1,36 @@
+services:
+  redis:
+    image: valkey/valkey:8-alpine
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    networks: [searxnet]
+
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    networks: [searxnet]
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://167.86.116.15:8899/
+      - SEARXNG_REDIS_URL=redis://redis:6379/0
+    depends_on: [redis]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "8899:80"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [searxnet]
+    depends_on: [searxng]
+
+networks:
+  searxnet:
+
+volumes:
+  caddy_data:
+  caddy_config:

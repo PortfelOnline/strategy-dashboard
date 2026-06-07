@@ -1,0 +1,6 @@
+:80 {
+	basic_auth {
+		serp REPLACE_WITH_bcrypt_hash_from_caddy_hash-password
+	}
+	reverse_proxy searxng:8080
+}

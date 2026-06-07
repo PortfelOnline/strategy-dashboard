@@ -113,6 +113,42 @@ async function fetchViaSerpApi(params: Record<string, string>): Promise<any> {
   return response.data;
 }
 
+// Free SERP via self-hosted SearXNG (Google + Yandex metasearch with JSON API).
+// Primary source — replaces the paid/timeout-prone Yandex Cloud API. Reached directly
+// (its host is in NO_PROXY), never via the SERP proxy. Returns [] on failure so callers
+// fall back to Puppeteer/Cloud. URL form: http://user:pass@host:8899
+const SEARXNG_URL = process.env.SEARXNG_URL;
+
+async function fetchSearxngSerp(keyword: string, engine: 'google' | 'yandex'): Promise<SerpData> {
+  if (!SEARXNG_URL) return { engine, keyword, results: [], error: 'SEARXNG_URL not configured' };
+  // Google actively blocks SearXNG scraping → for the "google" slot use reliable
+  // captcha-free engines instead; Yandex works directly.
+  const engines = engine === 'yandex' ? 'yandex' : 'duckduckgo';
+  try {
+    const resp = await axios.get(`${SEARXNG_URL.replace(/\/$/, '')}/search`, {
+      params: { q: keyword, format: 'json', language: 'ru-RU', engines },
+      timeout: 25000,
+      proxy: false,
+    });
+    const raw: any[] = resp.data?.results ?? [];
+    const results: SerpResult[] = raw
+      .filter((r) => typeof r?.url === 'string' && r.url.startsWith('http'))
+      .map((r, i) => ({
+        position: Array.isArray(r.positions) && r.positions.length ? r.positions[0] : i + 1,
+        title: cleanText(r.title || ''),
+        url: r.url,
+        domain: extractDomain(r.url),
+        snippet: cleanText(r.content || '').slice(0, 300),
+      }))
+      .slice(0, 30);
+    if (results.length > 0) return { engine, keyword, results };
+    return { engine, keyword, results: [], error: 'searxng empty' };
+  } catch (err: any) {
+    console.warn(`[SERP] SearXNG (${engine}) error:`, err?.message);
+    return { engine, keyword, results: [], error: 'searxng failed' };
+  }
+}
+
 /**
  * Fetch Google search results via SerpAPI
  */
@@ -138,6 +174,8 @@ async function fetchGoogleSerpPuppeteer(keyword: string): Promise<SerpData> {
 }
 
 export async function fetchGoogleSerp(keyword: string): Promise<SerpData> {
+  const sx = await fetchSearxngSerp(keyword, 'google');
+  if (sx.results.length > 0) return sx;
   return fetchGoogleSerpPuppeteer(keyword);
 }
 
@@ -228,6 +266,8 @@ async function fetchYandexSerpPuppeteer(keyword: string): Promise<SerpData> {
  * Fetch Yandex search results — Yandex Cloud API, Puppeteer fallback
  */
 export async function fetchYandexSerp(keyword: string): Promise<SerpData> {
+  const sx = await fetchSearxngSerp(keyword, 'yandex');
+  if (sx.results.length > 0) return sx;
   const cloudResult = await fetchYandexCloudSerp(keyword);
   if (cloudResult) return cloudResult;
   return fetchYandexSerpPuppeteer(keyword);

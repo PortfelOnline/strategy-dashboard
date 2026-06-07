@@ -2,7 +2,7 @@ import axios from 'axios';
 import https from 'https';
 import FormData from 'form-data';
 import { execFileSync } from 'child_process';
-import { writeFileSync, unlinkSync } from 'fs';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { ENV } from './env';
@@ -36,6 +36,16 @@ function apiBase(siteUrl: string): string {
   return siteUrl.replace(/\/$/, '') + '/wp-json/wp/v2';
 }
 
+function webpFilename(filename: string): string {
+  return filename.replace(/\.[^.\/]+$/, '') + '.webp';
+}
+
+function imageExtension(mimeType: string, source: string): string {
+  if (/webp/i.test(mimeType) || /\.webp(?:$|\?)/i.test(source)) return 'webp';
+  if (/png/i.test(mimeType) || /\.png(?:$|\?)/i.test(source)) return 'png';
+  return 'jpg';
+}
+
 /**
  * Verify credentials by calling /wp-json/wp/v2/users/me
  */
@@ -66,9 +76,10 @@ export async function findPostBySlug(
   slug: string
 ): Promise<WpPostFull | null> {
   try {
-    const response = await axios.get(`${apiBase(siteUrl)}/posts`, {
+    const response = await axios.get(`${apiBase(siteUrl)}/posts/`, {
       params: { slug, _fields: 'id,title,slug,link,content,excerpt', per_page: 1 },
       headers: { Authorization: basicAuth(username, appPassword) },
+      proxy: false,  // don't route WP reads through the SERP proxy (avoids 400)
     });
     const posts = response.data;
     if (!Array.isArray(posts) || posts.length === 0) return null;
@@ -82,9 +93,7 @@ export async function findPostBySlug(
 
 /**
  * Upload an image (by URL) to WordPress media library.
- * Uses SSH+WP-CLI sideload when WP_SSH_HOST is configured (server-side download,
- * avoids LibreSSL bad_record_mac when uploading large binaries from macOS).
- * Falls back to direct curl upload otherwise.
+ * Downloads the source image locally, converts it to WebP, then uploads it via curl.
  */
 export async function uploadMediaFromUrl(
   siteUrl: string,
@@ -93,17 +102,6 @@ export async function uploadMediaFromUrl(
   imageUrl: string,
   filename: string
 ): Promise<{ id: number; url: string }> {
-  // file:// paths come from Fireworks binary image generation — upload directly
-  if (imageUrl.startsWith('file://')) {
-    return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
-  }
-  // Pexels CDN blocks server-side requests — download locally and upload via curl
-  if (imageUrl.includes('images.pexels.com')) {
-    return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
-  }
-  if (ENV.wpSshHost) {
-    return uploadMediaViaSsh(siteUrl, username, appPassword, imageUrl, filename);
-  }
   return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
 }
 
@@ -161,25 +159,33 @@ async function uploadMediaViaCurl(
   let mimeType: string;
 
   if (imageUrl.startsWith('file://')) {
-    const { readFileSync } = await import('fs');
-    buffer = readFileSync(imageUrl.replace('file://', ''));
-    mimeType = imageUrl.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    const filePath = imageUrl.replace('file://', '');
+    buffer = readFileSync(filePath);
+    mimeType = filePath.endsWith('.webp') ? 'image/webp' : filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
   } else {
     const imgResponse = await axios.get(imageUrl, { responseType: 'arraybuffer', timeout: 30000, proxy: false });
     buffer = Buffer.from(imgResponse.data);
     mimeType = (imgResponse.headers['content-type'] as string) || 'image/jpeg';
   }
 
-  const tmpFile = path.join(tmpdir(), `wp-upload-${Date.now()}.jpg`);
+  const tmpBase = path.join(tmpdir(), `wp-upload-${Date.now()}`);
+  const tmpInput = `${tmpBase}.${imageExtension(mimeType, imageUrl)}`;
+  const tmpWebp = `${tmpBase}.webp`;
+  const uploadFilename = webpFilename(filename);
   try {
-    writeFileSync(tmpFile, buffer);
+    if (/image\/webp/i.test(mimeType) || /\.webp(?:$|\?)/i.test(imageUrl)) {
+      writeFileSync(tmpWebp, buffer);
+    } else {
+      writeFileSync(tmpInput, buffer);
+      execFileSync('cwebp', ['-quiet', '-q', '82', tmpInput, '-o', tmpWebp], { timeout: 60_000 });
+    }
     const result = execFileSync('curl', [
       '-s', '-X', 'POST',
-      `${apiBase(siteUrl)}/media`,
+      `${apiBase(siteUrl)}/media/`,
       '-u', `${username}:${appPassword}`,
-      '-H', `Content-Disposition: attachment; filename="${filename}"`,
-      '-H', `Content-Type: ${mimeType}`,
-      '--data-binary', `@${tmpFile}`,
+      '-H', `Content-Disposition: attachment; filename="${uploadFilename}"`,
+      '-H', 'Content-Type: image/webp',
+      '--data-binary', `@${tmpWebp}`,
       '--max-time', '60',
       // curl reads HTTPS_PROXY env automatically → bypass: WP API must go direct
       '--noproxy', '*',
@@ -189,7 +195,8 @@ async function uploadMediaViaCurl(
     if (!data.id) throw new Error(`WP media upload: no id in response: ${result.toString().slice(0, 200)}`);
     return { id: data.id, url: data.source_url };
   } finally {
-    try { unlinkSync(tmpFile); } catch { /* ignore */ }
+    try { unlinkSync(tmpInput); } catch { /* ignore */ }
+    try { unlinkSync(tmpWebp); } catch { /* ignore */ }
   }
 }
 
@@ -235,7 +242,12 @@ export async function updatePost(
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const response = await axios.post(
-        `${apiBase(siteUrl)}/posts/${postId}`,
+        // Trailing slash is REQUIRED: without it nginx 301-redirects /posts/<id> →
+        // /posts/<id>/ (and https→http), and axios/follow-redirects converts the POST
+        // to a GET, silently dropping the body — the update becomes a no-op that still
+        // returns 200. maxRedirects:0 makes any future redirect throw loudly instead of
+        // silently swallowing writes. (Incident 2026-06-07: all article updates were no-ops.)
+        `${apiBase(siteUrl)}/posts/${postId}/`,
         body,
         {
           headers: {
@@ -244,6 +256,8 @@ export async function updatePost(
           },
           transformRequest: [(d) => d],  // body is already a string — don't re-stringify
           httpsAgent: new https.Agent({ keepAlive: false, rejectUnauthorized: false }),
+          maxRedirects: 0,
+          proxy: false,  // never route WP writes through the SERP proxy
         }
       );
       return { id: response.data.id, link: response.data.link };

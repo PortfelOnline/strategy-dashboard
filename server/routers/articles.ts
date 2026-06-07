@@ -2028,6 +2028,11 @@ export async function findAndInjectImages(
   html: string,
   imagesNeeded = 9,
 ): Promise<{ html: string; featuredMediaId: number | undefined }> {
+  if (process.env.SKIP_IMAGE_GENERATION === '1') {
+    console.log(`[Img] SKIP_IMAGE_GENERATION=1 — leaving images unchanged for "${slug}"`);
+    return { html, featuredMediaId: undefined };
+  }
+
   const titleKeywords = title
     .replace(/[-–—:,]/g, ' ')
     .split(/\s+/)
@@ -2052,85 +2057,39 @@ export async function findAndInjectImages(
     .slice(0, imagesNeeded)
     .map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height }));
 
-  // Image generation via agy (Gemini CLI) — fills gap when WP library is short — sequential to avoid Fireworks rate-limit 500 errors
-  if (process.env.IMAGE_API_KEY) {
-    const fluxNeeded = validMedia.length < imagesNeeded
-      ? imagesNeeded - validMedia.length
-      : 1;
-    // 2026-04-20: извлекаем H2 + первые ~180 слов тела каждого раздела, чтобы FLUX-промпт
-    // отражал фактическое содержание раздела (цены/сроки/действия из текста), а не generic.
-    const h2SectionsData = extractH2Sections(html).slice(0, Math.max(fluxNeeded, 9));
-    const h2Sections = h2SectionsData.map(s => s.heading);
-    const h2Bodies = h2SectionsData.map(s => s.body);
-    const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
-    // Check cache first — allows per-article prompt customization
-    const cachedPrompts = getImagePromptsFromCache(slug);
-    const prompts = cachedPrompts && cachedPrompts.length >= fluxNeeded
-      ? cachedPrompts
-      : await generateImagePrompts(title, titleKeywords, h2Sections, bodyText, fluxNeeded, h2Bodies);
-    if (!cachedPrompts || cachedPrompts.length < fluxNeeded) saveImagePromptsToCache(slug, prompts);
-    // 2026-04-20: параллельно по 2 (было sequential из-за прежних 500-ошибок Fireworks).
-    // Schnell отвечает быстрее → rate-limit менее чувствителен. Если серия 500 — автоматически
-    // падём на sequential для остатка.
-    const BATCH_SIZE = Number(process.env.FLUX_BATCH_SIZE ?? 2);
-    console.log(`[Img] Generating ${fluxNeeded} FLUX images (parallel batch=${BATCH_SIZE})`);
-    const fluxValid: { id: number; url: string; width?: number; height?: number }[] = [];
-    const totalImgs = Math.min(fluxNeeded, prompts.length);
-    let rateLimitHits = 0;
-    let useSequential = false;
-    for (let start = 0; start < totalImgs; start += useSequential ? 1 : BATCH_SIZE) {
-      const batchEnd = Math.min(totalImgs, start + (useSequential ? 1 : BATCH_SIZE));
-      const indices = Array.from({ length: batchEnd - start }, (_, k) => start + k);
-      const results = await Promise.allSettled(
-        indices.map(async (i) => {
-          const imgUrl = await generateImageWithFallback(prompts[i]);
-          const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-flux-${i + 1}.jpg`);
-          return { i, up };
-        })
-      );
-      // Vision-validation для risky topics (деньги, МФЦ, ключи, паспорт).
-      // Проверяем только 15% «risky»-статей, не все — экономим $0.014/статья.
-      const needsVisionCheck = isImageRiskyTopic(titleKeywords, title);
-      for (const [k, r] of results.entries()) {
-        const i = indices[k];
-        if (r.status === 'fulfilled') {
-          const uploaded = r.value.up;
-          if (needsVisionCheck) {
-            const check = await validateFluxImage(uploaded.url, title);
-            if (!check.ok) {
-              console.warn(`[VisionCheck] FLUX[${i}] REJECTED: ${check.issues.join(', ')} — regenerating once`);
-              // One retry с усиленным промптом — добавляем "STRICTLY NO <issue>"
-              const retryPrompt = prompts[i] + `. STRICT REJECT ON: ${check.issues.map(x => `NO ${x}`).join(', ')}. Russian middle-class context only, no western/EU aesthetic.`;
-              try {
-                const newUrl = await generateImageWithFallback(retryPrompt);
-                const newUp = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, newUrl, `${slug}-flux-${i + 1}-v2.jpg`);
-                fluxValid.push(newUp);
-                console.log(`[Img] FLUX[${i}] regenerated → WP id ${newUp.id} (v2)`);
-                continue;
-              } catch (re: any) {
-                console.warn(`[VisionCheck] retry failed: ${re?.message?.slice(0, 60)} — using original`);
-              }
-            } else {
-              console.log(`[Img] FLUX[${i}] uploaded → WP id ${uploaded.id} ✅ vision-passed`);
-            }
-          } else {
-            console.log(`[Img] FLUX[${i}] uploaded → WP id ${uploaded.id}`);
-          }
-          fluxValid.push(uploaded);
-        } else {
-          const msg = (r.reason as any)?.message || '';
-          console.warn(`[Img] FLUX[${i}] failed:`, msg);
-          if (/rate.?limit|500|429/i.test(msg)) rateLimitHits++;
-        }
-      }
-      if (!useSequential && rateLimitHits >= 2) {
-        console.warn(`[Img] 2+ rate-limit hits — switching to sequential for remaining`);
-        useSequential = true;
+  // agy image generation — fills gap when WP library is short
+  const agNeeded = validMedia.length < imagesNeeded ? imagesNeeded - validMedia.length : 1;
+  const h2SectionsData = extractH2Sections(html).slice(0, Math.max(agNeeded, 9));
+  const h2Sections = h2SectionsData.map(s => s.heading);
+  const h2Bodies = h2SectionsData.map(s => s.body);
+  const bodyText = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+  const cachedPrompts = getImagePromptsFromCache(slug);
+  const prompts = cachedPrompts && cachedPrompts.length >= agNeeded
+    ? cachedPrompts
+    : await generateImagePrompts(title, titleKeywords, h2Sections, bodyText, agNeeded, h2Bodies);
+  if (!cachedPrompts || cachedPrompts.length < agNeeded) saveImagePromptsToCache(slug, prompts);
+  console.log(`[Img] Generating ${agNeeded} images via agy`);
+  const agValid: { id: number; url: string; width?: number; height?: number }[] = [];
+  const BATCH_SIZE = 2;
+  for (let start = 0; start < Math.min(agNeeded, prompts.length); start += BATCH_SIZE) {
+    const indices = Array.from({ length: Math.min(BATCH_SIZE, agNeeded - start) }, (_, k) => start + k);
+    const results = await Promise.allSettled(
+      indices.map(async (i) => {
+        const imgUrl = await generateImageWithFallback(prompts[i]);
+        const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-${i + 1}.webp`);
+        return up;
+      })
+    );
+    for (const [k, r] of results.entries()) {
+      if (r.status === 'fulfilled') {
+        agValid.push(r.value);
+        console.log(`[Img] agy[${start + k}] uploaded → WP id ${r.value.id}`);
+      } else {
+        console.warn(`[Img] agy[${start + k}] failed:`, (r.reason as any)?.message?.slice(0, 80));
       }
     }
-    // FLUX images go first — first one becomes the featured image
-    validMedia = [...fluxValid, ...validMedia];
   }
+  validMedia = [...agValid, ...validMedia];
 
   if (validMedia.length === 0) {
     console.log('[Img] No images found, skipping injection');
@@ -3320,7 +3279,7 @@ ${competitorContext}
           try {
             return await wp.uploadMediaFromUrl(
               account.siteUrl, account.username, account.appPassword,
-              url, `${slug}-img-${i + 1}.jpg`
+              url, `${slug}-img-${i + 1}.webp`
             );
           } catch (e: any) {
             console.error(`[Articles] Media upload ${i + 1} failed:`, e.message);
@@ -3469,8 +3428,7 @@ ${competitorContext}
         selectedCandidates.map(async (m) => {
           if (m.id > 0) return { id: m.id, url: m.url, width: m.width, height: m.height };
           try {
-            const ext = m.url.match(/\.(jpe?g|png|webp)/i)?.[1] ?? 'jpg';
-            const filename = `wiki-${slug}-${Date.now()}.${ext}`;
+            const filename = `wiki-${slug}-${Date.now()}.webp`;
             const uploaded = await wp.uploadMediaFromUrl(account.siteUrl, account.username, account.appPassword, m.url, filename);
             console.log(`[Draft] Wikimedia sideloaded → WP id ${uploaded.id}`);
             return { id: uploaded.id, url: uploaded.url, width: m.width, height: m.height };
@@ -3496,7 +3454,7 @@ ${competitorContext}
         uploadedDalle = await Promise.all(
           dalleUrls.map(async (imgUrl, i) => {
             if (!imgUrl) return null;
-            try { return await wp.uploadMediaFromUrl(account.siteUrl, account.username, account.appPassword, imgUrl, `${slug}-img-${confirmedImages.length + i + 1}.jpg`); }
+            try { return await wp.uploadMediaFromUrl(account.siteUrl, account.username, account.appPassword, imgUrl, `${slug}-img-${confirmedImages.length + i + 1}.webp`); }
             catch (e: any) { console.warn(`[Draft] DALL-E upload ${i + 1} failed:`, e?.message); return null; }
           })
         );
@@ -4239,8 +4197,8 @@ function beautifyArticleHtml(html: string): string {
   // flagged by GSC "Unparsable structured data" on 2026-04-20.
   html = html.replace(/<script[^>]*type=["']application\/ld\+json["'][^>]*>[\s\S]*?<\/script>/gi, '');
 
-  // Strip LLM placeholder images like <img src="image1.jpg"> / <img src="image12.jpg">
-  // These are hallucinated by LLM and never replaced with real uploads
+  // Strip LLM placeholder images like <img src="image1.jpg"> / <img src="placeholder3.jpg">.
+  // These are hallucinated by the LLM and never replaced with real uploads → 404 on the live page.
   // Match any bare-filename src (no path separator "/", no protocol "://") — real images are
   // ALWAYS absolute URLs or theme paths containing "/", so a bare "name.ext" is always an artifact.
   // (Incident 2026-06-06: karta-po-kadastrovomu-nomeru had 8 live placeholderN.jpg → broken images.)

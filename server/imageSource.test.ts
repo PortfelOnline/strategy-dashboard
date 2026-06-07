@@ -11,6 +11,7 @@ vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('./_core/imageGen', () => ({
   generateDallEImage: vi.fn().mockResolvedValue('file:///tmp/flux-test.jpg'),
+  generateImageWithFallback: vi.fn().mockResolvedValue('file:///tmp/flux-test.jpg'),
 }));
 
 vi.mock('./_core/wordpress', () => ({
@@ -55,9 +56,9 @@ describe('Image source policy', () => {
     expect(results).toHaveLength(0);
   });
 
-  it('findAndInjectImages uses FLUX sequentially, not Pexels or Wikimedia', async () => {
-    const { generateDallEImage } = await import('./_core/imageGen');
-    const imageGenMock = generateDallEImage as ReturnType<typeof vi.fn>;
+  it('findAndInjectImages uses generated images, not Pexels or Wikimedia', async () => {
+    const { generateImageWithFallback } = await import('./_core/imageGen');
+    const imageGenMock = generateImageWithFallback as ReturnType<typeof vi.fn>;
 
     const callTimes: number[] = [];
     imageGenMock.mockImplementation(async () => {
@@ -89,6 +90,31 @@ describe('Image source policy', () => {
 
     const wikimediaCalls = fetchCalls.filter((u: string) => u.includes('wikimedia.org') || u.includes('wikipedia.org'));
     expect(wikimediaCalls).toHaveLength(0);
+  });
+
+  it('findAndInjectImages skips generated images when SKIP_IMAGE_GENERATION=1', async () => {
+    process.env.SKIP_IMAGE_GENERATION = '1';
+    const { generateImageWithFallback } = await import('./_core/imageGen');
+    const imageGenMock = generateImageWithFallback as ReturnType<typeof vi.fn>;
+    imageGenMock.mockClear();
+
+    vi.resetModules();
+    const { findAndInjectImages } = await import('./routers/articles');
+    const html = '<h2>Что такое кадастровый паспорт</h2><p>Текст.</p>';
+
+    const result = await findAndInjectImages(
+      'https://kadastrmap.info',
+      'user',
+      'pass',
+      'skip-images-slug',
+      'Кадастровый паспорт здания',
+      html,
+      2,
+    );
+
+    expect(result).toEqual({ html, featuredMediaId: undefined });
+    expect(imageGenMock).not.toHaveBeenCalled();
+    delete process.env.SKIP_IMAGE_GENERATION;
   });
 });
 

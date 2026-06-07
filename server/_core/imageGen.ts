@@ -5,14 +5,14 @@ import { execFileSync } from 'child_process';
 
 const IMAGE_API_URL = process.env.IMAGE_API_URL ?? 'https://api.together.xyz';
 const IMAGE_API_KEY = process.env.IMAGE_API_KEY ?? '';
-const IMAGE_MODEL   = process.env.IMAGE_MODEL   ?? 'black-forest-labs/FLUX.1.1-pro';
+const IMAGE_MODEL = process.env.IMAGE_MODEL ?? 'black-forest-labs/FLUX.1.1-pro';
 
 const IS_FIREWORKS = IMAGE_API_URL.includes('fireworks.ai');
 
 /**
  * Generate an image and return either:
  * - an HTTP URL (Together AI / OpenAI-compatible)
- * - a local file:// path (Fireworks — binary PNG response)
+ * - a local file:// path (Fireworks binary response)
  */
 export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Promise<string> {
   if (!IMAGE_API_KEY) {
@@ -25,33 +25,28 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
   let response: Response;
   try {
     if (IS_FIREWORKS) {
-      // Fireworks: /v1/image_generation/{model_id} → binary JPEG
       const modelPath = IMAGE_MODEL.startsWith('accounts/') ? IMAGE_MODEL : `accounts/fireworks/models/${IMAGE_MODEL}`;
       response = await fetch(
-        `${IMAGE_API_URL.replace(/\/$/, '')}/v1/image_generation/${modelPath}`,
+        `${IMAGE_API_URL.replace(/\/$/, '')}/v1/workflows/${modelPath}/text_to_image`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'image/jpeg',
+            Accept: 'image/jpeg',
             Authorization: `Bearer ${IMAGE_API_KEY}`,
           },
           body: JSON.stringify({
             prompt,
             aspect_ratio: '16:9',
-            // flux-1-dev / pro benefit from more steps for fine detail & photorealism.
-            // Default 32 (was 28) — small quality bump; override via IMAGE_STEPS env.
             num_inference_steps: IMAGE_MODEL.includes('schnell')
               ? 4
               : Number(process.env.IMAGE_STEPS ?? 32),
-            // FLUX distilled models work best at guidance_scale 3.5 (not 7+)
             guidance_scale: IMAGE_MODEL.includes('schnell') ? 0 : 3.5,
           }),
           signal: controller.signal,
-        }
+        },
       );
     } else {
-      // OpenAI-compatible (Together AI etc.)
       response = await fetch(`${IMAGE_API_URL.replace(/\/$/, '')}/v1/images/generations`, {
         method: 'POST',
         headers: {
@@ -74,23 +69,22 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Image generation error: ${response.status} – ${err.slice(0, 200)}`);
+    throw new Error(`Image generation error: ${response.status} - ${err.slice(0, 200)}`);
   }
 
   if (IS_FIREWORKS) {
     const contentType = response.headers.get('content-type') ?? '';
     if (contentType.startsWith('image/')) {
-      // Binary PNG/JPEG — save to temp file and return file:// path
       const buffer = Buffer.from(await response.arrayBuffer());
       const ext = contentType.includes('jpeg') ? 'jpg' : 'png';
       const tmpPath = path.join(tmpdir(), `fw-img-${Date.now()}.${ext}`);
       writeFileSync(tmpPath, buffer);
       return `file://${tmpPath}`;
     }
-    // Fallback: maybe JSON with base64 (strip BOM if present)
+
     const rawText = await response.text();
     if (rawText.trim().startsWith('<')) {
-      throw new Error(`Fireworks returned HTML (transient server error) — retry later`);
+      throw new Error('Fireworks returned HTML (transient server error) - retry later');
     }
     const data = JSON.parse(rawText.replace(/^\uFEFF/, '')) as any;
     const b64 = data?.data?.[0]?.b64_json ?? data?.images?.[0];
@@ -110,14 +104,8 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
 }
 
 /**
- * Generate an image via Google Gemini 2.5 Flash Image Preview (nano-banana).
- * Returns a `file://` path to a local PNG saved in tmpdir.
- *
- * Used as a fallback when FLUX (Fireworks) is unavailable, rate-limited,
- * or proxied through a misconfigured corporate proxy returning HTML.
- *
- * Requires GEMINI_API_KEY env. Free tier has generous quotas (typically
- * 1500 RPD for nano-banana — enough for several daily batches).
+ * Generate an image via Google Gemini image generation (nano-banana).
+ * Returns a file:// path to a local image saved in tmpdir.
  */
 export async function generateGeminiImage(prompt: string, timeoutMs = 90_000): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -146,7 +134,7 @@ export async function generateGeminiImage(prompt: string, timeoutMs = 90_000): P
 
   if (!response.ok) {
     const err = await response.text();
-    throw new Error(`Gemini image error: ${response.status} – ${err.slice(0, 200)}`);
+    throw new Error(`Gemini image error: ${response.status} - ${err.slice(0, 200)}`);
   }
 
   const json: any = await response.json();
@@ -156,7 +144,7 @@ export async function generateGeminiImage(prompt: string, timeoutMs = 90_000): P
     if (inline?.data) {
       const buffer = Buffer.from(inline.data, 'base64');
       const mime = inline.mimeType || inline.mime_type || 'image/png';
-      const ext = mime.includes('jpeg') ? 'jpg' : 'png';
+      const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
       const tmpPath = path.join(tmpdir(), `gemini-img-${Date.now()}.${ext}`);
       writeFileSync(tmpPath, buffer);
       return `file://${tmpPath}`;
@@ -169,44 +157,56 @@ const AGY_BIN = '/Users/evgenijgrudev/.local/bin/agy';
 
 /**
  * Generate an image via the local `agy` CLI (Antigravity / Gemini image gen).
- * Parses the markdown image output `![name](/absolute/path.png)` and returns
- * `file:///absolute/path.png`. Unlimited quota — uses the user's local auth.
+ * Parses markdown image output and returns file:///absolute/path.
  */
 export function generateAgyImage(prompt: string, timeoutMs = 120_000): string {
-  const output = execFileSync(AGY_BIN, ['-p', `Generate a high-quality photo: ${prompt}. Respond with the image only, no text.`], {
-    timeout: timeoutMs,
-    encoding: 'utf8',
-  });
-  // Parse `![alt](/abs/path.ext)` from markdown output
+  const output = execFileSync(
+    AGY_BIN,
+    ['-p', `Generate a high-quality photo: ${prompt}. Respond with the image only, no text.`],
+    { timeout: timeoutMs, encoding: 'utf8' },
+  );
   const match = output.match(/!\[[^\]]*\]\(([^)]+)\)/);
   if (!match) throw new Error(`agy returned no image path: ${output.slice(0, 200)}`);
-  const imgPath = match[1];
-  return `file://${imgPath}`;
+  return `file://${match[1]}`;
 }
 
 /**
- * Try agy (local Gemini CLI, unlimited quota) first.
- * Fall back to Gemini REST API, then FLUX.
+ * Image provider chain: Gemini first (agy CLI → Gemini REST), then FLUX (Fireworks)
+ * as a fallback when Gemini limits/quota are exhausted. Keeps using free Gemini quota
+ * while it lasts, and degrades to cheap-but-reliable FLUX schnell instead of failing.
  */
 export async function generateImageWithFallback(prompt: string): Promise<string> {
-  // 1. agy — local Gemini CLI, no rate limits from REST API
+  const errors: string[] = [];
+
+  // 1. Gemini via agy CLI (primary)
   try {
     const result = generateAgyImage(prompt);
-    console.log(`[ImgGen] agy generated: ${result.slice(-60)}`);
+    console.log(`[ImgGen] agy (Gemini) generated: ${result.slice(-60)}`);
     return result;
   } catch (e: any) {
-    const msg = e?.message || String(e);
-    console.warn(`[ImgGen] agy failed: ${msg.slice(0, 120)} — trying Gemini REST`);
+    const msg = (e?.message || String(e)).slice(0, 120);
+    errors.push(`agy: ${msg}`);
+    console.warn(`[ImgGen] agy (Gemini) failed: ${msg} — trying Gemini REST`);
   }
-  // 2. Gemini REST API
+
+  // 2. Gemini REST (separate key/quota from agy)
   if (process.env.GEMINI_API_KEY) {
     try {
-      return await generateGeminiImage(prompt);
+      const result = await generateGeminiImage(prompt);
+      console.log('[ImgGen] Gemini REST generated');
+      return result;
     } catch (e: any) {
-      const msg = e?.message || String(e);
-      console.warn(`[ImgGen] Gemini failed: ${msg.slice(0, 120)} — falling back to FLUX`);
+      const msg = (e?.message || String(e)).slice(0, 120);
+      errors.push(`gemini-rest: ${msg}`);
+      console.warn(`[ImgGen] Gemini REST failed: ${msg} — falling back to FLUX`);
     }
   }
-  // 3. FLUX via Fireworks
-  return generateDallEImage(prompt);
+
+  // 3. FLUX on Fireworks (fallback when Gemini limits are exhausted)
+  if (process.env.IMAGE_API_KEY) {
+    console.log('[ImgGen] Falling back to FLUX (Fireworks)');
+    return generateDallEImage(prompt);
+  }
+
+  throw new Error(`No image provider available — ${errors.join(' | ')}; IMAGE_API_KEY (FLUX) not configured`);
 }

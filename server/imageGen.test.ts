@@ -4,6 +4,14 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
+const { mockExecFileSync } = vi.hoisted(() => ({
+  mockExecFileSync: vi.fn(),
+}));
+
+vi.mock("child_process", () => ({
+  execFileSync: mockExecFileSync,
+}));
+
 // Re-import after env setup
 const setupEnv = (overrides: Record<string, string> = {}) => {
   process.env.IMAGE_API_URL = overrides.IMAGE_API_URL ?? "https://api.fireworks.ai/inference";
@@ -15,6 +23,7 @@ describe("generateDallEImage (Fireworks)", () => {
   beforeEach(() => {
     setupEnv();
     mockFetch.mockReset();
+    mockExecFileSync.mockReset();
   });
 
   it("calls /v1/workflows/{model}/text_to_image endpoint for Fireworks", async () => {
@@ -97,5 +106,42 @@ describe("generateDallEImage (Fireworks)", () => {
     process.env.IMAGE_API_KEY = "";
     const { generateDallEImage } = await import("./_core/imageGen");
     await expect(generateDallEImage("test")).rejects.toThrow("IMAGE_API_KEY not configured");
+  });
+
+  it("falls back to FLUX when agy fails and Gemini is not configured", async () => {
+    vi.resetModules();
+    setupEnv();
+    delete process.env.GEMINI_API_KEY;
+    mockExecFileSync.mockImplementationOnce(() => {
+      throw new Error("agy quota exhausted");
+    });
+    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => "image/jpeg" },
+      arrayBuffer: async () => fakeJpeg.buffer,
+    } as any);
+
+    const { generateImageWithFallback } = await import("./_core/imageGen");
+    const result = await generateImageWithFallback("test prompt");
+
+    expect(result).toMatch(/^file:\/\//);            // FLUX returns a local temp file
+    const [url] = mockFetch.mock.calls[0] as [string];
+    expect(url).toContain("/v1/workflows/");          // FLUX endpoint was hit
+  });
+
+  it("throws when neither Gemini nor FLUX (IMAGE_API_KEY) is configured", async () => {
+    vi.resetModules();
+    setupEnv({ IMAGE_API_KEY: "" });
+    process.env.IMAGE_API_KEY = "";
+    delete process.env.GEMINI_API_KEY;
+    mockExecFileSync.mockImplementationOnce(() => {
+      throw new Error("agy quota exhausted");
+    });
+
+    const { generateImageWithFallback } = await import("./_core/imageGen");
+
+    await expect(generateImageWithFallback("test prompt")).rejects.toThrow(/IMAGE_API_KEY/);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

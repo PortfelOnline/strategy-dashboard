@@ -1022,15 +1022,19 @@ function replacePriceTableWithShortcode(html: string): string {
     }
     return match;
   });
-  // Только ОДИН блок цен на статью: оставляем первый [BLOCK_PRICE], дубликаты убираем
-  // (LLM иногда вставляет шорткод/таблицу цен в нескольких разделах → блок «Стоимость
-  // справок» рендерился по 2-3 раза).
-  let seen = false;
-  out = out.replace(/\n?\[BLOCK_PRICE\]\n?/g, () => {
-    if (seen) return '';
-    seen = true;
-    return '\n[BLOCK_PRICE]\n';
-  });
+  // Не более 3 блоков цен на статью, равномерно распределённых по тексту.
+  // LLM иногда вставляет таблицу цен в каждом разделе → блок «Стоимость справок»
+  // рендерился по 5-10 раз. Если блоков ≤3 — оставляем как есть; если >3 — оставляем
+  // 3 по равномерным позициям (начало / середина / конец-перед-FAQ), остальные убираем.
+  const total = (out.match(/\[BLOCK_PRICE\]/g) || []).length;
+  if (total > 3) {
+    const keep = new Set([0, Math.round((total - 1) / 2), total - 1]);
+    let idx = -1;
+    out = out.replace(/\n?\[BLOCK_PRICE\]\n?/g, () => {
+      idx++;
+      return keep.has(idx) ? '\n[BLOCK_PRICE]\n' : '';
+    });
+  }
   return out;
 }
 
@@ -4494,6 +4498,7 @@ function plainTextToHtmlWithCTAs(
     if (i === pos1 - 1) result.push(ctaBlock(ctaTexts[0]));
     if (i === pos2 - 1) result.push(ctaBlock(ctaTexts[1]));
   }
-  result.push(ctaBlock(ctaTexts[2])); // end
+  // НЕ добавляем концевую CTA — шаблон сайта (/kadastr/ wrapper) уже выводит кнопку
+  // заказа в конце статьи. Иначе две кнопки подряд (дубль). См. injectCtasIntoHtml.
   return result.join('\n');
 }

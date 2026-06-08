@@ -4303,17 +4303,17 @@ function beautifyArticleHtml(html: string): string {
     }
   });
 
-  // -1. Convert absolute kadastrmap.info links to relative paths
-  //     + close external links with rel="nofollow noopener noreferrer" to prevent link juice leak
+  // -1. Convert absolute kadastrmap.info links to relative paths.
+  //     Внешние ссылки (на сторонние домены) РАЗВОРАЧИВАЕМ в обычный текст — надпись
+  //     сохраняется, но <a> убирается, чтобы вес (PageRank) не утекал на чужие сайты.
   $('a[href]').each((_: number, a: any) => {
     const href = $(a).attr('href') || '';
     const cleaned = href.replace(/^https?:\/\/kadastrmap\.info/i, '');
     if (cleaned !== href) {
       $(a).attr('href', cleaned || '/');
     } else if (/^https?:\/\//i.test(href)) {
-      // External link: add nofollow to prevent PageRank leak
-      $(a).attr('rel', 'nofollow noopener noreferrer');
-      if (!$(a).attr('target')) $(a).attr('target', '_blank');
+      // External link: разворачиваем в текст (убираем ссылку целиком, оставляем надпись)
+      $(a).replaceWith($(a).html() || $(a).text() || '');
     }
   });
 

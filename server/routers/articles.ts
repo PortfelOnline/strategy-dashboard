@@ -4254,6 +4254,30 @@ function pickHeadingEmoji(text: string): string {
  * - "Важно:" / "Обратите внимание" → yellow info-box
  */
 function beautifyArticleHtml(html: string): string {
+  // Strip full-document wrapper the LLM sometimes emits despite "без <html>/<body>/<head>"
+  // in the prompt. Without this, cheerio.load() below re-serializes the whole document
+  // (<!DOCTYPE><html><head><title>…</head><body>…) straight into post_content → nested
+  // document + duplicate <title> → Google deindex. Confirmed on 12 kadastrmap posts
+  // (GSC zeroed impressions 2026-06-09). Must run BEFORE cheerio.load.
+  if (/<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(html)) {
+    html = html.replace(/<!DOCTYPE[^>]*>/gi, '');
+    html = html.replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, ''); // well-formed: drop head block (dup title/meta/JSON-LD)
+    if (/<head\b/i.test(html)) {
+      // malformed (no </head>): strip head-only tags individually, keep real content
+      html = html
+        .replace(/<head\b[^>]*>/gi, '')
+        .replace(/<meta\b[^>]*>/gi, '')
+        .replace(/<title\b[^>]*>[\s\S]*?<\/title>/gi, '');
+    }
+    html = html.replace(/<\/?html\b[^>]*>/gi, '').replace(/<\/?body\b[^>]*>/gi, '');
+    html = html.trim();
+  }
+
+  // Demote any <h1> in the body to <h2>: the kadastrmap theme already renders the page <h1>
+  // from the post title (article <header class="entry-header"><h1>). An <h1> inside the
+  // article content makes two <h1> per page (SEO). Fixed across 35 live posts on 2026-06-14.
+  html = html.replace(/<(\/?)h1\b/gi, '<$1h2');
+
   // Strip any inline JSON-LD script blocks the LLM may have hallucinated.
   // We always (re)generate structured data programmatically in generateSchemaMarkup()
   // via JSON.stringify — trusting LLM-authored JSON leads to invalid syntax (unescaped

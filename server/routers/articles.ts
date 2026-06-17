@@ -4295,6 +4295,21 @@ function beautifyArticleHtml(html: string): string {
 
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 
+  // -3.5 Safety net: удалить любой <img> с НЕ-абсолютным src. Прероллинговые regex выше
+  //      ловят только bare-имена без "/" (image1.jpg), но относительные пути СО слешем
+  //      (images/plan-example-1.jpg) проскакивают → 404 на живой странице, когда у LLM
+  //      кончились деньги на генерацию и плейсхолдер не заменён реальной картинкой.
+  //      Реальные картинки ВСЕГДА абсолютны: https?://…, //…, /wp-content/… или data:.
+  //      (Инцидент 2026-06-17: 8 постов с <img src="images/*.jpg"> отдавали 404 ботам.)
+  $('img').each((_: number, img: any) => {
+    const src = ($(img).attr('src') || '').trim();
+    if (!/^(?:https?:\/\/|\/|data:)/i.test(src)) {
+      const fig = $(img).closest('figure');
+      if (fig.length) fig.remove();
+      else $(img).remove();
+    }
+  });
+
   // -3. Визуальное оформление FAQ-аккордеона и таблиц инлайн-стилями (не зависим от
   //     темы сайта — на /kadastr/ .faq-item рендерился плоско). Применяется и при
   //     генерации, и при обходе-улучшении (beautify вызывается в обоих путях).

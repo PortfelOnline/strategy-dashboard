@@ -1,4 +1,5 @@
 import { invokeLLM } from './llm';
+import type { SerpData } from './serpParser';
 
 export type ClaimType = 'fee' | 'stat' | 'term' | 'law' | 'other';
 
@@ -40,5 +41,54 @@ export async function extractClaims(html: string, keyword: string, model: string
   } catch (e: any) {
     console.warn('[CRAG] extractClaims failed:', e?.message ?? e);
     return [];
+  }
+}
+
+export type SearchFn = (query: string) => Promise<SerpData>;
+
+export interface Grade {
+  verdict: 'correct' | 'wrong' | 'unverified';
+  correctValue?: string;
+  source?: string;
+}
+
+const TIER1 = ['rosreestr.gov.ru', 'consultant.ru', 'rosstat.gov.ru', 'pravo.gov.ru', 'nalog.ru'];
+
+export async function gradeClaim(claim: Claim, searchFn: SearchFn, model: string): Promise<Grade> {
+  const query = `${claim.claim} ${claim.value} ${TIER1.map(d => `site:${d}`).join(' OR ')}`;
+  let serp: SerpData;
+  try {
+    serp = await searchFn(query);
+  } catch (e: any) {
+    console.warn('[CRAG] search failed:', e?.message ?? e);
+    return { verdict: 'unverified' };
+  }
+  const snippets = (serp.results ?? [])
+    .filter(r => TIER1.some(d => r.domain.includes(d)) && r.snippet)
+    .slice(0, 5)
+    .map(r => `- (${r.url}) ${r.snippet}`)
+    .join('\n');
+  if (!snippets) return { verdict: 'unverified' };
+
+  try {
+    const resp = await invokeLLM({
+      model,
+      maxTokens: 300,
+      messages: [
+        { role: 'system', content: 'Ты сверяешь утверждение из статьи с официальными источниками. Отвечай ТОЛЬКО валидным JSON без markdown.' },
+        { role: 'user', content: `Утверждение: "${claim.claim} = ${claim.value}".\n\nОфициальные источники (tier-1):\n${snippets}\n\nВердикт:\n- "correct" если значение подтверждается;\n- "wrong" если источники дают другое значение (укажи correctValue и source-url);\n- "unverified" если источники не дают однозначного ответа.\n\nФормат: {"verdict":"correct|wrong|unverified","correctValue":"<если wrong>","source":"<url если wrong>"}` },
+      ],
+    });
+    const content = resp.choices[0]?.message.content;
+    const raw = typeof content === 'string' ? stripJson(content) : '{}';
+    const parsed = JSON.parse(raw);
+    if (parsed.verdict === 'wrong' && parsed.correctValue) {
+      return { verdict: 'wrong', correctValue: String(parsed.correctValue), source: parsed.source ? String(parsed.source) : undefined };
+    }
+    if (parsed.verdict === 'correct') return { verdict: 'correct' };
+    return { verdict: 'unverified' };
+  } catch (e: any) {
+    console.warn('[CRAG] gradeClaim parse failed:', e?.message ?? e);
+    return { verdict: 'unverified' };
   }
 }

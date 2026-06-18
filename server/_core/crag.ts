@@ -97,7 +97,7 @@ export interface CragStats {
   total: number;
   ok: number;
   corrected: number;
-  stripped: number;
+  flagged: number; // unverified — оставлены нетронутыми, только посчитаны
 }
 
 function escapeRe(s: string): string {
@@ -124,12 +124,9 @@ export function applyCorrection(html: string, claim: Claim, grade: Grade): strin
     return html.replace(claim.snippet, newSnippet);
   }
 
-  // unverified → убираем конкретное значение ТОЛЬКО внутри snippet (без глобального
-  // прохода по статье), чистим сдвоенные пробелы.
-  const valRe = new RegExp('\\s*' + escapeRe(claim.value), 'g');
-  const newSnippet = claim.snippet.replace(valRe, '').replace(/\s{2,}/g, ' ').trim();
-  if (newSnippet === claim.snippet) return html;
-  return html.replace(claim.snippet, newSnippet);
+  // unverified → оставляем факт НЕТРОНУТЫМ. Поиск мог быть пуст/сломан (captcha и т.п.),
+  // и вырезание тогда калечит прозу. Модифицируем ТОЛЬКО подтверждённо неверные (wrong).
+  return html;
 }
 
 export async function verifyAndCorrectClaims(
@@ -139,15 +136,14 @@ export async function verifyAndCorrectClaims(
   searchFn: SearchFn,
 ): Promise<{ html: string; stats: CragStats }> {
   const claims = await extractClaims(html, keyword, model);
-  const stats: CragStats = { total: claims.length, ok: 0, corrected: 0, stripped: 0 };
+  const stats: CragStats = { total: claims.length, ok: 0, corrected: 0, flagged: 0 };
   let out = html;
   for (const claim of claims) {
     const grade = await gradeClaim(claim, searchFn, model);
-    if (grade.verdict === 'correct') { stats.ok++; continue; }
-    out = applyCorrection(out, claim, grade);
-    if (grade.verdict === 'wrong') stats.corrected++;
-    else stats.stripped++;
+    if (grade.verdict === 'wrong') { out = applyCorrection(out, claim, grade); stats.corrected++; }
+    else if (grade.verdict === 'correct') stats.ok++;
+    else stats.flagged++; // unverified — оставляем как есть
   }
-  console.log(`[CRAG] "${keyword}": ${stats.total} claims → ${stats.ok} ok, ${stats.corrected} corrected, ${stats.stripped} stripped`);
+  console.log(`[CRAG] "${keyword}": ${stats.total} claims → ${stats.ok} ok, ${stats.corrected} corrected, ${stats.flagged} flagged (unverified, оставлены)`);
   return { html: out, stats };
 }

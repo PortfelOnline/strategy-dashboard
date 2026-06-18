@@ -80,12 +80,12 @@ describe('applyCorrection', () => {
     expect(out.toLowerCase()).toContain('rosreestr.gov.ru');
   });
 
-  it('unverified → убирает конкретное значение из snippet', () => {
+  it('unverified → оставляет факт нетронутым (no-op, безопасно при сбое SERP)', () => {
     const html = '<p>По статистике 99% россиян заказывают выписку онлайн.</p>';
     const out = applyCorrection(html,
       { claim: 'доля', value: '99%', type: 'stat', snippet: '99% россиян' },
       { verdict: 'unverified' });
-    expect(out).not.toContain('99%');
+    expect(out).toBe(html); // не режем — иначе ломаем прозу
   });
 
   it('correct → не меняет html', () => {
@@ -106,13 +106,12 @@ describe('applyCorrection', () => {
     expect(out).not.toContain('Госпошлина 2');
   });
 
-  it('unverified → НЕ режет одинаковое число вне snippet', () => {
+  it('unverified → вообще не трогает html (оставляет оба «350»)', () => {
     const html = '<p>Пошлина 350 руб. Кабинет 350 на 3 этаже.</p>';
     const out = applyCorrection(html,
       { claim: 'пошлина', value: '350', type: 'fee', snippet: 'Пошлина 350 руб' },
       { verdict: 'unverified' });
-    expect(out).toContain('Кабинет 350'); // постороннее «350» сохранено
-    expect(out).not.toContain('Пошлина 350');
+    expect(out).toBe(html); // факт остаётся, проза цела
   });
 
   it('wrong → источник приписан к исправленному вхождению, а не к более раннему совпадению', () => {
@@ -143,7 +142,19 @@ describe('verifyAndCorrectClaims', () => {
     const searchFn = vi.fn().mockResolvedValue(fakeSerp(['госпошлина 2000 рублей']));
     const res = await verifyAndCorrectClaims('<p>Госпошлина 350 рублей.</p>', 'выписка', 'test-model', searchFn);
     expect(res.html).toContain('2000 рублей');
-    expect(res.stats).toEqual({ total: 1, ok: 0, corrected: 1, stripped: 0 });
+    expect(res.stats).toEqual({ total: 1, ok: 0, corrected: 1, flagged: 0 });
+  });
+
+  it('unverified-факт остаётся в html и считается flagged', async () => {
+    mockLLM.mockReset();
+    // extractClaims → 1 claim
+    mockLLM.mockResolvedValueOnce({ choices: [{ message: { content: '[{"claim":"доля","value":"87%","type":"stat","snippet":"87% россиян заказывают онлайн"}]' } }] });
+    // gradeClaim → LLM не зовётся (пустой SERP), но на всякий случай
+    const searchFn = vi.fn().mockResolvedValue({ results: [], error: '' } as any);
+    const html = '<p>По опросам 87% россиян заказывают онлайн.</p>';
+    const res = await verifyAndCorrectClaims(html, 'выписка', 'test-model', searchFn);
+    expect(res.html).toBe(html); // факт не тронут
+    expect(res.stats).toEqual({ total: 1, ok: 0, corrected: 0, flagged: 1 });
   });
 
   it('нет утверждений → html без изменений', async () => {

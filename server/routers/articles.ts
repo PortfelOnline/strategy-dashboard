@@ -6,6 +6,7 @@ import { parseArticleFromUrl, scanCatalog } from "../_core/articleParser";
 import { fetchGoogleSerp, fetchYandexSerp, SerpData } from "../_core/serpParser";
 import { fetchGscPageQueries, formatGscBlock } from "../_core/gscClient";
 import { invokeLLM } from "../_core/llm";
+import { verifyAndCorrectClaims } from "../_core/crag";
 import { ensureMinFaq } from "../_core/quality-fixers";
 import { generateImageWithFallback } from "../_core/imageGen";
 import * as wp from "../_core/wordpress";
@@ -1931,6 +1932,21 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   if (process.env.LLM_CRITICAL_PASS !== '0') {
     improvedContent = await applyCriticalReview(improvedContent, keyword, targetWords, mainModel).catch((e) => {
       console.warn('[Critical] pass skipped:', e?.message ?? e);
+      return improvedContent;
+    });
+  }
+
+  // CRAG write-time гейт: проверка фактов/статистики против tier-1 источников
+  // до публикации. Источник деиндекса — выдуманная статистика — устраняется здесь.
+  // Opt-out: LLM_CRAG_PASS=0. Никогда не роняет пайплайн (всё в catch).
+  if (process.env.LLM_CRAG_PASS !== '0') {
+    improvedContent = await verifyAndCorrectClaims(
+      improvedContent,
+      keyword,
+      seoModel,
+      (q: string) => cachedGoogleSerp(q),
+    ).then(r => r.html).catch((e) => {
+      console.warn('[CRAG] pass skipped:', e?.message ?? e);
       return improvedContent;
     });
   }

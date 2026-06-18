@@ -64,7 +64,7 @@ export async function gradeClaim(claim: Claim, searchFn: SearchFn, model: string
     return { verdict: 'unverified' };
   }
   const snippets = (serp.results ?? [])
-    .filter(r => TIER1.some(d => r.domain.includes(d)) && r.snippet)
+    .filter(r => TIER1.some(d => r.domain === d || r.domain.endsWith('.' + d)) && r.snippet)
     .slice(0, 5)
     .map(r => `- (${r.url}) ${r.snippet}`)
     .join('\n');
@@ -107,25 +107,29 @@ function escapeRe(s: string): string {
 export function applyCorrection(html: string, claim: Claim, grade: Grade): string {
   if (grade.verdict === 'correct') return html;
 
+  // Якорь — точный snippet. Без него (или если он не найден в html дословно)
+  // НЕ трогаем HTML вовсе: безопаснее оставить как есть, чем порвать разметку/прозу
+  // или зацепить посторонние числа в другой части статьи.
+  if (!claim.snippet || !html.includes(claim.snippet)) return html;
+
   if (grade.verdict === 'wrong' && grade.correctValue) {
-    // подменяем только сам value внутри текста (не весь snippet, чтобы не порвать разметку)
     const valRe = new RegExp(escapeRe(claim.value), 'g');
-    let out = html.replace(valRe, grade.correctValue);
-    if (out === html) {
-      // value не нашёлся буквально — заменяем целиком snippet
-      out = html.replace(claim.snippet, claim.snippet.replace(valRe, grade.correctValue));
-    }
+    let newSnippet = claim.snippet.replace(valRe, grade.correctValue);
+    if (newSnippet === claim.snippet) return html; // value не найден внутри snippet → no-op
     if (grade.source) {
       const host = (() => { try { return new URL(grade.source).hostname.replace(/^www\./, ''); } catch { return grade.source; } })();
-      // упоминание источника после исправленного значения (разворачивается post-processing'ом)
-      out = out.replace(grade.correctValue, `${grade.correctValue} (по данным ${host})`);
+      // источник добавляем к ПЕРВОМУ исправленному значению внутри snippet
+      newSnippet = newSnippet.replace(grade.correctValue, `${grade.correctValue} (по данным ${host})`);
     }
-    return out;
+    return html.replace(claim.snippet, newSnippet);
   }
 
-  // unverified → убрать конкретное значение, смягчив фразу
+  // unverified → убираем конкретное значение ТОЛЬКО внутри snippet (без глобального
+  // прохода по статье), чистим сдвоенные пробелы.
   const valRe = new RegExp('\\s*' + escapeRe(claim.value), 'g');
-  return html.replace(valRe, '');
+  const newSnippet = claim.snippet.replace(valRe, '').replace(/\s{2,}/g, ' ').trim();
+  if (newSnippet === claim.snippet) return html;
+  return html.replace(claim.snippet, newSnippet);
 }
 
 export async function verifyAndCorrectClaims(

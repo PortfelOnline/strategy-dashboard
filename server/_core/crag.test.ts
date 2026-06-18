@@ -95,6 +95,42 @@ describe('applyCorrection', () => {
       { verdict: 'correct' });
     expect(out).toBe(html);
   });
+
+  it('wrong → НЕ трогает одинаковое значение вне snippet', () => {
+    const html = '<p>Статья 2 закона важна. Госпошлина 2 рубля за услугу.</p>';
+    const out = applyCorrection(html,
+      { claim: 'госпошлина', value: '2', type: 'fee', snippet: 'Госпошлина 2 рубля' },
+      { verdict: 'wrong', correctValue: '7', source: 'https://rosreestr.gov.ru/x' });
+    expect(out).toContain('Статья 2 закона'); // постороннее «2» не тронуто
+    expect(out).toContain('Госпошлина 7'); // значение в snippet исправлено
+    expect(out).not.toContain('Госпошлина 2');
+  });
+
+  it('unverified → НЕ режет одинаковое число вне snippet', () => {
+    const html = '<p>Пошлина 350 руб. Кабинет 350 на 3 этаже.</p>';
+    const out = applyCorrection(html,
+      { claim: 'пошлина', value: '350', type: 'fee', snippet: 'Пошлина 350 руб' },
+      { verdict: 'unverified' });
+    expect(out).toContain('Кабинет 350'); // постороннее «350» сохранено
+    expect(out).not.toContain('Пошлина 350');
+  });
+
+  it('wrong → источник приписан к исправленному вхождению, а не к более раннему совпадению', () => {
+    const html = '<p>Обычно 2000 рублей. За справку 350 рублей.</p>';
+    const out = applyCorrection(html,
+      { claim: 'госпошлина за справку', value: '350', type: 'fee', snippet: 'За справку 350 рублей' },
+      { verdict: 'wrong', correctValue: '2000', source: 'https://rosreestr.gov.ru/x' });
+    expect(out).toContain('Обычно 2000 рублей.'); // раннее «2000» без приписки
+    expect(out).toContain('За справку 2000 (по данным rosreestr.gov.ru) рублей');
+  });
+
+  it('snippet не найден в html → no-op', () => {
+    const html = '<p>Реальный текст.</p>';
+    const out = applyCorrection(html,
+      { claim: 'x', value: '5', type: 'stat', snippet: 'этого нет в статье' },
+      { verdict: 'wrong', correctValue: '9', source: 'https://rosreestr.gov.ru/x' });
+    expect(out).toBe(html);
+  });
 });
 
 describe('verifyAndCorrectClaims', () => {

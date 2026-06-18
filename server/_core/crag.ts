@@ -92,3 +92,58 @@ export async function gradeClaim(claim: Claim, searchFn: SearchFn, model: string
     return { verdict: 'unverified' };
   }
 }
+
+export interface CragStats {
+  total: number;
+  ok: number;
+  corrected: number;
+  stripped: number;
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function applyCorrection(html: string, claim: Claim, grade: Grade): string {
+  if (grade.verdict === 'correct') return html;
+
+  if (grade.verdict === 'wrong' && grade.correctValue) {
+    // подменяем только сам value внутри текста (не весь snippet, чтобы не порвать разметку)
+    const valRe = new RegExp(escapeRe(claim.value), 'g');
+    let out = html.replace(valRe, grade.correctValue);
+    if (out === html) {
+      // value не нашёлся буквально — заменяем целиком snippet
+      out = html.replace(claim.snippet, claim.snippet.replace(valRe, grade.correctValue));
+    }
+    if (grade.source) {
+      const host = (() => { try { return new URL(grade.source).hostname.replace(/^www\./, ''); } catch { return grade.source; } })();
+      // упоминание источника после исправленного значения (разворачивается post-processing'ом)
+      out = out.replace(grade.correctValue, `${grade.correctValue} (по данным ${host})`);
+    }
+    return out;
+  }
+
+  // unverified → убрать конкретное значение, смягчив фразу
+  const valRe = new RegExp('\\s*' + escapeRe(claim.value), 'g');
+  return html.replace(valRe, '');
+}
+
+export async function verifyAndCorrectClaims(
+  html: string,
+  keyword: string,
+  model: string,
+  searchFn: SearchFn,
+): Promise<{ html: string; stats: CragStats }> {
+  const claims = await extractClaims(html, keyword, model);
+  const stats: CragStats = { total: claims.length, ok: 0, corrected: 0, stripped: 0 };
+  let out = html;
+  for (const claim of claims) {
+    const grade = await gradeClaim(claim, searchFn, model);
+    if (grade.verdict === 'correct') { stats.ok++; continue; }
+    out = applyCorrection(out, claim, grade);
+    if (grade.verdict === 'wrong') stats.corrected++;
+    else stats.stripped++;
+  }
+  console.log(`[CRAG] "${keyword}": ${stats.total} claims → ${stats.ok} ok, ${stats.corrected} corrected, ${stats.stripped} stripped`);
+  return { html: out, stats };
+}

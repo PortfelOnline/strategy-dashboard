@@ -87,8 +87,8 @@ async function cachedYandexSerp(keyword: string): Promise<SerpData> {
   return result;
 }
 
-// ─── Актуальные цены с kadastrmap.info/spravki/ ──────────────────────────────
-const REAL_PRICES = `Актуальные цены kadastrmap.info:
+// ─── Актуальные цены с 100zem.ru/spravki/ ──────────────────────────────
+const REAL_PRICES = `Актуальные цены 100zem.ru:
 - Справка об объекте недвижимости — 649 руб.
 - Справка о переходе прав — 649 руб.
 - Расширенная справка об объекте — 699 руб.
@@ -406,7 +406,7 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
       messages: [
         {
           role: 'system',
-          content: `You are a senior FLUX.1 image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for landscape 16:9 compositions.
+          content: `You are a senior FLUX.1 image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for square 1:1 compositions.
 Use the following style tokens in every prompt: cinematic lighting, sharp focus, high detail, photorealistic, professional DSLR photo, shot on Canon EOS R5, 85mm f/1.8 lens, shallow depth of field, bokeh, natural window light, color graded.
 CRITICAL — NO TEXT AT ALL. AI image models (FLUX) cannot render text legibly, especially Cyrillic/Russian — any visible letters come out garbled and unprofessional. Negative tokens (must be absent): no text, no letters, no words, no numbers, no digits, no characters, no labels, no captions, no Cyrillic, no Russian letters, no handwriting, no typography, no watermarks, no logos, no signs with text. If a document/form/paper appears in the scene, it MUST be shown from a steep angle, folded, or out-of-focus so no text is readable. PREFER scenes WITHOUT visible documents — focus on people, hands, interiors, architecture, objects (keys, pens, laptops). Also avoid: low quality, distorted faces, extra limbs, cartoon/illustration/stock-photo look.
 
@@ -436,7 +436,7 @@ Each prompt must be UNIQUE, match its specific H2 section, and feature a concret
           content: `Article title: "${title}"
 Search keyword: "${kw}"
 ${sectionsBlock}${bodyBlock}${themeHints.length > 0 ? `\nTHEMATIC SCENES (use at least 2 of these — they match the specific subject of this article, NOT just generic real-estate):\n${themeHints.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n` : ''}
-This article is about ordering official Russian property / cadastral documents via kadastrmap.info.
+This article is about ordering official Russian property / cadastral documents via 100zem.ru.
 
 Write exactly ${targetCount} DIFFERENT prompts, one per H2 section in order. Each prompt MUST:
 - Be 15-25 words of content BEFORE the quality tags (describe subject, action, environment, lighting)
@@ -504,7 +504,7 @@ function checkArticleQuality(
   const hasExternalLinks = /href="https?:\/\/(?!kadastrmap\.info)[^"]+"/i.test(html);
   // Count all mentions (plain text or inside <a>) — needs global flag
   const authLinksCount = (html.match(/\b(?:rosreestr\.gov\.ru|consultant\.ru|garant\.ru|nalog\.ru|pravo\.gov\.ru|minjust\.ru|mos\.ru|gosuslugi\.ru|sudrf\.ru)\b/gi) || []).length;
-  // internal links: href starting with "/" or containing kadastrmap.info
+  // internal links: href starting with "/" or containing 100zem.ru
   const internalLinks = Array.from(html.matchAll(/href=["'](?:\/[^"']*|https?:\/\/[^"']*kadastrmap\.info[^"']*)["']/gi));
   const internalLinkCount = internalLinks.length;
 
@@ -571,7 +571,7 @@ async function ensureFeaturedSnippet(
         },
         {
           role: 'user',
-          content: `Перепиши ЭТОТ первый абзац статьи про "${keyword}" в формате Featured Snippet (45-60 слов, прямой ответ).\n\nТЕКУЩИЙ (${wordCount} слов):\n${currentText}\n\nТРЕБОВАНИЯ:\n- 45-60 слов строго\n- Начинается с "<strong>${keyword}</strong> — это..." ИЛИ "Для получения ${keyword}..."\n- Упомянуть ключевой факт (срок/способ/стоимость)\n- Закончить CTA-намёком про kadastrmap.info\n- Без вступлений типа "В этой статье"\n\nВерни ТОЛЬКО текст нового абзаца (без <p> тегов).`,
+          content: `Перепиши ЭТОТ первый абзац статьи про "${keyword}" в формате Featured Snippet (45-60 слов, прямой ответ).\n\nТЕКУЩИЙ (${wordCount} слов):\n${currentText}\n\nТРЕБОВАНИЯ:\n- 45-60 слов строго\n- Начинается с "<strong>${keyword}</strong> — это..." ИЛИ "Для получения ${keyword}..."\n- Упомянуть ключевой факт (срок/способ/стоимость)\n- Закончить CTA-намёком про 100zem.ru\n- Без вступлений типа "В этой статье"\n\nВерни ТОЛЬКО текст нового абзаца (без <p> тегов).`,
         },
       ],
       maxTokens: 300,
@@ -912,7 +912,7 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
   // AggregateRating schema REMOVED (2026-04-17).
   // Previous version hash-generated rating 4.6-4.99 + 80-259 reviews whenever the
   // article had an "отзывы" H3 block. But those reviews are LLM-written, not real
-  // customer feedback (kadastrmap.info has 0 WP comments). Publishing aggregate
+  // customer feedback (100zem.ru has 0 WP comments). Publishing aggregate
   // ratings that aren't tied to verifiable reviews is a manual-action risk under
   // Google's spam policies and Yandex's "honesty of ratings" guideline.
   //
@@ -1116,7 +1116,7 @@ async function filterRelevantMedia(
 }
 
 // ── Inject images after specific H2s with unique alts and correct dimensions ──
-// DALL-E 3 = 1792x1024; width/height critical to avoid CLS > 0.7.
+// Square 1024x1024; width/height critical to avoid CLS > 0.7.
 function injectImagesAfterH2s(
   html: string,
   media: { id: number; url: string; width?: number; height?: number }[],
@@ -1158,7 +1158,7 @@ function injectImagesAfterH2s(
   // SEO alt text helper: combines keyword + section + article context for image-search ranking.
   // Yandex and Google both use alt text heavily for image indexing. Plain H2 alone is too generic.
   const kw = (seoContext?.keyword || '').trim();
-  const siteTag = 'kadastrmap.info';
+  const siteTag = '100zem.ru';
   const buildAlt = (sectionText: string, i: number): string => {
     const section = sectionText.replace(/[🔹🔸📋📌⚠️✅💡⭐🕐🏠🏢📊💰⏱️🔍📄📝📱🛡️📚]/g, '').trim();
     // Avoid repeating keyword if section already contains it
@@ -1181,7 +1181,7 @@ function injectImagesAfterH2s(
     if (pos !== -1 && mediaToUse[pos]) {
       const m = mediaToUse[pos];
       const alt = buildAlt(h2Texts[h2count - 1] || '', pos);
-      const w = m.width ?? 1792;
+      const w = m.width ?? 1024;
       const h = m.height ?? 1024;
       const loadAttr = pos === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
       // figcaption improves accessibility + gives Yandex/Google additional signal
@@ -1211,7 +1211,7 @@ async function searchWikimediaImages(
       origin:      '*',
     });
     const resp = await fetch(`https://commons.wikimedia.org/w/api.php?${params}`, {
-      headers: { 'User-Agent': 'KadastrBot/1.0 (kadastrmap.info)' },
+      headers: { 'User-Agent': 'KadastrBot/1.0 (100zem.ru)' },
     });
     if (!resp.ok) return [];
     const data = await resp.json() as any;
@@ -1320,7 +1320,7 @@ ${tocEntries.map(e => `<li style="margin:0.3em 0;"><a href="#${e.id}" style="col
   // Truthful editorial line — no fake authorship, no manual-action risk.
   // Still signals E-E-A-T (content is reviewed, not AI-raw).
   const freshnessBlock = `<p class="article-meta" style="color:#666;font-size:0.92em;margin:0 0 0.3em;">🕐 <strong>Обновлено:</strong> ${stampText} · Актуально в 2026 году</p>
-<p class="article-editorial" style="color:#666;font-size:0.9em;margin:0 0 1em;">✅ <strong>Проверено редакцией kadastrmap.info</strong> — командой специалистов по кадастровому учёту и недвижимости.</p>\n`;
+<p class="article-editorial" style="color:#666;font-size:0.9em;margin:0 0 1em;">✅ <strong>Проверено редакцией 100zem.ru</strong> — командой специалистов по кадастровому учёту и недвижимости.</p>\n`;
 
   const result = breadcrumbBlock + freshnessBlock + tocBlock + htmlWithIds;
   console.log(`[TopMatter] Injected: breadcrumb=${!!breadcrumbBlock} freshness=${!!freshnessBlock} toc=${tocEntries.length} entries | length ${html.length}→${result.length}`);
@@ -1570,7 +1570,7 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
 7. Пошаговые инструкции: нумерованные списки для процессов
 8. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на сайт», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — такой навигации у нас нет. ✅ Пиши: «перейдите по ссылке на /spravki/», «воспользуйтесь формой на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
-10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
+10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Сохрани язык и стиль оригинала
 12. INFORMATION GAIN: добавь минимум один уникальный элемент, которого НЕТ у конкурентов — чек-лист, таблицу сравнения, разбор частых ошибок, мини-кейс или пошаговый пример с конкретными цифрами. Это решающий фактор для топа в 2026.
 13. ТЕМАТИЧЕСКАЯ ПОЛНОТА (топикал-авторитет Яндекса): естественно упомяни связанные сущности — ЕГРН, Росреестр, ФЗ-218 «О госрегистрации недвижимости», кадастровый инженер, кадастровая стоимость — где это уместно по смыслу.
@@ -1793,7 +1793,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
 - FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
 - Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО добавить' : 'добавить для сравнения способов'}
 - Авторитетные ссылки (E-E-A-T): у конкурентов макс. ${maxAuthLinks}, средн. ${avgAuthLinks} — наша цель ${targetAuthLinks}+ (rosreestr.gov.ru, consultant.ru, garant.ru, nalog.ru, pravo.gov.ru)
-- Внутренние ссылки: у конкурентов средн. ${avgInternalLinks} — наша цель ${targetInternalLinks}+ на kadastrmap.info (ссылки на /spravki/, другие статьи)
+- Внутренние ссылки: у конкурентов средн. ${avgInternalLinks} — наша цель ${targetInternalLinks}+ на 100zem.ru (ссылки на /spravki/, другие статьи)
 - Видео: конкуренты ${competitorHasVideo ? 'используют (YouTube embed)' : 'не используют'}${competitorHasVideo ? ' — добавить YouTube embed в разделе с инструкцией' : ''}\n`;
   const competitorAuthDomainsBlock = uniqueAuthDomains.length > 0
     ? `\nКОНКУРЕНТЫ ССЫЛАЮТСЯ НА (используй эти же источники): ${uniqueAuthDomains.join(', ')}\n`
@@ -1858,10 +1858,10 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
 5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>. Минимум ${targetFaq} вопросов — это критично для Яндекс AI-ответов (FAQ-схема).
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
-7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт kadastrmap.info», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
-10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
+10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
@@ -1879,7 +1879,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
     Эмодзи ставь в начале предложения или перед ключевым словом. В каждом H2-разделе должно быть 2-3 эмодзи в тексте.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
+    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
 
   // SEO analysis: fast 8B (simple JSON task)
   // Article generation: best available model for TOP-3 quality
@@ -2266,7 +2266,7 @@ async function autoPublishToWP(
   if (!post) { console.log(`[WP] Post not found for slug "${slug}", skipping`); return; }
 
   const ctaUrl = `${account.siteUrl.replace(/\/$/, '')}/spravki/`;
-  const ctaTexts = ['Заказать документ онлайн', 'Получить справку сейчас', 'Проверить объект на kadastrmap.info'];
+  const ctaTexts = ['Заказать документ онлайн', 'Получить справку сейчас', 'Проверить объект на 100zem.ru'];
   const ctaBlock = (text: string) =>
     `\n<div style="text-align:center;margin:2em 0 2.5em;">` +
     `<a href="${ctaUrl}" style="display:inline-block;background:#4CAF50;color:#fff;` +
@@ -2533,10 +2533,10 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
 5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary>
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
-7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт kadastrmap.info», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
-10. Название сервиса пиши СТРОГО как "kadastrmap.info" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "kadastrmap.info".
+10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
 13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
@@ -2546,7 +2546,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2. Пиши каждый H2-раздел полностью (300+ слов) — это обеспечивает контекст для картинки.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через kadastrmap.info</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через kadastrmap.info</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.kadastrmap.info/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
+        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
 
       const [seoResponse, improvedResponse] = await Promise.all([
         invokeLLM({
@@ -2853,7 +2853,7 @@ ${competitorList}
   getCompetitorMetrics: protectedProcedure
     .input(z.object({ keyword: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const ourDomain = 'kadastrmap.info';
+      const ourDomain = '100zem.ru';
       const [google, yandex] = await Promise.all([
         cachedGoogleSerp(input.keyword),
         cachedYandexSerp(input.keyword),
@@ -3273,18 +3273,18 @@ ${competitorContext}
         }),
         invokeLLM({
           messages: [
-            { role: 'system', content: 'Ты SEO-копирайтер. Пишешь meta description для страниц. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через kadastrmap.info.' },
+            { role: 'system', content: 'Ты SEO-копирайтер. Пишешь meta description для страниц. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через 100zem.ru.' },
             { role: 'user', content: `Заголовок: "${input.title}"
 
 Напиши meta description для этой страницы (130–155 символов).
-Должен содержать ключевой запрос, выгоду и CTA «заказать на kadastrmap.info».
+Должен содержать ключевой запрос, выгоду и CTA «заказать на 100zem.ru».
 Верни ТОЛЬКО строку без кавычек и markdown.` },
           ],
           maxTokens: 200,
         }).catch(() => null),
         invokeLLM({
           messages: [
-            { role: 'system', content: 'Ты SEO-копирайтер. Пишешь анонсы (excerpts) для статей WordPress. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — kadastrmap.info.' },
+            { role: 'system', content: 'Ты SEO-копирайтер. Пишешь анонсы (excerpts) для статей WordPress. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — 100zem.ru.' },
             { role: 'user', content: `Заголовок статьи: "${input.title}"
 
 Напиши анонс (excerpt) для листинга статей — 1-2 предложения, 100–160 символов.
@@ -3480,8 +3480,8 @@ ${competitorContext}
       const [metaResp, imagePrompts, libraryImages, wikimediaImages] = await Promise.all([
         invokeLLM({
           messages: [
-            { role: 'system', content: 'Ты SEO-копирайтер. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через kadastrmap.info.' },
-            { role: 'user', content: `Заголовок: "${input.title}"\nФокусный ключ: "${focusKeyword}"\n\nНапиши meta description (130–155 символов). Включи ключевой запрос и CTA «заказать на kadastrmap.info». Верни ТОЛЬКО строку без кавычек.` },
+            { role: 'system', content: 'Ты SEO-копирайтер. Никогда не упоминай Госуслуги, МФЦ, Росреестр как способы заказа. Акцент — заказ через 100zem.ru.' },
+            { role: 'user', content: `Заголовок: "${input.title}"\nФокусный ключ: "${focusKeyword}"\n\nНапиши meta description (130–155 символов). Включи ключевой запрос и CTA «заказать на 100zem.ru». Верни ТОЛЬКО строку без кавычек.` },
           ],
           maxTokens: 200,
         }).catch(() => null),
@@ -3683,7 +3683,7 @@ ${competitorContext}
   checkPosition: protectedProcedure
     .input(z.object({
       keyword: z.string().min(1),
-      domain:  z.string().default('kadastrmap.info'),
+      domain:  z.string().default('100zem.ru'),
     }))
     .mutation(async ({ input }) => {
       const [google, yandex] = await Promise.all([
@@ -3786,7 +3786,7 @@ ${competitorContext}
         return `Группа ${i + 1}:\n${items}`;
       }).join('\n\n');
 
-      const prompt = `Ты SEO-эксперт. На сайте kadastrmap.info найдены группы дублирующихся статей (похожие заголовки, разные URL).
+      const prompt = `Ты SEO-эксперт. На сайте 100zem.ru найдены группы дублирующихся статей (похожие заголовки, разные URL).
 
 ${groupsSummary}
 
@@ -3936,7 +3936,7 @@ ${groupsSummary}
     }),
 
   /**
-   * Suggest best keywords for kadastrmap.info ranked by traffic × conversion potential.
+   * Suggest best keywords for 100zem.ru ranked by traffic × conversion potential.
    * Sources:
    *   1. Our existing catalog titles (gaps analysis)
    *   2. Live SERP for seed keywords → real competitor titles
@@ -4007,10 +4007,10 @@ ${groupsSummary}
           }`
         : '';
 
-      const prompt = `Ты SEO-эксперт по российскому рынку недвижимости. Анализируй реальные данные и предложи ключевые запросы для kadastrmap.info.
+      const prompt = `Ты SEO-эксперт по российскому рынку недвижимости. Анализируй реальные данные и предложи ключевые запросы для 100zem.ru.
 
 О САЙТЕ:
-kadastrmap.info — сервис справок о недвижимости. Пользователь вводит адрес или кадастровый номер и получает справку с данными из ЕГРН:
+100zem.ru — сервис справок о недвижимости. Пользователь вводит адрес или кадастровый номер и получает справку с данными из ЕГРН:
 - кадастровая стоимость объекта
 - история владельцев, переходы прав
 - обременения, аресты, залоги
@@ -4358,7 +4358,7 @@ function beautifyArticleHtml(html: string): string {
     }
   });
 
-  // -1. Convert absolute kadastrmap.info links to relative paths.
+  // -1. Convert absolute 100zem.ru links to relative paths.
   //     Внешние ссылки (на сторонние домены) РАЗВОРАЧИВАЕМ в обычный текст — надпись
   //     сохраняется, но <a> убирается, чтобы вес (PageRank) не утекал на чужие сайты.
   $('a[href]').each((_: number, a: any) => {

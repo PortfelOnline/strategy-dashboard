@@ -37,7 +37,7 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
           },
           body: JSON.stringify({
             prompt,
-            aspect_ratio: '16:9',
+            aspect_ratio: '1:1',
             num_inference_steps: IMAGE_MODEL.includes('schnell')
               ? 4
               : Number(process.env.IMAGE_STEPS ?? 32),
@@ -57,7 +57,7 @@ export async function generateDallEImage(prompt: string, timeoutMs = 90_000): Pr
           model: IMAGE_MODEL,
           prompt,
           n: 1,
-          width: 1792,
+          width: 1024,
           height: 1024,
         }),
         signal: controller.signal,
@@ -180,14 +180,97 @@ export function generateAgyImage(prompt: string, timeoutMs = 120_000): string {
 }
 
 /**
- * Image provider chain: Gemini first (agy CLI → Gemini REST), then FLUX (Fireworks)
- * as a fallback when Gemini limits/quota are exhausted. Keeps using free Gemini quota
- * while it lasts, and degrades to cheap-but-reliable FLUX schnell instead of failing.
+ * Generate an image via Pollinations (https://pollinations.ai) — бесплатно, без API-ключа.
+ * Возвращает file:// путь к локальному файлу. Модель/размер настраиваются через env
+ * POLLINATIONS_MODEL/POLLINATIONS_WIDTH/POLLINATIONS_HEIGHT.
+ */
+// Pollinations: СТРОГО 1 запрос в полёте на IP (concurrency=1; иначе "Queue full for IP" 429).
+// Генерация занимает 17–45с (замерено 2026-06-26). Сериализуем по ЗАВЕРШЕНИЮ — следующий
+// запрос стартует только ПОСЛЕ возврата предыдущего (release в finally), а не по таймеру.
+// Конкурентные вызовы (Promise.allSettled на N картинок) выстраиваются в очередь.
+let _pollTail: Promise<void> = Promise.resolve();
+function _acquirePollinationsSlot(): Promise<() => void> {
+  let release!: () => void;
+  const done = new Promise<void>((r) => (release = r));
+  const prev = _pollTail;
+  _pollTail = prev.then(() => done);
+  return prev.then(() => release);
+}
+// Pollinations 403-ит дефолтный Node/Python User-Agent → шлём браузерный.
+const POLL_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0 Safari/537.36';
+
+export async function generatePollinationsImage(prompt: string, timeoutMs = 120_000): Promise<string> {
+  const release = await _acquirePollinationsSlot();
+  try {
+    const model = process.env.POLLINATIONS_MODEL ?? 'flux';
+    const width = Number(process.env.POLLINATIONS_WIDTH ?? 1024);
+    const height = Number(process.env.POLLINATIONS_HEIGHT ?? 1024);
+    const seed = Math.floor(Math.random() * 1_000_000_000);
+    const base = process.env.POLLINATIONS_URL ?? 'https://image.pollinations.ai';
+    const url =
+      `${base.replace(/\/$/, '')}/prompt/${encodeURIComponent(prompt)}` +
+      `?width=${width}&height=${height}&model=${model}&seed=${seed}&nologo=true`;
+
+    // Retry-on-429/403 как страховка (чужая нагрузка на IP / транзиентный блок UA).
+    let response: Response;
+    const maxAttempts = 6;
+    for (let attempt = 0; ; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        response = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': POLL_UA } });
+      } finally {
+        clearTimeout(timer);
+      }
+      if ((response.status === 429 || response.status === 403) && attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, Math.min(3000 * (attempt + 1), 15000) + Math.floor(Math.random() * 2000)));
+        continue;
+      }
+      break;
+    }
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Pollinations error: ${response.status} - ${err.slice(0, 200)}`);
+    }
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.startsWith('image/')) {
+      const body = await response.text();
+      throw new Error(`Pollinations returned non-image (${contentType}): ${body.slice(0, 120)}`);
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+    const tmpPath = path.join(tmpdir(), `poll-img-${Date.now()}.${ext}`);
+    writeFileSync(tmpPath, buffer);
+    return `file://${tmpPath}`;
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Image provider chain: Pollinations first (бесплатно, без ключа — основной генератор),
+ * затем Gemini (agy CLI → Gemini REST) и FLUX (Fireworks) как запасные, если они
+ * сконфигурированы. Pollinations отключается через POLLINATIONS_DISABLED=1.
  */
 export async function generateImageWithFallback(prompt: string): Promise<string> {
   const errors: string[] = [];
 
-  // 1. Gemini via agy CLI (primary)
+  // 1. Pollinations (primary — бесплатно, без API-ключа)
+  if (process.env.POLLINATIONS_DISABLED !== '1') {
+    try {
+      const result = await generatePollinationsImage(prompt);
+      console.log(`[ImgGen] Pollinations generated: ${result.slice(-60)}`);
+      return result;
+    } catch (e: any) {
+      const msg = (e?.message || String(e)).slice(0, 120);
+      errors.push(`pollinations: ${msg}`);
+      console.warn(`[ImgGen] Pollinations failed: ${msg} — trying Gemini/FLUX`);
+    }
+  }
+
+  // 2. Gemini via agy CLI
   try {
     const result = generateAgyImage(prompt);
     console.log(`[ImgGen] agy (Gemini) generated: ${result.slice(-60)}`);

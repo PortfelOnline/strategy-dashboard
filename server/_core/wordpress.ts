@@ -101,7 +101,7 @@ export async function uploadMediaFromUrl(
   appPassword: string,
   imageUrl: string,
   filename: string
-): Promise<{ id: number; url: string }> {
+): Promise<{ id: number; url: string; width?: number; height?: number }> {
   return uploadMediaViaCurl(siteUrl, username, appPassword, imageUrl, filename);
 }
 
@@ -118,7 +118,7 @@ async function uploadMediaViaSsh(
   appPassword: string,
   imageUrl: string,
   filename: string
-): Promise<{ id: number; url: string }> {
+): Promise<{ id: number; url: string; width?: number; height?: number }> {
   // Escape single quotes in imageUrl and filename for the shell command
   const safeUrl = imageUrl.replace(/'/g, "'\\''");
   const safeFilename = filename.replace(/'/g, "'\\''");
@@ -142,7 +142,7 @@ async function uploadMediaViaSsh(
   const res = await axios.get(`${apiBase(siteUrl)}/media/${mediaId}`, {
     headers: { Authorization: basicAuth(username, appPassword) },
   });
-  return { id: mediaId, url: res.data.source_url };
+  return { id: mediaId, url: res.data.source_url, width: res.data.media_details?.width, height: res.data.media_details?.height };
 }
 
 /**
@@ -154,7 +154,7 @@ async function uploadMediaViaCurl(
   appPassword: string,
   imageUrl: string,
   filename: string
-): Promise<{ id: number; url: string }> {
+): Promise<{ id: number; url: string; width?: number; height?: number }> {
   let buffer: Buffer;
   let mimeType: string;
 
@@ -191,9 +191,9 @@ async function uploadMediaViaCurl(
       '--noproxy', '*',
     ]);
     // Strip BOM that WordPress REST API sometimes prepends
-    const data = JSON.parse(result.toString().replace(/^\uFEFF/, '')) as { id: number; source_url: string };
+    const data = JSON.parse(result.toString().replace(/^\uFEFF/, '')) as { id: number; source_url: string; media_details?: { width?: number; height?: number } };
     if (!data.id) throw new Error(`WP media upload: no id in response: ${result.toString().slice(0, 200)}`);
-    return { id: data.id, url: data.source_url };
+    return { id: data.id, url: data.source_url, width: data.media_details?.width, height: data.media_details?.height };
   } finally {
     try { unlinkSync(tmpInput); } catch { /* ignore */ }
     try { unlinkSync(tmpWebp); } catch { /* ignore */ }

@@ -53,7 +53,7 @@ function parseJson(raw: string): any {
 }
 
 export async function generateDzenArticle(targetUrl: string, anchor: string): Promise<{ title: string; article: string }> {
-  const link  = `[${anchor}](https://kadastrmap.info${targetUrl})`;
+  const link  = `[${anchor}](https://100zem.ru${targetUrl})`;
   const topic = topicForUrl(targetUrl);
   const system = `Ты SEO-автор, пишешь полезные статьи о недвижимости и кадастре для Яндекс Дзен. Стиль: объясняю как эксперт, без воды. Структура: заголовок, 4-6 разделов H2, вывод. Вставь ссылку ${link} органично в тело текста (не в конце). Только русский язык. Без markdown-кодов и HTML.`;
   const user   = `Напиши статью на тему "${topic}". Объём 900-1200 слов. Верни JSON: {"title":"...","article":"..."}`;
@@ -63,7 +63,7 @@ export async function generateDzenArticle(targetUrl: string, anchor: string): Pr
 }
 
 export async function generateSparkArticle(targetUrl: string, anchor: string): Promise<{ title: string; article: string }> {
-  const link  = `[${anchor}](https://kadastrmap.info${targetUrl})`;
+  const link  = `[${anchor}](https://100zem.ru${targetUrl})`;
   const topic = topicForUrl(targetUrl);
   const system = `Ты эксперт по недвижимости, пишешь экспертную колонку на Spark.ru. Деловой практический стиль, минимум списков, больше объяснений. Вставь ссылку ${link} органично. Только русский язык.`;
   const user   = `Напиши экспертную колонку "${topic}". Объём 600-900 слов. Верни JSON: {"title":"...","article":"..."}`;
@@ -73,7 +73,7 @@ export async function generateSparkArticle(targetUrl: string, anchor: string): P
 }
 
 export async function generateKwAnswer(targetUrl: string, _anchor: string): Promise<{ question: string; article: string }> {
-  const link     = `https://kadastrmap.info${targetUrl}`;
+  const link     = `https://100zem.ru${targetUrl}`;
   const question = questionForUrl(targetUrl);
   const system   = `Ты эксперт по кадастру, отвечаешь на вопросы на Яндекс.Кью. Дай развёрнутый практический ответ. Упомяни ${link} органично. Только русский язык.`;
   const user     = `Напиши ответ на вопрос "${question}". Объём 200-350 слов. Верни JSON: {"answer":"..."}`;

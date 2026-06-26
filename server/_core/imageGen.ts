@@ -208,9 +208,13 @@ export async function generatePollinationsImage(prompt: string, timeoutMs = 120_
     const height = Number(process.env.POLLINATIONS_HEIGHT ?? 1024);
     const seed = Math.floor(Math.random() * 1_000_000_000);
     const base = process.env.POLLINATIONS_URL ?? 'https://image.pollinations.ai';
+    // enhance=true прогоняет промпт через LLM-улучшайзер Pollinations (богаче детализация).
+    // Включается POLLINATIONS_ENHANCE=1 (по умолчанию выкл — может слегка дрейфовать в сторону
+    // «западной» эстетики, что для русского блога нежелательно; включать осознанно).
+    const enhance = process.env.POLLINATIONS_ENHANCE === '1' ? '&enhance=true' : '';
     const url =
       `${base.replace(/\/$/, '')}/prompt/${encodeURIComponent(prompt)}` +
-      `?width=${width}&height=${height}&model=${model}&seed=${seed}&nologo=true`;
+      `?width=${width}&height=${height}&model=${model}&seed=${seed}&nologo=true${enhance}`;
 
     // Retry-on-429/403 как страховка (чужая нагрузка на IP / транзиентный блок UA).
     let response: Response;

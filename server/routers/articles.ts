@@ -965,38 +965,62 @@ function isImageRiskyTopic(keyword: string, title: string): boolean {
   return /(стоимост|цена|тариф|плат|оплат|деньг|рубл|купить|заказать|мфц|госуслуг|госцентр|ключ|паспорт)/i.test(s);
 }
 
-async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok: boolean; issues: string[] }> {
+// Декодирует изображение (file:// | data: | http) в массив байт для CF Workers AI.
+async function imageToBytes(imageUrl: string): Promise<number[] | null> {
   try {
-    const resp = await invokeLLM({
-      model: process.env.LLM_VISION_MODEL ?? 'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a STRICT image QA validator for a modern Russian cadastral blog (2020s аудитория — обычные россияне, не юристы в США). All imagery must look recognizably modern Russian middle-class: IKEA-style furniture, panel-frame apartments, простые кабинеты. REJECT anything that looks like a Western lawyer firm, English gentleman club, American courthouse, or ornate European 19th-century interior. ALSO REJECT images with deformed anatomy (extra/missing/fused fingers, twisted wrists, impossible hand poses) — FLUX often fails at hands. ALSO REJECT warped/melted object geometry — fused or distorted objects, impossible structure, broken perspective, especially deformed electronics or furniture (laptops/phones/keyboards melting or merging into the desk). Answer with strict JSON only: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}. No explanations.',
-        },
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `Topic: "${topic}". Check this image for:\n1. foreignMoney — any banknotes visible (Euro/USD/other), any Greek architecture on bills, any non-Russian currency\n2. englishText — any readable English/Latin text on signs/objects/screens (small logos ok)\n3. brandLogos — Visa/Mastercard/Yale/Cisa/manufacturer marks on objects\n4. euSymbols — EU flag, UE emblem, Euro symbol\n5. westernLook — overtly Instagram/Pinterest/American suburban aesthetic (acrylic nails, hyugge, Scandinavian minimalism)\n6. ornateLawFirm — ornate wooden-panelled office, gothic arched windows, Lady Justice bronze statue, green banker desk lamp, massive oak desk, classical courthouse architecture, English-club style library — anything that screams "American/British law firm". A normal Russian notary/office is plain neutral with modern IKEA furniture, NOT ornate Victorian.\n7. deformedHands — extra/missing/fused fingers, more than 5 fingers per hand, impossible finger positions (fingers overlapping/melting into each other), twisted unnatural wrist, double-jointed impossible bends, mutated hand anatomy. FLUX frequently fails at hands — be strict.\n8. deformedObjects — warped or melted object geometry, objects fused together, impossible/incoherent structure, broken perspective, distorted electronics or furniture (laptop/phone/keyboard/monitor melting or merging into the desk or each other). Be strict — this is the most common FLUX failure on complex scenes.\n\nAnswer strict JSON only.` },
-            { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } },
-          ],
-        },
-      ],
-      maxTokens: 180,
-    });
-    const text = typeof resp.choices[0]?.message.content === 'string' ? resp.choices[0].message.content : '';
+    if (imageUrl.startsWith('data:')) {
+      const b64 = imageUrl.slice(imageUrl.indexOf(',') + 1);
+      return Array.from(Buffer.from(b64, 'base64'));
+    }
+    if (imageUrl.startsWith('file://')) {
+      return Array.from(readFileSync(imageUrl.slice('file://'.length)));
+    }
+    const r = await fetch(imageUrl);
+    if (!r.ok) return null;
+    return Array.from(Buffer.from(await r.arrayBuffer()));
+  } catch {
+    return null;
+  }
+}
+
+// Vision-QA через Cloudflare Workers AI (llama-3.2-11b-vision) — бесплатно, 10k neurons/день,
+// без карты. Заменил Groq llama-4-scout (был слеп к деформациям + кончился бюджет) и Pollinations
+// vision (анонимный эндпоинт перестал принимать картинки). llama-3.2-11b проверенно ловит
+// warped geometry, где scout отвечал deformedObjects:false. Fail-open при отсутствии creds/ошибке.
+async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok: boolean; issues: string[] }> {
+  const acc = process.env.CF_ACCOUNT_ID;
+  const token = process.env.CF_API_TOKEN;
+  if (!acc || !token) return { ok: true, issues: [] }; // не настроено → не блокируем
+  const model = process.env.CF_VISION_MODEL ?? '@cf/meta/llama-3.2-11b-vision-instruct';
+  try {
+    const bytes = await imageToBytes(imageUrl);
+    if (!bytes) return { ok: true, issues: [] };
+    const prompt = `You are a STRICT image QA validator for a modern Russian cadastral blog (2020s аудитория — обычные россияне, не юристы в США). Imagery must look recognizably modern Russian middle-class: IKEA-style furniture, panel-frame apartments, простые кабинеты — NOT a Western lawyer firm, English gentleman club, American courthouse, or ornate European 19th-century interior.\nTopic: "${topic}". Inspect the attached image and flag:\n1. foreignMoney — any non-Russian banknotes/currency visible\n2. englishText — any readable English/Latin text on signs/objects/screens (tiny logos ok)\n3. brandLogos — Visa/Mastercard/Yale/manufacturer marks on objects\n4. euSymbols — EU flag, UE emblem, Euro symbol\n5. westernLook — overtly Instagram/Pinterest/American suburban aesthetic\n6. ornateLawFirm — ornate wooden-panelled office, gothic windows, Lady Justice statue, green banker lamp, massive oak desk, classical courthouse — anything screaming American/British law firm\n7. deformedHands — extra/missing/fused fingers, >5 fingers, impossible finger/wrist anatomy. FLUX frequently fails at hands — be strict.\n8. deformedObjects — warped/melted geometry, objects fused together, broken perspective, distorted electronics/furniture (laptop/phone/keyboard/monitor melting or merging into the desk). The most common FLUX failure — be strict.\nDescribe the image in 6 words, then answer strict JSON only: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}.`;
+    // llama-3.2-vision изредка отдаёт ложный safety-отказ вместо JSON — ретраим один раз,
+    // иначе такой ответ молча пропустит картинку без проверки (fail-open).
+    let text = '';
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const resp = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${model}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ image: bytes, prompt, max_tokens: 250 }),
+      });
+      const json: any = await resp.json().catch(() => null);
+      if (!resp.ok || !json?.success) {
+        console.warn('[VisionCheck] CF failed:', JSON.stringify(json)?.slice(0, 120));
+        return { ok: true, issues: [] };
+      }
+      text = String(json.result?.response ?? '');
+      const refusal = /cannot continue|cannot assist|illegal and harmful/i.test(text);
+      if (!refusal && /\{[\s\S]*\}/.test(text)) break;
+    }
     const m = text.match(/\{[\s\S]*?\}/);
     if (!m) return { ok: true, issues: [] }; // parsing failed — assume ok to avoid blocking
     const flags = JSON.parse(m[0]) as Record<string, boolean>;
     const issues: string[] = [];
-    if (flags.foreignMoney) issues.push('foreignMoney');
-    if (flags.englishText) issues.push('englishText');
-    if (flags.brandLogos) issues.push('brandLogos');
-    if (flags.euSymbols) issues.push('euSymbols');
-    if (flags.ornateLawFirm) issues.push('ornateLawFirm');
-    if (flags.deformedHands) issues.push('deformedHands');
-    if (flags.deformedObjects) issues.push('deformedObjects');
-    if (flags.westernLook) issues.push('westernLook');
+    for (const k of ['foreignMoney', 'englishText', 'brandLogos', 'euSymbols', 'ornateLawFirm', 'deformedHands', 'deformedObjects', 'westernLook']) {
+      if (flags[k]) issues.push(k);
+    }
     return { ok: issues.length === 0, issues };
   } catch (e: any) {
     console.warn('[VisionCheck] failed:', e?.message?.slice(0, 80));
@@ -1016,16 +1040,8 @@ async function generateValidatedImage(prompt: string, topic: string, attempts = 
   for (let i = 0; i < attempts; i++) {
     const url = await generateImageWithFallback(prompt);
     lastUrl = url;
-    let checkUrl = url;
-    if (url.startsWith('file://')) {
-      try {
-        const buf = readFileSync(url.slice('file://'.length));
-        checkUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
-      } catch {
-        return url; // can't read local file → skip QA, use as-is
-      }
-    }
-    const v = await validateFluxImage(checkUrl, topic);
+    // validateFluxImage сам декодирует file:// | data: | http в байты для CF vision.
+    const v = await validateFluxImage(url, topic);
     if (v.ok) return url;
     console.warn(`[ImgQA] attempt ${i + 1}/${attempts} rejected: ${v.issues.join(', ')} — regenerating`);
   }
@@ -1204,7 +1220,7 @@ function injectImagesAfterH2s(
       const h = m.height ?? 1024;
       const loadAttr = pos === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
       // figcaption improves accessibility + gives Yandex/Google additional signal
-      return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" title="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;" ${loadAttr}><figcaption style="font-size:0.85em;color:#777;margin-top:0.4em;font-style:italic;">${alt}</figcaption></figure>`;
+      return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" title="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;aspect-ratio:${w}/${h};" ${loadAttr}><figcaption style="font-size:0.85em;color:#777;margin-top:0.4em;font-style:italic;">${alt}</figcaption></figure>`;
     }
     return '</h2>';
   });

@@ -9,6 +9,7 @@ import { invokeLLM } from "../_core/llm";
 import { verifyAndCorrectClaims } from "../_core/crag";
 import { ensureMinFaq } from "../_core/quality-fixers";
 import { generateImageWithFallback } from "../_core/imageGen";
+import { readFileSync } from "node:fs";
 import * as wp from "../_core/wordpress";
 import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
@@ -1001,6 +1002,34 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
     console.warn('[VisionCheck] failed:', e?.message?.slice(0, 80));
     return { ok: true, issues: [] }; // fail-open: не блокируем публикацию
   }
+}
+
+// ── Best-of-N image generation with vision QA gate ──────────────────────────
+// FLUX (Pollinations) reliably produces broken frames — melted geometry,
+// deformed hands, garbled text, stray electronics — and FLUX ignores negative
+// prompts, so we cannot prevent them at the prompt level alone. We generate,
+// validate the result with validateFluxImage, and regenerate on distortion.
+// Fail-open: returns the last attempt even if not clean, so publishing never
+// blocks. Pollinations returns file:// — convert to a base64 data URI for QA.
+async function generateValidatedImage(prompt: string, topic: string, attempts = 2): Promise<string> {
+  let lastUrl = '';
+  for (let i = 0; i < attempts; i++) {
+    const url = await generateImageWithFallback(prompt);
+    lastUrl = url;
+    let checkUrl = url;
+    if (url.startsWith('file://')) {
+      try {
+        const buf = readFileSync(url.slice('file://'.length));
+        checkUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      } catch {
+        return url; // can't read local file → skip QA, use as-is
+      }
+    }
+    const v = await validateFluxImage(checkUrl, topic);
+    if (v.ok) return url;
+    console.warn(`[ImgQA] attempt ${i + 1}/${attempts} rejected: ${v.issues.join(', ')} — regenerating`);
+  }
+  return lastUrl; // all attempts flagged — fail-open with the last one
 }
 
 // ── Replace hardcoded price tables with [BLOCK_PRICE] shortcode ───────────────
@@ -2127,7 +2156,7 @@ export async function findAndInjectImages(
     const indices = Array.from({ length: Math.min(BATCH_SIZE, agNeeded - start) }, (_, k) => start + k);
     const results = await Promise.allSettled(
       indices.map(async (i) => {
-        const imgUrl = await generateImageWithFallback(prompts[i]);
+        const imgUrl = await generateValidatedImage(prompts[i], title);
         const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-${i + 1}.webp`);
         return up;
       })
@@ -2150,7 +2179,7 @@ export async function findAndInjectImages(
     console.warn(`[Img] 0 картинок после 1-го прохода — повторная генерация ${retryN} (sequential)`);
     for (let i = 0; i < retryN; i++) {
       try {
-        const imgUrl = await generateImageWithFallback(prompts[i]);
+        const imgUrl = await generateValidatedImage(prompts[i], title);
         const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-r${i + 1}.webp`);
         validMedia.push(up);
         console.log(`[Img] retry[${i}] uploaded → WP id ${up.id}`);
@@ -3289,7 +3318,7 @@ ${competitorContext}
       const imageResults = await Promise.all(
         input.generateImage
           ? (imagePrompts as string[]).map((p) =>
-              generateImageWithFallback(p).catch((e) => { console.error('[Articles] ImgGen failed:', e.message); return null; })
+              generateValidatedImage(p, input.title).catch((e) => { console.error('[Articles] ImgGen failed:', e.message); return null; })
             )
           : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)]
       );
@@ -3516,7 +3545,7 @@ ${competitorContext}
         console.log(`[Draft] Generating ${dalleNeeded} DALL-E images (confirmed: ${confirmedImages.length})`);
         const dalleUrls = await Promise.all(
           imagePrompts.slice(0, dalleNeeded).map((p: string, i: number) =>
-            generateImageWithFallback(p)
+            generateValidatedImage(p, input.title)
               .then(url => { console.log(`[Draft] ImgGen[${i}] OK`); return url; })
               .catch((e: any) => { console.warn(`[Draft] ImgGen[${i}] failed:`, e?.message); return null; })
           )

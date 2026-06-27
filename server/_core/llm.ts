@@ -270,6 +270,49 @@ const normalizeResponseFormat = ({
   };
 };
 
+// Извлекает текст из normalizeMessage-контента (строка или массив частей).
+function partsToText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((p: any) => (typeof p === 'string' ? p : (p?.type === 'text' ? p.text : ''))).join('');
+  }
+  return '';
+}
+
+// Вызов Code Assist моста (Gemini) в формате generateContent. Возвращает текст или null (блок/пусто).
+async function invokeGeminiBridge(payload: Record<string, unknown>): Promise<string | null> {
+  const base = (process.env.GEMINI_BRIDGE_URL || 'http://localhost:4400/genai').replace(/\/$/, '');
+  const model = String(payload.model ?? process.env.GEMINI_BRIDGE_MODEL ?? 'gemini-3.5-flash');
+  const msgs = ((payload.messages as any[]) || []);
+  const sys = msgs.filter(m => m.role === 'system').map(m => partsToText(m.content)).join('\n').trim();
+  const contents = msgs
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: partsToText(m.content) }] }));
+  if (contents.length === 0) return null;
+  const wantJson = String((payload.response_format as any)?.type || '').includes('json');
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      maxOutputTokens: (payload.max_tokens as number) || 4096,
+      ...(wantJson ? { responseMimeType: 'application/json' } : {}),
+    },
+    ...(sys ? { systemInstruction: { parts: [{ text: sys }] } } : {}),
+  };
+  const r = await fetch(`${base}/v1beta/models/${model}:generateContent`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': 'bridge' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!r.ok) throw new Error(`bridge ${r.status}`);
+  const j: any = await r.json();
+  const cand = j?.candidates?.[0];
+  const fr = cand?.finishReason;
+  if (fr === 'PROHIBITED_CONTENT' || fr === 'SAFETY' || fr === 'BLOCKLIST') return null;
+  const text = (cand?.content?.parts || []).map((p: any) => p?.text || '').join('').trim();
+  return text || null;
+}
+
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   assertApiKey();
 
@@ -323,6 +366,26 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
 
   if (normalizedResponseFormat) {
     payload.response_format = normalizedResponseFormat;
+  }
+
+  // ── Gemini-bridge backend (Code Assist via ViralCraft мост, Antigravity-квота, обход лимитов) ──
+  // Транслирует OpenAI messages → Gemini generateContent, зовёт мост, мапит ответ обратно.
+  // Tool-calls и strict json_schema оставляем на Groq (мост их не транслирует). Автофолбэк на Groq
+  // при ошибке/PROHIBITED_CONTENT/пустом ответе — редкие safety-блоки Gemini не уронят генерацию.
+  const rfType = (payload.response_format as any)?.type;
+  if (process.env.LLM_BACKEND === 'gemini-bridge' && !payload.tools && rfType !== 'json_schema') {
+    try {
+      const text = await invokeGeminiBridge(payload);
+      if (text) {
+        return {
+          id: 'gemini-bridge', created: 0, model: String(payload.model ?? 'gemini'),
+          choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+        } as InvokeResult;
+      }
+      console.warn('[LLM] gemini-bridge: пусто/safety-блок — фолбэк на Groq');
+    } catch (e: any) {
+      console.warn('[LLM] gemini-bridge ошибка:', e?.message?.slice(0, 120), '— фолбэк на Groq');
+    }
   }
 
   const MAX_RETRIES = 8;

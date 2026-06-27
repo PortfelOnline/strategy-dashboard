@@ -989,10 +989,30 @@ async function imageToBytes(imageUrl: string): Promise<number[] | null> {
   }
 }
 
-// Vision-QA через Cloudflare Workers AI (llama-3.2-11b-vision) — бесплатно, 10k neurons/день,
-// без карты. Заменил Groq llama-4-scout (был слеп к деформациям + кончился бюджет) и Pollinations
-// vision (анонимный эндпоинт перестал принимать картинки). llama-3.2-11b проверенно ловит
-// warped geometry, где scout отвечал deformedObjects:false. Fail-open при отсутствии creds/ошибке.
+// Ансамбль: ВТОРОЙ vision-голос (llava-1.5-7b на CF, тоже бесплатно) — фокус на text+deform.
+// Ловит то, что llama-3.2 пропускает (кривые ключи/мелкий металл, плавающий псевдо-текст).
+// llava отдаёт ответ в result.description (не result.response). Возвращает null при сбое.
+async function cfSecondVote(acc: string, token: string, bytes: number[]): Promise<{ hasText: boolean; deformed: boolean } | null> {
+  const model2 = process.env.CF_VISION_MODEL_2 ?? '@cf/llava-hf/llava-1.5-7b-hf';
+  const prompt = 'Inspect the WHOLE image carefully. Respond STRICT JSON ONLY: {"hasText":bool,"deformed":bool}. hasText=any letters/words/numbers or garbled/blurry pseudo-text anywhere. deformed=any warped/melted/distorted/fused object geometry, broken shapes, or mangled small objects (keys/metal).';
+  try {
+    const resp = await fetch(`https://api.cloudflare.com/client/v4/accounts/${acc}/ai/run/${model2}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ image: bytes, prompt, max_tokens: 120 }),
+    });
+    const json: any = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.success) return null;
+    const text = String(json.result?.response ?? json.result?.description ?? '');
+    const m = text.match(/\{[\s\S]*?\}/);
+    if (!m) return null;
+    const f = JSON.parse(m[0]);
+    return { hasText: !!f.hasText, deformed: !!f.deformed };
+  } catch { return null; }
+}
+
+// Vision-QA через Cloudflare Workers AI — АНСАМБЛЬ из 2 бесплатных моделей (llama-3.2-11b
+// полный 8-флаговый + llava-1.5-7b голос на text/deform): брак если ЛЮБАЯ флагает. Ловит больше,
+// чем одна (одна пропустила кривой ключ). 10k neurons/день, fail-open при сбое/без creds.
 async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok: boolean; issues: string[] }> {
   const acc = process.env.CF_ACCOUNT_ID;
   const token = process.env.CF_API_TOKEN;
@@ -1026,6 +1046,12 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
     const issues: string[] = [];
     for (const k of ['foreignMoney', 'englishText', 'brandLogos', 'euSymbols', 'ornateLawFirm', 'deformedHands', 'deformedObjects', 'westernLook']) {
       if (flags[k]) issues.push(k);
+    }
+    // Ансамбль: второй голос (llava) на text+deform — добавляет issue, если первый пропустил.
+    const vote2 = await cfSecondVote(acc, token, bytes);
+    if (vote2) {
+      if (vote2.hasText && !issues.includes('englishText')) issues.push('englishText');
+      if (vote2.deformed && !issues.includes('deformedObjects')) issues.push('deformedObjects');
     }
     return { ok: issues.length === 0, issues };
   } catch (e: any) {

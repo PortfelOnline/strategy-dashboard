@@ -282,7 +282,11 @@ function partsToText(content: unknown): string {
 // Вызов Code Assist моста (Gemini) в формате generateContent. Возвращает текст или null (блок/пусто).
 async function invokeGeminiBridge(payload: Record<string, unknown>): Promise<string | null> {
   const base = (process.env.GEMINI_BRIDGE_URL || 'http://localhost:4400/genai').replace(/\/$/, '');
-  const model = String(payload.model ?? process.env.GEMINI_BRIDGE_MODEL ?? 'gemini-3.5-flash');
+  // payload.model — это Groq-имя (gpt-oss/llama), мосту не подходит. Всегда берём Gemini-модель из env.
+  // Имя модели = СИГНАЛ маршрутизации для моста: содержит "pro" → AG_MODEL_PRO (gemini-pro-agent,
+  // Gemini 3.1 Pro), иначе → AG_MODEL (gemini-3.1-flash-lite, быстрая). Сами id ротирует Google —
+  // мост держит актуальные в .env (см. memory/reference_codeassist_bridge_autofix.md). Дефолт — flash.
+  const model = process.env.GEMINI_BRIDGE_MODEL || 'gemini-flash';
   const msgs = ((payload.messages as any[]) || []);
   const sys = msgs.filter(m => m.role === 'system').map(m => partsToText(m.content)).join('\n').trim();
   const contents = msgs

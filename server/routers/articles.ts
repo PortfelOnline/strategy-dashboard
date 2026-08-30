@@ -2107,9 +2107,6 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
     focusKeyword: keyword || undefined,
     keywords: seo.keywords?.length ? seo.keywords : undefined,
     imagesNeeded: imagesForWp,
-  }).catch((e: any) => {
-    console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e);
-    return false;
   });
   if (!published) throw new Error(`WordPress publish was not confirmed for ${url}`);
 

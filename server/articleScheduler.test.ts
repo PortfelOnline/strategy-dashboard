@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectEligibleArticleQueueEntries } from './articleScheduler';
+import { prioritizeRetryQueue, selectEligibleArticleQueueEntries } from './articleScheduler';
 
 describe('article scheduler image-quota eligibility', () => {
   it('selects a queued existing improvement as text-only when image quota is zero', () => {
@@ -41,5 +41,13 @@ describe('article scheduler image-quota eligibility', () => {
       ...queued[0],
       imagesRequired: 0,
     }]);
+  });
+
+  it('prioritizes failed URLs even when analysis history marks them recent', () => {
+    expect(prioritizeRetryQueue(
+      ['https://100zem.ru/failed/'],
+      new Set(['https://100zem.ru/failed/']),
+      10,
+    )).toEqual(['https://100zem.ru/failed/']);
   });
 });

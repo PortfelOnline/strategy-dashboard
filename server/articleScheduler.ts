@@ -33,6 +33,11 @@ export interface ArticleQueueEntry {
   [key: string]: unknown;
 }
 
+/** Retry entries are authoritative: a failed publish must beat the recent-history skip. */
+export function prioritizeRetryQueue(retryUrls: string[], _recentUrls: Set<string>, limit: number): string[] {
+  return Array.from(new Set(retryUrls.filter(Boolean))).slice(0, Math.max(0, limit));
+}
+
 const DEFAULT_CONFIG: ArticleSchedulerConfig = {
   enabled: false,
   catalogUrl: 'https://kadastrmap.info/kadastr/',
@@ -152,9 +157,7 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     const toProcess: ArticleQueueEntry[] = [];
     const queuedRetryUrls = new Set<string>();
     const retryQueueFile = config.retryQueueFile ?? path.join(process.cwd(), 'needs-improve.txt');
-    for (const url of readRetryQueue(retryQueueFile)) {
-      if (toProcess.length >= config.articlesPerNight) break;
-      if (recentUrls.has(url)) continue;
+    for (const url of prioritizeRetryQueue(readRetryQueue(retryQueueFile), recentUrls, config.articlesPerNight)) {
       queuedRetryUrls.add(url);
       toProcess.push({ url, kind: 'improveExisting', imagesRequired: 0 });
     }

@@ -2464,19 +2464,23 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
     while (!stopped && queue.length > 0) {
       const url = queue.shift()!;
       state.current = url;
+      let outcome: BatchOutcome;
       try {
         await rewriteArticle(userId, url, options);
-        const outcome: BatchOutcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
-        persistOutcome(outcome);
-        outcomes.push(outcome);
+        outcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
+      } catch (err) {
+        console.error(`[BatchRewrite] Failed: ${url}`, err);
+        outcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
+      }
+      // Persist outside the rewrite catch: a queue I/O failure must abort the
+      // batch rather than being misclassified as a content-generation failure.
+      persistOutcome(outcome);
+      outcomes.push(outcome);
+      if (outcome.ok) {
         state.processed++;
         if (outcome.kind === 'money') state.money++;
         if (outcome.kind === 'evergreen') state.evergreen++;
-      } catch (err) {
-        console.error(`[BatchRewrite] Failed: ${url}`, err);
-        const outcome: BatchOutcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
-        persistOutcome(outcome);
-        outcomes.push(outcome);
+      } else {
         state.failedUrls = [...state.failedUrls, url];
         state.errors++;
       }

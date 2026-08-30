@@ -2446,40 +2446,49 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
   batchRewriteJobs.set(userId, state);
   const persistOutcome = (outcome: BatchOutcome): void => {
     if (!options?.retryQueueFile) return;
-    try {
-      reconcileRetryQueue(options.retryQueueFile, [outcome]);
-    } catch (queueError: any) {
-      console.warn(`[BatchRewrite] Retry queue update failed: ${queueError?.message ?? queueError}`);
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        reconcileRetryQueue(options.retryQueueFile, [outcome]);
+        return;
+      } catch (queueError) {
+        lastError = queueError;
+        console.warn(`[BatchRewrite] Retry queue update failed (attempt ${attempt}/3)`);
+      }
     }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
   };
 
-  // Sequential (1 at a time) to avoid hammering SERP proxies + MariaDB
-  while (!stopped && queue.length > 0) {
-    const url = queue.shift()!;
-    state.current = url;
-    try {
-      await rewriteArticle(userId, url, options);
-      const outcome: BatchOutcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
-      outcomes.push(outcome);
-      state.processed++;
-      if (outcome.kind === 'money') state.money++;
-      if (outcome.kind === 'evergreen') state.evergreen++;
-      persistOutcome(outcome);
-    } catch (err) {
-      console.error(`[BatchRewrite] Failed: ${url}`, err);
-      const outcome: BatchOutcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
-      outcomes.push(outcome);
-      state.failedUrls = [...state.failedUrls, url];
-      state.errors++;
-      persistOutcome(outcome);
+  try {
+    // Sequential (1 at a time) to avoid hammering SERP proxies + MariaDB
+    while (!stopped && queue.length > 0) {
+      const url = queue.shift()!;
+      state.current = url;
+      try {
+        await rewriteArticle(userId, url, options);
+        const outcome: BatchOutcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
+        persistOutcome(outcome);
+        outcomes.push(outcome);
+        state.processed++;
+        if (outcome.kind === 'money') state.money++;
+        if (outcome.kind === 'evergreen') state.evergreen++;
+      } catch (err) {
+        console.error(`[BatchRewrite] Failed: ${url}`, err);
+        const outcome: BatchOutcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
+        persistOutcome(outcome);
+        outcomes.push(outcome);
+        state.failedUrls = [...state.failedUrls, url];
+        state.errors++;
+      }
+      state.done++;
+      // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
+      if (queue.length > 0 && !stopped) await new Promise(r => setTimeout(r, 5000));
     }
-    state.done++;
-    // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
-    if (queue.length > 0 && !stopped) await new Promise(r => setTimeout(r, 5000));
+  } finally {
+    state.running = false;
+    state.current = '';
   }
 
-  state.running = false;
-  state.current = '';
   const summary = summarizeBatchOutcomes(outcomes);
   state.processed = summary.processed;
   state.failedUrls = summary.failedUrls;

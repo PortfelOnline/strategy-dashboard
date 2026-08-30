@@ -153,7 +153,8 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     const queuedRetryUrls = new Set<string>();
     const retryQueueFile = config.retryQueueFile ?? path.join(process.cwd(), 'needs-improve.txt');
     for (const url of readRetryQueue(retryQueueFile)) {
-      if (toProcess.length >= config.articlesPerNight || recentUrls.has(url)) break;
+      if (toProcess.length >= config.articlesPerNight) break;
+      if (recentUrls.has(url)) continue;
       queuedRetryUrls.add(url);
       toProcess.push({ url, kind: 'improveExisting', imagesRequired: 0 });
     }

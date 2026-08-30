@@ -2102,12 +2102,16 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
     ? Math.min(Math.max(targetImages, 10), fluxCap)
     : Math.max(0, Math.floor(options.imagesRequired));
   console.log(`[Img] Competitors: max=${maxCompetitorImages}, avg=${avgCompetitorImages} → our target=${imagesForWp}`);
-  await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
+  const published = await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
     focusKeyword: keyword || undefined,
     keywords: seo.keywords?.length ? seo.keywords : undefined,
     imagesNeeded: imagesForWp,
-  }).catch((e: any) => console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e));
+  }).catch((e: any) => {
+    console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e);
+    return false;
+  });
+  if (!published) throw new Error(`WordPress publish was not confirmed for ${url}`);
 
   // Post-publish image check: compare actual <img> count on the live page
   // against our target (competitor max + 2). Runs async so it doesn't slow the loop.
@@ -2349,16 +2353,16 @@ async function autoPublishToWP(
   title: string,
   content: string,
   opts: { metaDescription?: string; focusKeyword?: string; keywords?: string[]; imagesNeeded?: number } = {},
-): Promise<void> {
+): Promise<boolean> {
   const accounts = await wordpressDb.getUserWordpressAccounts(userId);
   const account = accounts[0];
-  if (!account) { console.log(`[WP] No WP account for userId=${userId}, skipping auto-publish`); return; }
+  if (!account) { console.log(`[WP] No WP account for userId=${userId}, skipping auto-publish`); return false; }
 
   const slug = new URL(url).pathname.replace(/\/$/, '').split('/').pop() || '';
-  if (!slug) { console.log(`[WP] Could not extract slug from ${url}`); return; }
+  if (!slug) { console.log(`[WP] Could not extract slug from ${url}`); return false; }
 
   const post = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);
-  if (!post) { console.log(`[WP] Post not found for slug "${slug}", skipping`); return; }
+  if (!post) { console.log(`[WP] Post not found for slug "${slug}", skipping`); return false; }
 
   const ctaUrl = `${account.siteUrl.replace(/\/$/, '')}/spravki/`;
   const ctaTexts = ['Заказать документ онлайн', 'Получить справку сейчас', 'Проверить объект на 100zem.ru'];
@@ -2394,7 +2398,7 @@ async function autoPublishToWP(
   // already corrupted from a previous bad run and the upstream fallback may surface it.
   if (isPlaceholderTitle(title)) {
     console.warn(`[WP] BLOCKED placeholder title for "${slug}": "${title}". Skipping wp.updatePost.`);
-    return;
+    return false;
   }
   if (opts.metaDescription && isPlaceholderMeta(opts.metaDescription)) {
     console.warn(`[WP] Dropping placeholder metaDescription for "${slug}": "${opts.metaDescription}"`);
@@ -2425,6 +2429,7 @@ async function autoPublishToWP(
   console.log(`[WP] outmap=${showMap} metadesc=${!!opts.metaDescription} keywords=${opts.keywords?.length ?? 0} for slug="${slug}"`);
 
   console.log(`[WP] Published: ${url} → ${account.siteUrl}`);
+  return true;
 }
 
 export async function runBatchRewrite(userId: number, urls: string[], options?: BatchRewriteOptions): Promise<BatchSummary> {

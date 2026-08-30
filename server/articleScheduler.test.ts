@@ -30,4 +30,16 @@ describe('article scheduler image-quota eligibility', () => {
       flowDisabled: true,
     })).toEqual([]);
   });
+
+  it('keeps catalog improvements text-only even when a later image refresh has quota', () => {
+    const queued = [{
+      url: 'https://100zem.ru/kadastr/kadastrovyj-plan-doma/',
+      kind: 'improveExisting' as const,
+    }];
+
+    expect(selectEligibleArticleQueueEntries(queued, { credits: 10 })).toEqual([{
+      ...queued[0],
+      imagesRequired: 0,
+    }]);
+  });
 });

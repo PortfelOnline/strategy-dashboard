@@ -76,7 +76,7 @@ export function selectEligibleArticleQueueEntries(
       // Evergreen creation must never silently become text-only.
       if (required <= 0 || quota === undefined || quota < required) continue;
       selected.push({ ...entry });
-    } else if (quota === 0) {
+    } else if (quota === 0 || required <= 0) {
       // Preserve the queued improvement, explicitly signalling text-only mode.
       selected.push({ ...entry, kind: 'improveExisting', imagesRequired: 0 });
     } else if (quota === undefined || required <= quota) {
@@ -155,7 +155,9 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
         if (!recentUrls.has(a.url)) {
           // Catalog entries are existing articles, so they may run text-only
           // when Flow reports an exhausted image quota.
-          toProcess.push({ url: a.url, kind: 'improveExisting' });
+          // Existing-page improvements are deliberately text-only. Image
+          // refreshes run through the quota-gated image job separately.
+          toProcess.push({ url: a.url, kind: 'improveExisting', imagesRequired: 0 });
         }
         if (toProcess.length >= config.articlesPerNight) break;
       }
@@ -174,8 +176,9 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     }
 
     const batch = eligible.slice(0, config.articlesPerNight);
-    const textOnly = getImageQuota(config.flowHealth ?? {}) === 0 &&
-      batch.every(a => (a.kind ?? 'improveExisting') === 'improveExisting');
+    const textOnly = batch.length > 0 && batch.every(a =>
+      (a.kind ?? 'improveExisting') === 'improveExisting' && (a.imagesRequired ?? 0) === 0,
+    );
     console.log(`[ArticleScheduler] Обрабатываем ${batch.length} статей${textOnly ? ' (text-only)' : ''}...`);
     await runBatchRewrite(
       config.userId,

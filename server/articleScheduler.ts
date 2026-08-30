@@ -10,6 +10,25 @@ export interface ArticleSchedulerConfig {
   hour: number;          // 0–23, local server time
   userId: number;
   skipImprovedDays: number; // skip articles improved within N days
+  /** Latest Flow health snapshot. Kept optional for backwards-compatible config files. */
+  flowHealth?: FlowHealthResponse;
+}
+
+export interface FlowHealthResponse {
+  /** Remaining image credits/quota exposed by the Flow bridge. */
+  credits?: number | null;
+  imageQuota?: number | null;
+  imagesRemaining?: number | null;
+  flowDisabled?: boolean;
+}
+
+export type ArticleQueueKind = 'improveExisting' | 'createNewEvergreen';
+
+export interface ArticleQueueEntry {
+  url: string;
+  kind?: ArticleQueueKind;
+  imagesRequired?: number;
+  [key: string]: unknown;
 }
 
 const DEFAULT_CONFIG: ArticleSchedulerConfig = {
@@ -27,6 +46,48 @@ const TICK_MS = 10 * 60 * 1000; // check every 10 min
 
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
+
+function getImageQuota(health: FlowHealthResponse): number | undefined {
+  if (health.flowDisabled) return 0;
+  for (const value of [health.imageQuota, health.imagesRemaining, health.credits]) {
+    if (typeof value === 'number' && Number.isFinite(value)) return Math.max(0, value);
+  }
+  return undefined;
+}
+
+/**
+ * Select queue work without coupling improvement eligibility to image credits.
+ * Existing articles can fall back to a text-only rewrite when quota is exhausted;
+ * new evergreen articles always require at least one image and a positive quota.
+ */
+export function selectEligibleArticleQueueEntries(
+  entries: ArticleQueueEntry[],
+  flowHealth: FlowHealthResponse = {},
+  limit = entries.length,
+): ArticleQueueEntry[] {
+  const quota = getImageQuota(flowHealth);
+  const selected: ArticleQueueEntry[] = [];
+
+  for (const entry of entries) {
+    const kind = entry.kind ?? 'improveExisting';
+    const required = entry.imagesRequired ?? 0;
+
+    if (kind === 'createNewEvergreen') {
+      // Evergreen creation must never silently become text-only.
+      if (required <= 0 || quota === undefined || quota < required) continue;
+      selected.push({ ...entry });
+    } else if (quota === 0) {
+      // Preserve the queued improvement, explicitly signalling text-only mode.
+      selected.push({ ...entry, kind: 'improveExisting', imagesRequired: 0 });
+    } else if (quota === undefined || required <= quota) {
+      selected.push({ ...entry });
+    }
+
+    if (selected.length >= limit) break;
+  }
+
+  return selected;
+}
 
 export function getSchedulerConfig(): ArticleSchedulerConfig {
   try {
@@ -86,26 +147,41 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     );
 
     // Scan catalog pages until we collect enough unimproved URLs
-    const toProcess: string[] = [];
+    const toProcess: ArticleQueueEntry[] = [];
     let page = 1;
     while (toProcess.length < config.articlesPerNight && page <= 100) {
       const result = await scanCatalog(config.catalogUrl, 1, page);
       for (const a of result.articles) {
-        if (!recentUrls.has(a.url)) toProcess.push(a.url);
+        if (!recentUrls.has(a.url)) {
+          // Catalog entries are existing articles, so they may run text-only
+          // when Flow reports an exhausted image quota.
+          toProcess.push({ url: a.url, kind: 'improveExisting' });
+        }
         if (toProcess.length >= config.articlesPerNight) break;
       }
       if (result.articles.length === 0 || page >= result.totalPages) break;
       page++;
     }
 
-    if (toProcess.length === 0) {
-      console.log('[ArticleScheduler] Нет статей для обработки (все недавно улучшены)');
+    const eligible = selectEligibleArticleQueueEntries(toProcess, config.flowHealth ?? {});
+
+    if (eligible.length === 0) {
+      console.log(toProcess.length === 0
+        ? '[ArticleScheduler] Нет статей для обработки (все недавно улучшены)'
+        : '[ArticleScheduler] Нет доступной работы для текущего лимита Flow');
       setLastRunDate();
       return;
     }
 
-    console.log(`[ArticleScheduler] Обрабатываем ${toProcess.length} статей...`);
-    await runBatchRewrite(config.userId, toProcess.slice(0, config.articlesPerNight));
+    const batch = eligible.slice(0, config.articlesPerNight);
+    const textOnly = getImageQuota(config.flowHealth ?? {}) === 0 &&
+      batch.every(a => (a.kind ?? 'improveExisting') === 'improveExisting');
+    console.log(`[ArticleScheduler] Обрабатываем ${batch.length} статей${textOnly ? ' (text-only)' : ''}...`);
+    await runBatchRewrite(
+      config.userId,
+      batch.map(a => a.url),
+      textOnly ? { imagesRequired: 0 } : undefined,
+    );
     setLastRunDate();
     console.log('[ArticleScheduler] Батч завершён');
   } catch (err) {

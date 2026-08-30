@@ -14,6 +14,7 @@ import * as wp from "../_core/wordpress";
 import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
 import * as wordpressDb from "../wordpress.db";
+import { ensureParagraphEmojis } from "../contentQuality";
 
 // ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
 //    который Google отключил в 2023). Требует, чтобы service account был OWNER ресурса в GSC.
@@ -1748,7 +1749,12 @@ async function runBatchJob(userId: number, urls: string[]): Promise<void> {
   setTimeout(() => { if (!batchJobs.get(userId)?.running) batchJobs.delete(userId); }, 30 * 60 * 1000);
 }
 
-async function rewriteArticle(userId: number, url: string): Promise<void> {
+export interface BatchRewriteOptions {
+  /** Override image work for a batch (0 means text-only improvement). */
+  imagesRequired?: number;
+}
+
+async function rewriteArticle(userId: number, url: string, options: BatchRewriteOptions = {}): Promise<void> {
   const parsed = await parseArticleFromUrl(url);
   const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const keyword = extractKeywordFromTitle(parsed.title);
@@ -2082,7 +2088,9 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   // Each +5 images costs ~2-3 min per article, trade-off vs matching competitor parity.
   // 2026-04-20 v2: cap 12→16, floor 6→8 (sync with targetImages — паритет с конкурентами)
   const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 16);
-  const imagesForWp = Math.min(Math.max(targetImages, 10), fluxCap);
+  const imagesForWp = options.imagesRequired === undefined
+    ? Math.min(Math.max(targetImages, 10), fluxCap)
+    : Math.max(0, Math.floor(options.imagesRequired));
   console.log(`[Img] Competitors: max=${maxCompetitorImages}, avg=${avgCompetitorImages} → our target=${imagesForWp}`);
   await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
@@ -2095,13 +2103,17 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   // against our target (competitor max + 2). Runs async so it doesn't slow the loop.
   void (async () => {
     try {
+      if (imagesForWp === 0) {
+        console.log(`[PostQA] ${url} → text-only improvement; image parity deferred`);
+        return;
+      }
       await new Promise(r => setTimeout(r, 5000));  // give WP 5s to flush cache
       const resp = await fetch(url);
       if (!resp.ok) return;
       const liveHtml = await resp.text();
       const imgCount = (liveHtml.match(/<img\b/gi) || []).length;
-      const ok = imgCount >= targetImages;
-      console.log(`[PostQA] ${url} → images ${imgCount}/${targetImages} ${ok ? '✅' : '⚠️ LOW'}`);
+      const ok = imgCount >= imagesForWp;
+      console.log(`[PostQA] ${url} → images ${imgCount}/${imagesForWp} ${ok ? '✅' : '⚠️ LOW'}`);
     } catch (err: any) {
       // swallow — PostQA is best-effort
     }
@@ -2154,6 +2166,11 @@ export async function findAndInjectImages(
   html: string,
   imagesNeeded = 9,
 ): Promise<{ html: string; featuredMediaId: number | undefined }> {
+  if (imagesNeeded <= 0) {
+    console.log(`[Img] Text-only mode — skipping image generation for "${slug}"`);
+    return { html, featuredMediaId: undefined };
+  }
+
   if (process.env.SKIP_IMAGE_GENERATION === '1') {
     console.log(`[Img] SKIP_IMAGE_GENERATION=1 — leaving images unchanged for "${slug}"`);
     return { html, featuredMediaId: undefined };
@@ -2400,7 +2417,7 @@ async function autoPublishToWP(
   console.log(`[WP] Published: ${url} → ${account.siteUrl}`);
 }
 
-export async function runBatchRewrite(userId: number, urls: string[]): Promise<void> {
+export async function runBatchRewrite(userId: number, urls: string[], options?: BatchRewriteOptions): Promise<void> {
   let stopped = false;
   const queue = [...urls];
   const state: BatchRewriteJobState = {
@@ -2418,7 +2435,7 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<v
     const url = queue.shift()!;
     state.current = url;
     try {
-      await rewriteArticle(userId, url);
+      await rewriteArticle(userId, url, options);
     } catch (err) {
       console.error(`[BatchRewrite] Failed: ${url}`, err);
       state.errors++;
@@ -4550,7 +4567,9 @@ function beautifyArticleHtml(html: string): string {
     $(td).attr('style', ($(td).attr('style') || '') + 'background:#f8fafc;');
   });
 
-  return ($.root().html() || '').trim();
+  // Ensure long prose remains scannable even when the LLM ignores the emoji
+  // instruction. The helper is idempotent and skips FAQ/service paragraphs.
+  return ensureParagraphEmojis(($.root().html() || '').trim());
 }
 
 /**

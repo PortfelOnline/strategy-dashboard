@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { scanCatalog } from './_core/articleParser';
 import * as articlesDb from './articles.db';
+import { readRetryQueue } from './retryQueue';
 
 export interface ArticleSchedulerConfig {
   enabled: boolean;
@@ -10,6 +11,7 @@ export interface ArticleSchedulerConfig {
   hour: number;          // 0–23, local server time
   userId: number;
   skipImprovedDays: number; // skip articles improved within N days
+  retryQueueFile?: string;
   /** Latest Flow health snapshot. Kept optional for backwards-compatible config files. */
   flowHealth?: FlowHealthResponse;
 }
@@ -148,11 +150,18 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
 
     // Scan catalog pages until we collect enough unimproved URLs
     const toProcess: ArticleQueueEntry[] = [];
+    const queuedRetryUrls = new Set<string>();
+    const retryQueueFile = config.retryQueueFile ?? path.join(process.cwd(), 'needs-improve.txt');
+    for (const url of readRetryQueue(retryQueueFile)) {
+      if (toProcess.length >= config.articlesPerNight || recentUrls.has(url)) break;
+      queuedRetryUrls.add(url);
+      toProcess.push({ url, kind: 'improveExisting', imagesRequired: 0 });
+    }
     let page = 1;
     while (toProcess.length < config.articlesPerNight && page <= 100) {
       const result = await scanCatalog(config.catalogUrl, 1, page);
       for (const a of result.articles) {
-        if (!recentUrls.has(a.url)) {
+        if (!recentUrls.has(a.url) && !queuedRetryUrls.has(a.url)) {
           // Catalog entries are existing articles, so they may run text-only
           // when Flow reports an exhausted image quota.
           // Existing-page improvements are deliberately text-only. Image
@@ -189,7 +198,9 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     const summary = await runBatchRewrite(
       config.userId,
       batch.map(a => a.url),
-      textOnly ? { imagesRequired: 0, kindByUrl } : { kindByUrl },
+      textOnly
+        ? { imagesRequired: 0, kindByUrl, retryQueueFile }
+        : { kindByUrl, retryQueueFile },
     );
     setLastRunDate();
     console.log(`[ArticleScheduler] Батч завершён: processed=${summary.processed}, failed=${summary.failed}`);

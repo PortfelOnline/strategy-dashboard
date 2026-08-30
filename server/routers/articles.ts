@@ -16,6 +16,7 @@ import * as articlesDb from "../articles.db";
 import * as wordpressDb from "../wordpress.db";
 import { ensureParagraphEmojis } from "../contentQuality";
 import { summarizeBatchOutcomes, type BatchEntryKind, type BatchOutcome, type BatchSummary } from "../batchResults";
+import { reconcileRetryQueue } from "../retryQueue";
 
 // ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
 //    который Google отключил в 2023). Требует, чтобы service account был OWNER ресурса в GSC.
@@ -194,6 +195,8 @@ interface BatchRewriteJobState {
   processed: number;
   errors: number;
   failedUrls: string[];
+  money: number;
+  evergreen: number;
   running: boolean;
   current: string;
   stop: () => void;
@@ -1757,6 +1760,8 @@ export interface BatchRewriteOptions {
   imagesRequired?: number;
   /** Optional queue classification used for truthful money/evergreen counters. */
   kindByUrl?: Record<string, BatchEntryKind>;
+  /** Durable queue path; failed URLs remain here across restarts. */
+  retryQueueFile?: string;
 }
 
 async function rewriteArticle(userId: number, url: string, options: BatchRewriteOptions = {}): Promise<void> {
@@ -2432,11 +2437,21 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
     processed: 0,
     errors: 0,
     failedUrls: [],
+    money: 0,
+    evergreen: 0,
     running: true,
     current: '',
     stop: () => { stopped = true; },
   };
   batchRewriteJobs.set(userId, state);
+  const persistOutcome = (outcome: BatchOutcome): void => {
+    if (!options?.retryQueueFile) return;
+    try {
+      reconcileRetryQueue(options.retryQueueFile, [outcome]);
+    } catch (queueError: any) {
+      console.warn(`[BatchRewrite] Retry queue update failed: ${queueError?.message ?? queueError}`);
+    }
+  };
 
   // Sequential (1 at a time) to avoid hammering SERP proxies + MariaDB
   while (!stopped && queue.length > 0) {
@@ -2444,11 +2459,19 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
     state.current = url;
     try {
       await rewriteArticle(userId, url, options);
-      outcomes.push({ url, ok: true, kind: options?.kindByUrl?.[url] });
+      const outcome: BatchOutcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
+      outcomes.push(outcome);
+      state.processed++;
+      if (outcome.kind === 'money') state.money++;
+      if (outcome.kind === 'evergreen') state.evergreen++;
+      persistOutcome(outcome);
     } catch (err) {
       console.error(`[BatchRewrite] Failed: ${url}`, err);
-      outcomes.push({ url, ok: false, kind: options?.kindByUrl?.[url] });
+      const outcome: BatchOutcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
+      outcomes.push(outcome);
+      state.failedUrls = [...state.failedUrls, url];
       state.errors++;
+      persistOutcome(outcome);
     }
     state.done++;
     // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
@@ -2460,6 +2483,8 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
   const summary = summarizeBatchOutcomes(outcomes);
   state.processed = summary.processed;
   state.failedUrls = summary.failedUrls;
+  state.money = summary.money;
+  state.evergreen = summary.evergreen;
   setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
   return summary;
 }
@@ -4213,8 +4238,8 @@ ${competitorSection}
   getBatchRewriteStatus: protectedProcedure
     .query(async ({ ctx }) => {
       const job = batchRewriteJobs.get(ctx.user.id);
-      if (!job) return { running: false, done: 0, total: 0, processed: 0, errors: 0, failedUrls: [], current: '' };
-      return { running: job.running, done: job.done, total: job.total, processed: job.processed, errors: job.errors, failedUrls: job.failedUrls, current: job.current };
+      if (!job) return { running: false, done: 0, total: 0, processed: 0, errors: 0, failedUrls: [], money: 0, evergreen: 0, current: '' };
+      return { running: job.running, done: job.done, total: job.total, processed: job.processed, errors: job.errors, failedUrls: job.failedUrls, money: job.money, evergreen: job.evergreen, current: job.current };
     }),
 
   stopBatchRewrite: protectedProcedure

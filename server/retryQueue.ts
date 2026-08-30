@@ -26,7 +26,7 @@ export function reconcileRetryQueue(filePath: string, outcomes: BatchOutcome[]):
   }
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  const tempPath = `${filePath}.${process.pid}.tmp`;
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tempPath, next.length ? `${next.join('\n')}\n` : '', { mode: 0o600 });
   fs.renameSync(tempPath, filePath);
 }

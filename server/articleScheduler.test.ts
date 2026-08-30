@@ -46,7 +46,6 @@ describe('article scheduler image-quota eligibility', () => {
   it('prioritizes failed URLs even when analysis history marks them recent', () => {
     expect(prioritizeRetryQueue(
       ['https://100zem.ru/failed/'],
-      new Set(['https://100zem.ru/failed/']),
       10,
     )).toEqual(['https://100zem.ru/failed/']);
   });

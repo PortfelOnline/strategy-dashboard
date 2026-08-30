@@ -34,7 +34,7 @@ export interface ArticleQueueEntry {
 }
 
 /** Retry entries are authoritative: a failed publish must beat the recent-history skip. */
-export function prioritizeRetryQueue(retryUrls: string[], _recentUrls: Set<string>, limit: number): string[] {
+export function prioritizeRetryQueue(retryUrls: string[], limit: number): string[] {
   return Array.from(new Set(retryUrls.filter(Boolean))).slice(0, Math.max(0, limit));
 }
 
@@ -157,7 +157,7 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
     const toProcess: ArticleQueueEntry[] = [];
     const queuedRetryUrls = new Set<string>();
     const retryQueueFile = config.retryQueueFile ?? path.join(process.cwd(), 'needs-improve.txt');
-    for (const url of prioritizeRetryQueue(readRetryQueue(retryQueueFile), recentUrls, config.articlesPerNight)) {
+    for (const url of prioritizeRetryQueue(readRetryQueue(retryQueueFile), config.articlesPerNight)) {
       queuedRetryUrls.add(url);
       toProcess.push({ url, kind: 'improveExisting', imagesRequired: 0 });
     }

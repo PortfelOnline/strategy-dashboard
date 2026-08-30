@@ -15,6 +15,7 @@ import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
 import * as wordpressDb from "../wordpress.db";
 import { ensureParagraphEmojis } from "../contentQuality";
+import { summarizeBatchOutcomes, type BatchEntryKind, type BatchOutcome, type BatchSummary } from "../batchResults";
 
 // ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
 //    который Google отключил в 2023). Требует, чтобы service account был OWNER ресурса в GSC.
@@ -190,7 +191,9 @@ const batchJobs = new Map<number, BatchJobState>();
 interface BatchRewriteJobState {
   total: number;
   done: number;
+  processed: number;
   errors: number;
+  failedUrls: string[];
   running: boolean;
   current: string;
   stop: () => void;
@@ -1752,6 +1755,8 @@ async function runBatchJob(userId: number, urls: string[]): Promise<void> {
 export interface BatchRewriteOptions {
   /** Override image work for a batch (0 means text-only improvement). */
   imagesRequired?: number;
+  /** Optional queue classification used for truthful money/evergreen counters. */
+  kindByUrl?: Record<string, BatchEntryKind>;
 }
 
 async function rewriteArticle(userId: number, url: string, options: BatchRewriteOptions = {}): Promise<void> {
@@ -2417,13 +2422,16 @@ async function autoPublishToWP(
   console.log(`[WP] Published: ${url} → ${account.siteUrl}`);
 }
 
-export async function runBatchRewrite(userId: number, urls: string[], options?: BatchRewriteOptions): Promise<void> {
+export async function runBatchRewrite(userId: number, urls: string[], options?: BatchRewriteOptions): Promise<BatchSummary> {
   let stopped = false;
   const queue = [...urls];
+  const outcomes: BatchOutcome[] = [];
   const state: BatchRewriteJobState = {
     total: urls.length,
     done: 0,
+    processed: 0,
     errors: 0,
+    failedUrls: [],
     running: true,
     current: '',
     stop: () => { stopped = true; },
@@ -2436,8 +2444,10 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
     state.current = url;
     try {
       await rewriteArticle(userId, url, options);
+      outcomes.push({ url, ok: true, kind: options?.kindByUrl?.[url] });
     } catch (err) {
       console.error(`[BatchRewrite] Failed: ${url}`, err);
+      outcomes.push({ url, ok: false, kind: options?.kindByUrl?.[url] });
       state.errors++;
     }
     state.done++;
@@ -2447,7 +2457,11 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
 
   state.running = false;
   state.current = '';
+  const summary = summarizeBatchOutcomes(outcomes);
+  state.processed = summary.processed;
+  state.failedUrls = summary.failedUrls;
   setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
+  return summary;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4199,8 +4213,8 @@ ${competitorSection}
   getBatchRewriteStatus: protectedProcedure
     .query(async ({ ctx }) => {
       const job = batchRewriteJobs.get(ctx.user.id);
-      if (!job) return { running: false, done: 0, total: 0, errors: 0, current: '' };
-      return { running: job.running, done: job.done, total: job.total, errors: job.errors, current: job.current };
+      if (!job) return { running: false, done: 0, total: 0, processed: 0, errors: 0, failedUrls: [], current: '' };
+      return { running: job.running, done: job.done, total: job.total, processed: job.processed, errors: job.errors, failedUrls: job.failedUrls, current: job.current };
     }),
 
   stopBatchRewrite: protectedProcedure

@@ -180,13 +180,19 @@ async function runScheduledBatch(config: ArticleSchedulerConfig): Promise<void> 
       (a.kind ?? 'improveExisting') === 'improveExisting' && (a.imagesRequired ?? 0) === 0,
     );
     console.log(`[ArticleScheduler] Обрабатываем ${batch.length} статей${textOnly ? ' (text-only)' : ''}...`);
-    await runBatchRewrite(
+    const kindByUrl: Record<string, 'money' | 'evergreen' | 'improveExisting'> = Object.fromEntries(
+      batch.map(entry => [
+        entry.url,
+        entry.kind === 'createNewEvergreen' ? 'evergreen' : 'improveExisting',
+      ]),
+    );
+    const summary = await runBatchRewrite(
       config.userId,
       batch.map(a => a.url),
-      textOnly ? { imagesRequired: 0 } : undefined,
+      textOnly ? { imagesRequired: 0, kindByUrl } : { kindByUrl },
     );
     setLastRunDate();
-    console.log('[ArticleScheduler] Батч завершён');
+    console.log(`[ArticleScheduler] Батч завершён: processed=${summary.processed}, failed=${summary.failed}`);
   } catch (err) {
     console.error('[ArticleScheduler] Ошибка:', err);
   } finally {

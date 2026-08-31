@@ -2467,11 +2467,15 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
       const url = queue.shift()!;
       state.current = url;
       let outcome: BatchOutcome;
+      let codeAssistQuota = false;
       try {
         await rewriteArticle(userId, url, options);
         outcome = { url, ok: true, kind: options?.kindByUrl?.[url] };
       } catch (err) {
         console.error(`[BatchRewrite] Failed: ${url}`, err);
+        const error = err as any;
+        codeAssistQuota = error?.code === 429 ||
+          /codeassist\s+429|resource has been exhausted|not enough credits/i.test(String(error?.message || ''));
         outcome = { url, ok: false, kind: options?.kindByUrl?.[url] };
       }
       // Persist outside the rewrite catch: a queue I/O failure must abort the
@@ -2487,6 +2491,10 @@ export async function runBatchRewrite(userId: number, urls: string[], options?: 
         state.errors++;
       }
       state.done++;
+      if (codeAssistQuota) {
+        console.warn('[BatchRewrite] квота Code Assist исчерпана — батч остановлен, оставшиеся URL сохраняются в очереди');
+        stopped = true;
+      }
       // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
       if (queue.length > 0 && !stopped) await new Promise(r => setTimeout(r, 5000));
     }

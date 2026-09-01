@@ -6,7 +6,7 @@ import { writeFileSync, mkdirSync } from "fs";
 import { execFileSync } from "child_process";
 import path from "path";
 import { invokeLLM } from "../_core/llm";
-import { generateDallEImage } from "../_core/imageGen";
+import { generateImageWithFallback } from "../_core/imageGen";
 import { createContentPost } from "../db";
 
 const SSH_HOST = "root@5.42.109.72";
@@ -245,7 +245,7 @@ Return JSON:
 
 async function generateAndUploadImage(prompt: string, aspect: "4:5" | "16:9" | "1:1", platform: string): Promise<string | undefined> {
   try {
-    const localPath = await generateDallEImage(prompt);
+    const localPath = await generateImageWithFallback(prompt);
 
     if (localPath.startsWith("file://")) {
       const filePath = localPath.replace("file://", "");

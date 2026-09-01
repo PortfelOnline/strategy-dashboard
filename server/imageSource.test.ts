@@ -1,8 +1,7 @@
 /**
  * Pexels must be disabled — it returns irrelevant foreign photos for Russian real estate.
  * Wikimedia must be disabled — same problem (foreign/irrelevant).
- * All images must come from FLUX (Fireworks) or WP library only.
- * FLUX calls must be sequential (not parallel) to avoid Fireworks rate-limit 500 errors.
+ * All generated images must come from the Flow/Gemini bridge or WP library.
  */
 import { describe, expect, it, vi, beforeEach, afterAll } from 'vitest';
 
@@ -10,13 +9,12 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 vi.mock('./_core/imageGen', () => ({
-  generateDallEImage: vi.fn().mockResolvedValue('file:///tmp/flux-test.jpg'),
-  generateImageWithFallback: vi.fn().mockResolvedValue('file:///tmp/flux-test.jpg'),
+  generateImageWithFallback: vi.fn().mockResolvedValue('file:///tmp/flow-test.jpg'),
 }));
 
 vi.mock('./_core/wordpress', () => ({
   searchMedia: vi.fn().mockResolvedValue([]),
-  uploadMediaFromUrl: vi.fn().mockResolvedValue({ id: 999, url: 'https://kadastrmap.info/wp-content/uploads/flux.jpg' }),
+  uploadMediaFromUrl: vi.fn().mockResolvedValue({ id: 999, url: 'https://kadastrmap.info/wp-content/uploads/flow.jpg' }),
   findPostBySlug: vi.fn().mockResolvedValue(null),
   getUserWordpressAccounts: vi.fn().mockResolvedValue([]),
 }));
@@ -63,10 +61,10 @@ describe('Image source policy', () => {
     const callTimes: number[] = [];
     imageGenMock.mockImplementation(async () => {
       callTimes.push(Date.now());
-      return 'file:///tmp/flux-test.jpg';
+      return 'file:///tmp/flow-test.jpg';
     });
 
-    process.env.IMAGE_API_KEY = 'test_key';
+    process.env.GEMINI_API_KEY = 'test_key';
     vi.resetModules();
     const { findAndInjectImages } = await import('./routers/articles');
 
@@ -123,7 +121,7 @@ describe('generateImagePrompts — article-specific unique prompts', () => {
 
   beforeEach(() => {
     process.env = { ...OLD_ENV };
-    process.env.IMAGE_API_KEY = 'test_key';
+    process.env.GEMINI_API_KEY = 'test_key';
   });
 
   afterAll(() => {

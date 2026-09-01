@@ -8,6 +8,8 @@ import { fetchGscPageQueries, formatGscBlock } from "../_core/gscClient";
 import { invokeLLM } from "../_core/llm";
 import { verifyAndCorrectClaims } from "../_core/crag";
 import { ensureMinFaq } from "../_core/quality-fixers";
+import { validateSeoArticle } from "../seoQualityGate";
+import { buildSeoBrief, formatSeoBrief } from "../seoBrief";
 import { generateImageWithFallback } from "../_core/imageGen";
 import { readFileSync } from "node:fs";
 import * as wp from "../_core/wordpress";
@@ -228,7 +230,7 @@ async function fetchCompetitorArticles(
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]);
       const html = parsed.contentHtml || '';
-      // alt samples: up to 5 non-empty, longer-than-3-chars alts (for FLUX prompt seeding)
+      // alt samples: up to 5 non-empty, longer-than-3-chars alts (for image prompt seeding)
       const altMatches = Array.from(html.matchAll(/<img[^>]+alt=["']([^"']+)["']/gi));
       const altSamples = altMatches
         .map(m => m[1].trim())
@@ -314,14 +316,13 @@ function countWords(html: string): number {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
 }
 
-// Generate contextual DALL-E image prompts based on article title, keyword and H2 sections
+// Generate contextual image prompts based on article title, keyword and H2 sections
 export async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[], bodyText?: string, countRequested?: number, h2Bodies?: string[]): Promise<string[]> {
   // STYLE-ANCHOR (brand-kit) — единый суффикс на ВСЕ картинки статьи: общий свет/палитра/камера
   // → серия выглядит цельно. 50mm f/4 (не 85/1.8) — лучше для предметки/архитектуры/аэро, чем
   // портретный bokeh. Тёплая нейтральная палитра = русская middle-class эстетика.
   const QUALITY = 'editorial real-estate photograph, warm neutral muted palette, soft natural daylight, sharp focus, high detail, photorealistic, shot on Canon EOS R5, 50mm f/4, balanced depth of field, subtle color grade';
-  // Компактный негатив (FLUX негативы почти игнорирует; длинный хвост лишь РАЗМЫВАЛ субъект —
-  // подтв. FLUX prompt guides: >100 слов путают модель, subject уезжает в конец). Держим коротко
+  // Компактный негатив: длинный хвост размывает субъект и ухудшает соблюдение промпта. Держим коротко
   // и позитивно. Главные запреты дублируются в system-prompt; финальный фильтр — CF vision QA-гейт.
   const NEGATIVE = 'clean uncluttered scene, simple physical props or architecture only, no text or letters or numbers, no logos or watermarks, no people, no hands, no electronics, no money';
   // Russian setting tokens (append to scenes where environment visible)
@@ -330,7 +331,7 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
 
   // 2026-04-20: keyword-aware theme detection — если тема статьи конкретная (дача, квартира,
   // участок, гараж), добавляем topical scenes в пул чтобы LLM выбирал их приоритетно.
-  // Без этого FLUX-prompts скатываются в "generic real-estate" (ключи+нотариус+СПб).
+  // Без тематических подсказок промпты скатываются в generic real-estate.
   const themeHints: string[] = [];
   const kwLower = (kw + ' ' + title).toLowerCase();
   if (/\b(дач\w*|снт|сад\w+ участ|садовод|огород)\b/i.test(kwLower)) {
@@ -370,9 +371,9 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
 
   // 10 diverse fallback prompts covering the common scenes for this site vertical.
   // Used when LLM call fails or doesn't return enough items; now cycled if target > 10.
-  // 2026-04-20: убраны сцены с крупным планом документа/плана (FLUX пишет кривые буквы)
+  // 2026-04-20: убраны сцены с крупным планом документа/плана (модели искажают буквы)
   // и Scandinavian-стиль (non-Russian); добавлены Russian-specific settings — двор с панельками, дача, канал Петербурга, МФЦ-интерьер.
-  // OBJECT / ARCHITECTURE / AERIAL ONLY — без людей и рук (FLUX калечит анатомию → QA бракует).
+  // OBJECT / ARCHITECTURE / AERIAL ONLY — без людей и рук (меньше артефактов → QA бракует).
   // Кадастровый аэро-мотив (top-down участков/районов = буквально кадастровая карта) — во главе.
   const fallback = [
     `Aerial top-down view of Russian suburban land plots with visible fenced boundaries, dirt roads dividing parcels, green summer fields, ${RU_SETTING}, ${QUALITY}, ${NEGATIVE}`,
@@ -410,17 +411,16 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
       messages: [
         {
           role: 'system',
-          content: `You are a senior FLUX.1 image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for square 1:1 compositions.
+          content: `You are a senior image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for square 1:1 compositions.
 Use this EXACT style suffix at the END of every prompt (brand-kit — keeps the whole article's image set visually consistent): ${QUALITY}.
-CRITICAL — NO TEXT AT ALL. AI image models (FLUX) cannot render text legibly, especially Cyrillic/Russian — any visible letters come out garbled and unprofessional. Negative tokens (must be absent): no text, no letters, no words, no numbers, no digits, no characters, no labels, no captions, no Cyrillic, no Russian letters, no handwriting, no typography, no watermarks, no logos, no signs with text. AVOID objects that inherently carry numbers or text — analog clock faces, calendars, rulers, price tags, license plates, dashboards, calculators with a display — FLUX garbles their digits into broken scribbles. For a "time / deadline / срок" idea use an HOURGLASS / sand timer (no numbers); for "cost / price" do NOT show money — imply value via a miniature house model alone (NO keys — small metal deforms), never coins or banknotes. If a document/form/paper appears in the scene, it MUST be shown from a steep angle, folded, or out-of-focus so no text is readable. PREFER scenes WITHOUT visible documents — focus on simple physical props and clean interiors — NO people, NO hands (keys, pens, house models, plants, coins, books, folded papers). Also avoid: low quality, distorted faces, extra limbs, cartoon/illustration/stock-photo look.
+CRITICAL — NO TEXT AT ALL. Image models cannot render text legibly, especially Cyrillic/Russian — any visible letters come out garbled and unprofessional. Negative tokens (must be absent): no text, no letters, no words, no numbers, no digits, no characters, no labels, no captions, no Cyrillic, no Russian letters, no handwriting, no typography, no watermarks, no logos, no signs with text. AVOID objects that inherently carry numbers or text — analog clock faces, calendars, rulers, price tags, license plates, dashboards, calculators with a display. For a "time / deadline / срок" idea use an HOURGLASS / sand timer (no numbers); for "cost / price" do NOT show money — imply value via a miniature house model alone (NO keys — small metal deforms), never coins or banknotes. If a document/form/paper appears in the scene, it MUST be shown from a steep angle, folded, or out-of-focus so no text is readable. PREFER scenes WITHOUT visible documents — focus on simple physical props and clean interiors — NO people, NO hands (keys, pens, house models, plants, coins, books, folded papers). Also avoid: low quality, distorted faces, extra limbs, cartoon/illustration/stock-photo look.
 
-CRITICAL — PHYSICAL OBJECTS. No inscriptions, engravings, or brand logos on any object in frame (pens, cups, folders — all blank/unlabeled). 🚨 DO NOT use keys / keychains / small intricate metal objects at all — FLUX melts their teeth/geometry (deformation magnet like hands). Prefer ONE large simple clean object (house model, plant, folder, hourglass) with generous empty space.
+CRITICAL — PHYSICAL OBJECTS. No inscriptions, engravings, or brand logos on any object in frame (pens, cups, folders — all blank/unlabeled). 🚨 DO NOT use keys / keychains / small intricate metal objects at all. Prefer ONE large simple clean object (house model, plant, folder, hourglass) with generous empty space.
 
-CRITICAL — NO ELECTRONICS. NEVER include laptops, smartphones, tablets, computer monitors, keyboards, mice, or any electronic device in the scene. FLUX melts their geometry — warped hinges, fused bodies, devices merging into the desk, impossible perspective. This is the #1 source of broken, unusable images. For "online / digital / website / order via internet" sections, convey the idea WITHOUT any gadget and WITHOUT people/hands: a tidy modern Russian interior, a single house model on a clean desk, blank manila folders flat-lay, or an aerial land/district view. There is NO acceptable way to show a laptop or phone — omit them entirely. Если сцена немыслима без устройства — переосмысли её на простой физический реквизит.
+CRITICAL — NO ELECTRONICS. NEVER include laptops, smartphones, tablets, computer monitors, keyboards, mice, or any electronic device in the scene. For "online / digital / website / order via internet" sections, convey the idea WITHOUT any gadget and WITHOUT people/hands: a tidy modern Russian interior, a single house model on a clean desk, blank manila folders flat-lay, or an aerial land/district view.
 
-CRITICAL — CURRENCY. FLUX reliably fails at drawing Russian rubles: it substitutes Euro (Greek architecture, "100" in that typography) or US Dollar (green portraits) from training bias. Three previous attempts to constrain via "Russian ruble" / "no Euro" did not work.
-NEW RULE: DO NOT depict money at all — no banknotes, no coins, no cash, no wallets, no bank cards. FLUX renders Euro/USD from training bias and garbles coin faces. For "cost / price / payment" sections, SKIP money imagery entirely and imply value abstractly: a miniature house model alone (no keys), an hourglass for time. NEVER write "banknotes", "bills", "cash", "money", "coins", "ruble", "wallet".
-CRITICAL — NO PEOPLE, NO HANDS, NO FINGERS. FLUX mangles hand anatomy (extra/fused/melted fingers) — hands are as unreliable as electronics. Compose OBJECT-ONLY flat-lays (props on a desk, top view) or empty interiors/architecture. NEVER show a person, body part, or a hand holding / touching anything.
+CRITICAL — CURRENCY. DO NOT depict money at all — no banknotes, no coins, no cash, no wallets, no bank cards. For "cost / price / payment" sections, SKIP money imagery entirely and imply value abstractly: a miniature house model alone (no keys), an hourglass for time.
+CRITICAL — NO PEOPLE, NO HANDS, NO FINGERS. Compose OBJECT-ONLY flat-lays (props on a desk, top view) or empty interiors/architecture. NEVER show a person, body part, or a hand holding / touching anything.
 ALL settings MUST be recognizably Russian — Moscow/Saint Petersburg architecture, Russian panel-frame apartment buildings (не хрущёвки, но типовые серии), Russian middle-class interiors, Russian dacha aesthetic. NO Scandinavian minimalism, NO American suburban houses, NO generic Western offices. When in doubt — tilt toward Moscow residential district / St Petersburg canal / typical Russian kitchen.
 Each prompt must be UNIQUE, match its specific H2 section, and feature a concrete composition + subject + environment + lighting time-of-day.`,
         },
@@ -433,9 +433,9 @@ This article is about ordering official Russian property / cadastral documents v
 
 Write exactly ${targetCount} DIFFERENT prompts, one per H2 section in order. Each prompt MUST:
 - Be 15-25 words of content BEFORE the quality tags (describe subject, action, environment, lighting)
-- OBJECT / ARCHITECTURE / AERIAL ONLY — NO people, NO hands, NO faces (FLUX mangles anatomy). Vary scenes, don't repeat a setting. Mix from this pool: aerial-top-down-land-plots-with-fenced-boundaries (кадастровая тема — ВЕДУЩИЙ мотив для разделов про участки/границы/карты/межевание/регистрацию), aerial-drone-Moscow-residential-district, Russian-panel-building-exterior, Russian-dacha-with-garden-plot, Russian-private-cottage-exterior, countryside-land-plot-with-surveyor-tripod (no person), bright-empty-Russian-apartment-interior, top-down-flat-lay-single-wooden-house-model-with-small-plant, top-down-flat-lay-blank-manila-folders-and-plant, hourglass-and-house-model (для срок/время), scale-architectural-maquette-of-apartment-building, aerial-land-plots-at-golden-sunset, Russian-birch-forest-or-field-landscape. PREFER aerial-land/fields/landscape/flat-lay/clean-interior scenes — TEXT-SAFE and deformation-safe (large simple forms).
-- 🚨 ANTI-DEFORMATION (как hands/electronics): FLUX калечит МЕЛКИЕ ИНТРИКАТНЫЕ объекты — keys (зубцы плавятся), keychains, jewelry, watches, intricate metal, clustered small items, rolled-paper-with-stamp. НЕ используй их. Префер ОДИН крупный простой объект (house model, plant, folder) с GENEROUS NEGATIVE SPACE / minimal clutter — меньше поверхностей для брака. NO keys anywhere.
-- AVOID street-level urban scenes, canal/embankment views, courtyards, shopfronts, building facades with signage — FLUX hallucinates garbled floating text. Buildings only from HIGH AERIAL (rooftops) or as a clean studio maquette. For "online/digital" sections use a clean interior or object flat-lay (no device). AVOID close-ups of documents/forms/plans and naming ANY organization (МФЦ/Росреестр/ЕГРН).
+- OBJECT / ARCHITECTURE / AERIAL ONLY — NO people, NO hands, NO faces. Vary scenes, don't repeat a setting. Mix from this pool: aerial-top-down-land-plots-with-fenced-boundaries, aerial-drone-Moscow-residential-district, Russian-panel-building-exterior, Russian-dacha-with-garden-plot, Russian-private-cottage-exterior, countryside-land-plot-with-surveyor-tripod (no person), bright-empty-Russian-apartment-interior, top-down-flat-lay-single-wooden-house-model-with-small-plant, top-down-flat-lay-blank-manila-folders-and-plant, hourglass-and-house-model, scale-architectural-maquette-of-apartment-building, aerial-land-plots-at-golden-sunset, Russian-birch-forest-or-field-landscape. PREFER aerial-land/fields/landscape/flat-lay/clean-interior scenes — TEXT-SAFE and deformation-safe (large simple forms).
+- 🚨 ANTI-DEFORMATION: avoid small intricate objects — keys, keychains, jewelry, watches, clustered items, rolled-paper-with-stamp. Prefer ONE large simple object with generous negative space.
+- AVOID street-level urban scenes, canal/embankment views, courtyards, shopfronts, building facades with signage — image models may hallucinate garbled text. Buildings only from HIGH AERIAL (rooftops) or as a clean studio maquette. For "online/digital" sections use a clean interior or object flat-lay (no device). AVOID close-ups of documents/forms/plans and naming ANY organization (МФЦ/Росреестр/ЕГРН).
 - Match the H2 section's ACTUAL CONTENT provided above (not just the heading) — pick a fitting OBJECT/ARCHITECTURE/AERIAL scene, no people. Generic "apartment interior" with no link to the text is REJECTED. Examples:
   * Section "Стоимость / сроки получения" → top-down flat-lay of a glass hourglass next to a small wooden house model on a neutral desk, soft daylight (no money, no clock-face digits)
   * Section "Какие сведения содержит / план квартиры" → aerial top-down view of Russian suburban land plots with fenced boundaries and dirt roads dividing parcels, summer fields
@@ -914,8 +914,8 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
   //
   // To re-enable: wire a real review source (WP comments, WooCommerce reviews, or
   // a reviews plugin) and compute ratingValue/reviewCount from actual data.
-  // The visual "⭐ Отзывы клиентов" H3 block stays in the prompt for UX/trust but
-  // no longer claims a schema.org rating.
+  // Reviews are never generated by the LLM. A visible review block is allowed
+  // only when backed by real WordPress/customer data.
 
   // Article schema is omitted here — the WP theme outputs a full Article JSON-LD
   // in <head> via kadmap_article_jsonld(). Duplicating it in body content causes
@@ -936,7 +936,7 @@ function extractH2Texts(html: string): string[] {
 }
 
 // Extract each H2 heading together with the first ~180 words of its body
-// (up to the next <h2>). Used to give FLUX prompt engineer concrete per-section
+// (up to the next <h2>). Used to give the image prompt engineer concrete per-section
 // context instead of a generic article intro.
 function extractH2Sections(html: string): { heading: string; body: string }[] {
   const results: { heading: string; body: string }[] = [];
@@ -961,7 +961,7 @@ function extractH2Sections(html: string): { heading: string; body: string }[] {
   return results;
 }
 
-// ── Vision-based post-FLUX validation for risky topics (cost/МФЦ/ключи) ─────
+// ── Vision-based validation for risky topics (cost/МФЦ/ключи) ───────────────
 // Rejects images with visible foreign currency, English signage, brand logos,
 // EU symbols. Called ONLY for keyword-risky articles to keep cost +$0.006/статья.
 function isImageRiskyTopic(keyword: string, title: string): boolean {
@@ -1021,7 +1021,7 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
   try {
     const bytes = await imageToBytes(imageUrl);
     if (!bytes) return { ok: true, issues: [] };
-    const prompt = `You are a STRICT image QA validator for a modern Russian cadastral blog (2020s аудитория — обычные россияне, не юристы в США). Imagery must look recognizably modern Russian middle-class: IKEA-style furniture, panel-frame apartments, простые кабинеты — NOT a Western lawyer firm, English gentleman club, American courthouse, or ornate European 19th-century interior.\nTopic: "${topic}". Inspect the attached image and flag:\n1. foreignMoney — any non-Russian banknotes/currency visible\n2. englishText — ANY text/letters/words/numbers anywhere, including garbled or blurry pseudo-text and faint floating watermark-like lettering in the sky/distance/on walls (FLUX often hallucinates broken text — flag it). Tiny clean logos ok.\n3. brandLogos — Visa/Mastercard/Yale/manufacturer marks on objects\n4. euSymbols — EU flag, UE emblem, Euro symbol\n5. westernLook — overtly Instagram/Pinterest/American suburban aesthetic\n6. ornateLawFirm — ornate wooden-panelled office, gothic windows, Lady Justice statue, green banker lamp, massive oak desk, classical courthouse — anything screaming American/British law firm\n7. deformedHands — extra/missing/fused fingers, >5 fingers, impossible finger/wrist anatomy. FLUX frequently fails at hands — be strict.\n8. deformedObjects — warped/melted geometry, objects fused together, broken perspective, distorted electronics/furniture (laptop/phone/keyboard/monitor melting or merging into the desk). The most common FLUX failure — be strict.\nRespond with STRICT JSON ONLY — no preamble, no description, no markdown, just this exact object: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}.`;
+    const prompt = `You are a STRICT image QA validator for a modern Russian cadastral blog. Inspect the whole image for foreign currency, any text or logos, EU symbols, western-looking styling, ornate law-firm styling, deformed hands, and warped objects. Topic: "${topic}". Respond with STRICT JSON ONLY: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}.`;
     // llama-3.2-vision изредка отдаёт ложный safety-отказ вместо JSON — ретраим один раз,
     // иначе такой ответ молча пропустит картинку без проверки (fail-open).
     let text = '';
@@ -1061,12 +1061,8 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
 }
 
 // ── Best-of-N image generation with vision QA gate ──────────────────────────
-// FLUX (Pollinations) reliably produces broken frames — melted geometry,
-// deformed hands, garbled text, stray electronics — and FLUX ignores negative
-// prompts, so we cannot prevent them at the prompt level alone. We generate,
-// validate the result with validateFluxImage, and regenerate on distortion.
-// Fail-open: returns the last attempt even if not clean, so publishing never
-// blocks. Pollinations returns file:// — convert to a base64 data URI for QA.
+// Validate the generated frame and regenerate on distortion. Fail-open: returns
+// the last attempt even if not clean, so publishing never blocks.
 async function generateValidatedImage(prompt: string, topic: string, attempts = 2): Promise<string> {
   let lastUrl = '';
   for (let i = 0; i < attempts; i++) {
@@ -1310,7 +1306,7 @@ export async function searchPexelsImages(
   _limit = 6
 ): Promise<{ id: number; url: string; width: number; height: number; alt: string; title: string }[]> {
   // Disabled: Pexels returns irrelevant foreign stock photos for Russian real estate queries.
-  // All images are now generated by FLUX (Fireworks AI) for topic-specific accuracy.
+  // Images are generated by the Flow/Gemini bridge for topic-specific accuracy.
   return [];
 }
 
@@ -1468,7 +1464,7 @@ async function getAllSitePosts(ourDomain: string): Promise<{ url: string; title:
   }
 
   console.log(`[InternalLinks] cached ${posts.length} posts for ${ourDomain}`);
-  sitePostsCache.set(ourDomain, { posts, expiresAt: Date.now() + 60 * 60 * 1000 });
+  sitePostsCache.set(ourDomain, { posts, expiresAt: Date.now() + 12 * 60 * 60 * 1000 }); // 12h: одно перечисление на ночной прогон вместо шести
   return posts;
 }
 
@@ -1589,6 +1585,7 @@ async function analyzeAndSaveArticle(userId: number, url: string): Promise<void>
   const lsiBlock = lsiKeywords.length > 0
     ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
     : '';
+  const seoBriefBlock = `\n${formatSeoBrief(buildSeoBrief(serpKeyword, [...googleSerp.results, ...yandexSerp.results], uniqueMissingTopics))}\n`;
 
   const seoPrompt = `Ты SEO-эксперт по российскому рынку. Проанализируй нашу статью с учётом конкурентов из поисковой выдачи и верни JSON.
 
@@ -1626,13 +1623,13 @@ ${contentForLLM}
 
 КОНКУРЕНТЫ В ТОП-${competitors.length} (средний объём: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}${gscBlock}
+${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
 ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов (конкуренты пишут в среднем ${avgCompetitorWords} слов — нужно превзойти)
 2. Структура HTML: один H1, 6-10 подзаголовков H2, H3 где уместно, списки <ul>/<ol>, таблицы <table> где есть данные для сравнения
 3. Начало: прямой ответ на запрос "${serpKeyword}" в первых 2-3 предложениях (featured snippet). КАЖДЫЙ H2-раздел тоже начинай с 1-2 предложений прямого ответа на под-вопрос раздела (для блока «Люди также спрашивают», Яндекс Нейро и Google AI Overview — короткие цитируемые пассажи)
 4. Охват тем: включи ВСЕ темы конкурентов которых нет у нас
-5. FAQ-раздел: H2 "Часто задаваемые вопросы" с минимум 10 вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов (важно для блока "Люди также спрашивают" в Яндексе)
+5. FAQ-раздел: H2 "Часто задаваемые вопросы" с 6-10 вопросами, которые реально следуют из текста. Не добавляй шаблонные или неподтверждённые ответы.
 6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно. ${getShortcodesHint(serpKeyword)}
 7. Пошаговые инструкции: нумерованные списки для процессов
 8. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на сайт», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — такой навигации у нас нет. ✅ Пиши: «перейдите по ссылке на /spravki/», «воспользуйтесь формой на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
@@ -1681,6 +1678,11 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
   // QA log
   checkArticleQuality(improvedContent, url, targetWords, 10);
 
+  const seoGate = validateSeoArticle(improvedContent, serpKeyword, seo.metaTitle || parsed.title, 10);
+  if (!seoGate.ok) {
+    console.warn(`[SEO-GATE] BLOCK ${url}: ${seoGate.issues.map((i) => i.message).join('; ')}`);
+  }
+
   const improvedWordCount = improvedContent
     ? improvedContent.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length
     : parsed.wordCount;
@@ -1704,7 +1706,10 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
     metaTitle: seo.metaTitle || null,
     metaDescription: seo.metaDescription || null,
     keywords: JSON.stringify(seo.keywords || []),
-    generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
+    generalSuggestions: JSON.stringify([
+      ...(seo.generalSuggestions || []),
+      ...seoGate.issues.map((issue) => `[${issue.severity}] ${issue.code}: ${issue.message}`),
+    ]),
     headings: JSON.stringify(parsed.headings || []),
     seoScore: seo.score || 0,
     serpKeyword: serpKeyword || null,
@@ -1712,8 +1717,9 @@ ${missingTopicsBlock}${lsiBlock}${gscBlock}
     yandexPos,
   });
 
-  // Notify search engines about the updated article
-  void submitToIndexNow(url);
+  // Notify search engines only after the semantic gate passes. A failed
+  // article remains available in history for a manual correction.
+  if (seoGate.ok) void submitToIndexNow(url);
 }
 
 async function runBatchJob(userId: number, urls: string[]): Promise<void> {
@@ -1802,7 +1808,8 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
   // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
   const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
-  const targetFaq = Math.max(12, avgCompetitorFaq + 2);
+  // FAQ quantity is a completeness floor, not a ranking target.
+  const targetFaq = Math.max(6, Math.min(10, avgCompetitorFaq + 2));
 
   // New deep-competitor stats (auth links, internal links, videos, alts)
   const avgAuthLinks = competitors.length
@@ -1853,6 +1860,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   const lsiBlock = lsiKeywords.length > 0
     ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
     : '';
+  const seoBriefBlock = `\n${formatSeoBrief(buildSeoBrief(keyword, [...googleSerp.results, ...yandexSerp.results], uniqueMissingTopics))}\n`;
 
   const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
 - Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
@@ -1917,13 +1925,13 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${competitorAltSamplesBlock}${intentBlock}${aggressiveBlock}
+${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDomainsBlock}${competitorAltSamplesBlock}${intentBlock}${aggressiveBlock}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это ${aggressive ? '25' : '15'}% больше лучшего конкурента (${maxCompetitorWords} слов). Пиши плотно, без воды — пользователь ищет ответ, а не километры текста. Каждый раздел завершён, но не разведён синонимами ради объёма.
 2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. FEATURED SNIPPET (ОБЯЗАТЕЛЬНО): сразу после H1 — абзац 40-60 слов с прямым ответом на "${keyword}". Без вступлений типа "В этой статье...". Формат: "**${keyword}** — это [определение]. [Ключевой факт]. [CTA-намёк]." Это попадает в блок 0 Яндекса и Гугла.
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>. Минимум ${targetFaq} вопросов — это критично для Яндекс AI-ответов (FAQ-схема).
+5. FAQ: H2 "Часто задаваемые вопросы" с 6-${targetFaq} действительно полезными вопросами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details>. Не добавляй вопросы ради количества и не выдумывай условия сервиса.
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 7b. ДОПОЛНИТЕЛЬНЫЙ CTA: если тема связана с ПОКУПКОЙ/ПРОВЕРКОЙ квартиры, СДЕЛКОЙ, юридической чистотой, проверкой собственника/продавца, рисками при покупке — добавь РОВНО ОДНО уместное упоминание услуги проверки договора прямой ссылкой <a href="/proverka-dogovora/">/proverka-dogovora/</a> (юристы проверят договор купли-продажи перед сделкой). Это ВТОРИЧНЫЙ CTA; /spravki/ остаётся основным. Не вставляй, если тема не про сделку/покупку.
@@ -1932,19 +1940,16 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
 10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
-13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
-    - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
-    - В разделе про виды или форматы добавь <h3>📱 Срочный отчёт в твоём смартфоне</h3> с описанием мобильного доступа (80-100 слов)
-    - В разделе про стоимость добавь <h3>⭐ Отзывы клиентов</h3> с 3-4 краткими отзывами (100-120 слов)
+13. Доверие: не выдумывай отзывы, гарантии, способы оплаты, скидки или характеристики мобильного приложения. Добавляй такие сведения только если они подтверждены исходной статьёй или официальной страницей сервиса; иначе честно укажи, что условия нужно проверить перед заказом.
 14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2-раздела. Пиши достаточно подробно в каждом H2 — минимум 300 слов — чтобы картинка имела контекст.
-15. ЭМОДЗИ В ТЕКСТЕ: активно используй эмодзи внутри параграфов и списков — минимум 25-35 на всю статью:
+15. ЭМОДЗИ В ТЕКСТЕ: используй эмодзи умеренно, только если они улучшают навигацию; не добавляй их ради объёма:
     - 💡 — для советов и лайфхаков ("💡 Совет: ...")
     - ⚠️ — для предупреждений ("⚠️ Важно: ...")
     - ✅ — для преимуществ и успешных шагов
     - 📌 — для ключевых фактов
     - ★ — для выделения важных выводов
     - 📊 💰 ⏱️ 🔍 📋 📄 🏠 🏦 — по контексту раздела
-    Эмодзи ставь в начале предложения или перед ключевым словом. В каждом H2-разделе должно быть 2-3 эмодзи в тексте.
+    Не дублируй эмодзи и не заполняй ими каждый раздел.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
     : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
@@ -2043,6 +2048,14 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   // TOC anchors → Google SERP jump-links (+25% organic CTR).
   improvedContent = addTopMatterBlocks(improvedContent, seo.metaTitle || parsed.title, url);
 
+  // Deterministic semantic gate: structural counters alone cannot catch
+  // unrelated FAQ answers or invented service promises. Keep unsafe output in
+  // history for review, but never send it to WordPress or trigger reindexing.
+  const seoGate = validateSeoArticle(improvedContent, keyword, seo.metaTitle || parsed.title, targetFaq);
+  if (!seoGate.ok) {
+    console.warn(`[SEO-GATE] BLOCK ${url}: ${seoGate.issues.map((i) => i.message).join('; ')}`);
+  }
+
   // Append FAQPage + Article + Breadcrumb + HowTo + AggregateRating JSON-LD
   const schemaMarkup = generateSchemaMarkup(keyword, seo.metaTitle || parsed.title, url, improvedContent);
   improvedContent = improvedContent + '\n' + schemaMarkup;
@@ -2067,7 +2080,10 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
     metaTitle: seo.metaTitle || null,
     metaDescription: seo.metaDescription || null,
     keywords: JSON.stringify(seo.keywords || []),
-    generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
+    generalSuggestions: JSON.stringify([
+      ...(seo.generalSuggestions || []),
+      ...seoGate.issues.map((issue) => `[${issue.severity}] ${issue.code}: ${issue.message}`),
+    ]),
     headings: JSON.stringify(parsed.headings || []),
     seoScore: seo.score || 0,
     serpKeyword: keyword || null,
@@ -2076,14 +2092,14 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
   });
 
   // Auto-publish to WordPress (batch mode: no image generation).
-  // imagesNeeded from competitor data (max competitor images + 2), capped at MAX_FLUX_IMAGES
-  // to prevent runaway FLUX generation (each image ≈ 30s sequential). Default cap 20 —
+  // imagesNeeded from competitor data, capped to prevent runaway generation.
   // matches top-3 competitors' image count (our audit found some have 23+ images).
   // Each +5 images costs ~2-3 min per article, trade-off vs matching competitor parity.
   // 2026-04-20 v2: cap 12→16, floor 6→8 (sync with targetImages — паритет с конкурентами)
-  const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 16);
-  const imagesForWp = Math.min(Math.max(targetImages, 10), fluxCap);
+  const imageCap = Number(process.env.MAX_IMAGE_COUNT ?? 16);
+  const imagesForWp = Math.min(Math.max(targetImages, 10), imageCap);
   console.log(`[Img] Competitors: max=${maxCompetitorImages}, avg=${avgCompetitorImages} → our target=${imagesForWp}`);
+  if (!seoGate.ok) return;
   await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
     focusKeyword: keyword || undefined,
@@ -2113,7 +2129,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}${competitorAuthDomainsBlock}${compe
 
 /**
  * Find, upload and inject images into article HTML.
- * Priority: WP Media Library → FLUX generation (sequential to avoid rate limits).
+ * Priority: optional WP Media Library → Flow/Gemini generation.
  * Returns updated HTML with images injected after H2s, and the featured media ID.
  */
 
@@ -2166,7 +2182,7 @@ export async function findAndInjectImages(
     .slice(0, 3)
     .join(' ');
 
-  // По умолчанию форсим СВЕЖИЕ FLUX-картинки (релевантные теме), НЕ переиспользуем
+  // По умолчанию генерируем свежие Flow/Gemini-картинки (релевантные теме), НЕ переиспользуем
   // старый generic-сток из WP-библиотеки (2018-е jpg). Включить библиотеку обратно:
   // USE_WP_LIBRARY_IMAGES=1.
   const useLibrary = process.env.USE_WP_LIBRARY_IMAGES === '1';
@@ -2174,7 +2190,7 @@ export async function findAndInjectImages(
     ? await wp.searchMedia(siteUrl, username, appPassword, titleKeywords, 8)
         .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[])
     : [];
-  console.log(`[Img] WP library: ${libraryImages.length}${useLibrary ? '' : ' (отключена — форсим FLUX)'}`);
+  console.log(`[Img] WP library: ${libraryImages.length}${useLibrary ? '' : ' (отключена — используем Flow)'}`);
 
   // Vision-filter for relevance
   const relevant = libraryImages.length > 0
@@ -2254,7 +2270,7 @@ export async function findAndInjectImages(
  * Pre-publish broken-image guard: HEAD-checks every absolute <img> URL and removes
  * any that don't return 2xx (404, 5xx, DNS fail). Bare-filename placeholders are already
  * stripped in beautifyArticleHtml; this catches dead absolute URLs (deleted WP media,
- * failed FLUX uploads, expired stock URLs) before they reach the live page.
+ * failed image uploads, expired stock URLs) before they reach the live page.
  * Returns the cleaned HTML and a list of removed URLs for logging.
  */
 async function removeBrokenImages(html: string): Promise<{ html: string; removed: string[] }> {
@@ -2314,7 +2330,7 @@ function truncateMetaDesc(text: string, max = 155): string {
 
 /**
  * Publish an article to WordPress automatically (batch mode).
- * Finds/uploads images from WP Library, Pexels, Wikimedia, or generates via FLUX.
+ * Finds/uploads images from WP Library or generates via Flow/Gemini.
  */
 async function autoPublishToWP(
   userId: number,
@@ -2513,7 +2529,7 @@ export const articlesRouter = router({
   // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
   // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
   const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
-      const targetFaq = Math.max(12, avgCompetitorFaq + 2);
+      const targetFaq = Math.max(6, Math.min(10, avgCompetitorFaq + 2));
 
       // Extract unique H2 topics from competitors missing in our article
       const ourH2s = new Set(
@@ -2551,6 +2567,7 @@ export const articlesRouter = router({
       const lsiBlock = lsiKeywords.length > 0
         ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
         : '';
+      const seoBriefBlock = `\n${formatSeoBrief(buildSeoBrief(serpKeyword, [...googleSerp.results, ...yandexSerp.results], uniqueMissingTopics))}\n`;
 
       const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
 - Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
@@ -2593,13 +2610,13 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}${top3Stats}
+${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
 2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. Прямой ответ на "${serpKeyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary>
+5. FAQ: H2 "Часто задаваемые вопросы" с 6-${targetFaq} вопросами, которые реально следуют из статьи. Не добавляй шаблонные или неподтверждённые ответы.
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
 7b. ДОПОЛНИТЕЛЬНЫЙ CTA: если тема связана с ПОКУПКОЙ/ПРОВЕРКОЙ квартиры, СДЕЛКОЙ, юридической чистотой, проверкой собственника/продавца, рисками при покупке — добавь РОВНО ОДНО уместное упоминание услуги проверки договора прямой ссылкой <a href="/proverka-dogovora/">/proverka-dogovora/</a> (юристы проверят договор купли-продажи перед сделкой). Это ВТОРИЧНЫЙ CTA; /spravki/ остаётся основным. Не вставляй, если тема не про сделку/покупку.
@@ -2608,10 +2625,7 @@ ${missingTopicsBlock}${lsiBlock}${top3Stats}
 10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
-13. ОБЯЗАТЕЛЬНЫЕ H3-блоки внутри соответствующих H2-разделов:
-    - В разделе про документ/отчёт добавь <h3>🛡️ Гарантируем возврат средств</h3> с текстом о гарантии и условиях возврата (80-100 слов)
-    - В разделе про виды или форматы добавь <h3>📱 Срочный отчёт в твоём смартфоне</h3> с описанием мобильного доступа (80-100 слов)
-    - В разделе про стоимость добавь <h3>⭐ Отзывы клиентов</h3> с 3-4 краткими отзывами (100-120 слов)
+13. Доверие: не выдумывай отзывы, гарантии, скидки, способы оплаты или характеристики мобильного приложения. Используй только подтверждённые сведения из исходной статьи и официальных материалов.
 14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2. Пиши каждый H2-раздел полностью (300+ слов) — это обеспечивает контекст для картинки.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`

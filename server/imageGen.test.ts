@@ -1,147 +1,26 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-// Mock fetch globally
-const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
+const mockExecFileSync = vi.hoisted(() => vi.fn());
+vi.mock('child_process', () => ({ execFileSync: mockExecFileSync }));
 
-const { mockExecFileSync } = vi.hoisted(() => ({
-  mockExecFileSync: vi.fn(),
-}));
-
-vi.mock("child_process", () => ({
-  execFileSync: mockExecFileSync,
-}));
-
-// Re-import after env setup
-const setupEnv = (overrides: Record<string, string> = {}) => {
-  process.env.IMAGE_API_URL = overrides.IMAGE_API_URL ?? "https://api.fireworks.ai/inference";
-  process.env.IMAGE_API_KEY = overrides.IMAGE_API_KEY ?? "fw_testkey";
-  process.env.IMAGE_MODEL = overrides.IMAGE_MODEL ?? "accounts/fireworks/models/flux-1-schnell-fp8";
-};
-
-describe("generateDallEImage (Fireworks)", () => {
+describe('Flow/Gemini image provider', () => {
   beforeEach(() => {
-    setupEnv();
-    mockFetch.mockReset();
+    vi.resetModules();
     mockExecFileSync.mockReset();
-  });
-
-  it("calls /v1/workflows/{model}/text_to_image endpoint for Fireworks", async () => {
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG magic bytes
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => fakeJpeg.buffer,
-    } as any);
-
-    const { generateDallEImage } = await import("./_core/imageGen");
-    await generateDallEImage("a red apple");
-
-    const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("/v1/workflows/");
-    expect(url).toContain("/text_to_image");
-    expect(url).not.toContain("/image_generation/");
-    expect((options.headers as Record<string, string>)["Accept"]).toBe("image/jpeg");
-  });
-
-  it("sends prompt and aspect_ratio in request body", async () => {
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => fakeJpeg.buffer,
-    } as any);
-
-    const { generateDallEImage } = await import("./_core/imageGen");
-    await generateDallEImage("Mumbai skyline at sunset");
-
-    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(options.body as string);
-    expect(body.prompt).toBe("Mumbai skyline at sunset");
-    expect(body.aspect_ratio).toBeDefined();
-  });
-
-  it("uses 16:9 landscape aspect ratio for article images", async () => {
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => fakeJpeg.buffer,
-    } as any);
-
-    vi.resetModules();
-    setupEnv();
-    const { generateDallEImage } = await import("./_core/imageGen");
-    await generateDallEImage("Russian apartment building exterior");
-
-    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(options.body as string);
-    // Article images must be landscape 16:9, not square 1:1
-    expect(body.aspect_ratio).toBe("16:9");
-  });
-
-  it("uses guidance_scale 3.5 for distilled FLUX models (not schnell)", async () => {
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => fakeJpeg.buffer,
-    } as any);
-
-    vi.resetModules();
-    setupEnv({ IMAGE_MODEL: "accounts/fireworks/models/flux-1-pro-fp8" });
-    const { generateDallEImage } = await import("./_core/imageGen");
-    await generateDallEImage("person reviewing cadastral document");
-
-    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(options.body as string);
-    // FLUX distilled models work best at guidance_scale 3.5 (not 7+)
-    expect(body.guidance_scale).toBe(3.5);
-  });
-
-  it("throws if IMAGE_API_KEY is not configured", async () => {
-    process.env.IMAGE_API_KEY = "";
-    // Need fresh import since module caches env at load time
-    vi.resetModules();
-    process.env.IMAGE_API_KEY = "";
-    const { generateDallEImage } = await import("./_core/imageGen");
-    await expect(generateDallEImage("test")).rejects.toThrow("IMAGE_API_KEY not configured");
-  });
-
-  it("falls back to FLUX when agy fails and Gemini is not configured", async () => {
-    vi.resetModules();
-    setupEnv();
     delete process.env.GEMINI_API_KEY;
-    mockExecFileSync.mockImplementationOnce(() => {
-      throw new Error("agy quota exhausted");
-    });
-    const fakeJpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      headers: { get: () => "image/jpeg" },
-      arrayBuffer: async () => fakeJpeg.buffer,
-    } as any);
-
-    const { generateImageWithFallback } = await import("./_core/imageGen");
-    const result = await generateImageWithFallback("test prompt");
-
-    expect(result).toMatch(/^file:\/\//);            // FLUX returns a local temp file
-    const [url] = mockFetch.mock.calls[0] as [string];
-    expect(url).toContain("/v1/workflows/");          // FLUX endpoint was hit
+    mockExecFileSync.mockReturnValue('![image](/tmp/flow-image.png)');
   });
 
-  it("throws when neither Gemini nor FLUX (IMAGE_API_KEY) is configured", async () => {
-    vi.resetModules();
-    setupEnv({ IMAGE_API_KEY: "" });
-    process.env.IMAGE_API_KEY = "";
-    delete process.env.GEMINI_API_KEY;
-    mockExecFileSync.mockImplementationOnce(() => {
-      throw new Error("agy quota exhausted");
-    });
+  it('uses the Flow bridge and returns its local image path', async () => {
+    const { generateImageWithFallback } = await import('./_core/imageGen');
+    await expect(generateImageWithFallback('cadastral map')).resolves.toBe('file:///tmp/flow-image.png');
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+  });
 
-    const { generateImageWithFallback } = await import("./_core/imageGen");
-
-    await expect(generateImageWithFallback("test prompt")).rejects.toThrow(/IMAGE_API_KEY/);
-    expect(mockFetch).not.toHaveBeenCalled();
+  it('does not call a legacy image API when Flow fails', async () => {
+    mockExecFileSync.mockImplementationOnce(() => { throw new Error('Flow quota exhausted'); });
+    const { generateImageWithFallback } = await import('./_core/imageGen');
+    await expect(generateImageWithFallback('cadastral map')).rejects.toThrow(/No Flow\/Gemini/);
+    expect(mockExecFileSync).toHaveBeenCalledTimes(1);
   });
 });

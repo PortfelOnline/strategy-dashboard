@@ -1,20 +1,27 @@
+import * as nodeFsArticles from 'fs';
+import * as nodePathArticles from 'path';
 import { router, protectedProcedure } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import * as cheerio from "cheerio";
-import { parseArticleFromUrl, scanCatalog } from "../_core/articleParser";
-import { fetchGoogleSerp, fetchYandexSerp, SerpData } from "../_core/serpParser";
+import { parseArticleFromUrl, toOriginFetch, scanCatalog } from "../_core/articleParser";
+import { fetchGoogleSerp, fetchYandexSerp, fetchFreeGoogleSerp, SerpData } from "../_core/serpParser";
+import * as fs from "fs";
+import * as path from "path";
 import { fetchGscPageQueries, formatGscBlock } from "../_core/gscClient";
-import { invokeLLM } from "../_core/llm";
+import { invokeCodeAssist as invokeLLM } from "../_core/codeAssistLLM";
 import { verifyAndCorrectClaims } from "../_core/crag";
 import { ensureMinFaq } from "../_core/quality-fixers";
 import { validateSeoArticle } from "../seoQualityGate";
 import { buildSeoBrief, formatSeoBrief } from "../seoBrief";
+import { ensureParagraphEmojis } from "../contentQuality";
 import { generateImageWithFallback } from "../_core/imageGen";
-import { readFileSync } from "node:fs";
 import * as wp from "../_core/wordpress";
 import { createContentPost } from "../db";
 import * as articlesDb from "../articles.db";
+import { extractSlugPromises, findUncoveredPromises, buildSlugPromiseBlock } from "../slugPromise";
+import { publicSiteBase } from "../_core/publicUrl";
+import { getEnhancePassLimit, validateArticleForPublish } from "../articlePublishGate";
 import * as wordpressDb from "../wordpress.db";
 
 // ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
@@ -41,7 +48,57 @@ async function submitToGoogleIndexing(url: string): Promise<void> {
 }
 
 // ── Переобход: Яндекс+Bing через IndexNow, Google через Indexing API ─────────────
-async function submitToIndexNow(url: string): Promise<void> {
+/**
+ * Отдаёт ли страница 200 анонимному посетителю.
+ * 🚨 22.08.2026: черновики WP отдают 404, и мы этого не проверяли — за сутки 7 таких
+ * страниц ушли в IndexNow и Google Indexing API, ещё на 7 поставили внутренние ссылки
+ * с живых статей. Краул-бюджет — ровно то, чего сайту не хватает, тратить его на 404 нельзя.
+ */
+export async function isPubliclyLive(url: string): Promise<boolean> {
+  try {
+    // В этом файле axios подключают локально — модульного импорта нет.
+    const axios = (await import('axios')).default;
+    const opts = {
+      timeout: 15000, proxy: false, maxRedirects: 0,
+      validateStatus: () => true,
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; 100zem-publish-check)' },
+    };
+    let r;
+    try {
+      r = await axios.get(url, opts);
+    } catch (e: any) {
+      // 🚨 25.08.2026: изнутри контейнера домен резолвится во внутренний адрес, где TLS не
+      // поднят (ECONNREFUSED на :443), поэтому ЛЮБАЯ страница выглядела недоступной — и
+      // переобход с обратными ссылками молча отключились для всех статей, включая живые.
+      // Публичность от протокола проверки не зависит: тот же nginx и та же WP отдадут
+      // 404 на черновик и по HTTP, так что защита от индексации черновиков сохраняется.
+      const viaHttp = url.replace(/^https:\/\//i, 'http://');
+      if (viaHttp === url) throw e;
+      r = await axios.get(viaHttp, opts);
+    }
+    if (r.status === 200) return true;
+    if (r.status >= 300 && r.status < 400) {
+      // Редирект на ТОТ ЖЕ путь — это апгрейд http→https, страница живая. Редирект на
+      // другой путь — склейка дубля, такой адрес индексировать тоже не нужно.
+      const loc = String(r.headers?.location || '');
+      if (!loc) return false;
+      try {
+        const from = new URL(url).pathname.replace(/\/+$/, '');
+        const to = new URL(loc, url).pathname.replace(/\/+$/, '');
+        return from === to;
+      } catch { return false; }
+    }
+    return false;
+  } catch {
+    return false;   // недоступна — значит наружу её показывать нельзя
+  }
+}
+
+export async function submitToIndexNow(url: string): Promise<void> {
+  if (!(await isPubliclyLive(url))) {
+    console.warn(`[Reindex] пропуск — страница недоступна публично (черновик или 404): ${url}`);
+    return;
+  }
   const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
   const key = process.env.INDEXNOW_API_KEY;
   const tasks: Promise<unknown>[] = [];
@@ -61,18 +118,55 @@ async function submitToIndexNow(url: string): Promise<void> {
   console.log(`[Reindex] ${url} → ${ok}/${results.length} (Яндекс/Bing IndexNow + Google Indexing API)`);
 }
 
-// ── In-memory cache: SERP results + competitor pages (no TTL — lives until server restart) ───
-const serpCache = new Map<string, SerpData>();
+// ── SERP/competitor cache: память + диск (/app/data, docker volume) — переживает
+// rebuild/recreate и не сжигает квоту CSE/SerpAPI заново. TTL 7 дней.
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+try { fs.mkdirSync(DATA_DIR, { recursive: true }); } catch {}
+const SERP_CACHE_FILE = path.join(DATA_DIR, 'serp-cache.json');
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const serpCache = new Map<string, any>();
 const pageCache = new Map<string, any>();
+try {
+  const raw = JSON.parse(fs.readFileSync(SERP_CACHE_FILE, 'utf8'));
+  for (const [k, e] of Object.entries(raw.serp ?? {})) serpCache.set(k, e);
+  for (const [k, e] of Object.entries(raw.pages ?? {})) pageCache.set(k, e);
+  console.log(`[cache] loaded from disk: serp=${serpCache.size}, pages=${pageCache.size}`);
+} catch {}
+let cacheDirty = false;
+setInterval(() => {
+  if (!cacheDirty) return;
+  cacheDirty = false;
+  try {
+    // Кап: держим не более 1500 записей на карту (старейшие по ts выкидываем)
+    for (const map of [serpCache, pageCache]) {
+      if (map.size > 1500) {
+        const sorted = [...map.entries()].sort((a, b) => (a[1]?.ts ?? 0) - (b[1]?.ts ?? 0));
+        for (const [k] of sorted.slice(0, map.size - 1500)) map.delete(k);
+      }
+    }
+    fs.writeFileSync(SERP_CACHE_FILE, JSON.stringify({
+      serp: Object.fromEntries(serpCache),
+      pages: Object.fromEntries(pageCache),
+    }));
+  } catch (e: any) { console.warn('[cache] disk save failed:', e?.message); }
+}, 60_000).unref();
 
-function cacheGet<T>(map: Map<string, T>, key: string): T | null {
-  return map.get(key) ?? null;
+function cacheGet<T>(map: Map<string, any>, key: string): T | null {
+  const e = map.get(key);
+  if (!e || typeof e.ts !== 'number') return null;
+  if (Date.now() - e.ts > CACHE_TTL_MS) { map.delete(key); return null; }
+  return e.v as T;
 }
-function cacheSet<T>(map: Map<string, T>, key: string, data: T): void {
-  map.set(key, data);
+function cacheSet<T>(map: Map<string, any>, key: string, data: T): void {
+  map.set(key, { v: data, ts: Date.now() });
+  cacheDirty = true;
 }
 
-async function cachedGoogleSerp(keyword: string): Promise<SerpData> {
+function appendJsonl(file: string, obj: unknown): void {
+  try { fs.appendFileSync(file, JSON.stringify(obj) + '\n'); } catch {}
+}
+
+export async function cachedGoogleSerp(keyword: string): Promise<SerpData> {
   const key = `google:${keyword}`;
   const hit = cacheGet(serpCache, key);
   if (hit) { console.log(`[cache] SERP HIT google:${keyword}`); return hit; }
@@ -81,7 +175,7 @@ async function cachedGoogleSerp(keyword: string): Promise<SerpData> {
   return result;
 }
 
-async function cachedYandexSerp(keyword: string): Promise<SerpData> {
+export async function cachedYandexSerp(keyword: string): Promise<SerpData> {
   const key = `yandex:${keyword}`;
   const hit = cacheGet(serpCache, key);
   if (hit) { console.log(`[cache] SERP HIT yandex:${keyword}`); return hit; }
@@ -99,6 +193,7 @@ const REAL_PRICES = `Актуальные цены 100zem.ru:
 - Кадастровый план территории квартала — 1 190 руб.
 - Ситуационный план (газификация/электрификация) — 2 490 руб.
 - План поэтажный с экспликацией БТИ — 3 990 руб.
+- Проверка документов и договоров искусственным интеллектом — 150 руб. (загрузите файл на /spravki/ — ИИ разберёт риски, ошибки и что перепроверить)
 Срок получения: 5 минут – 24 часа. Получение онлайн (скачать или открыть в личном кабинете), без доставки.`;
 
 // ─── Определяет нужна ли кадастровая карта на странице статьи ────────────────
@@ -114,6 +209,34 @@ export function shouldShowMap(slug: string): boolean {
   );
 }
 
+// ИИ-решение «выводить ли кадастровую карту в статье» (2026-07-03): правило по слагу
+// остаётся быстрым positive-сигналом; для остальных случаев LLM смотрит на заголовок
+// и начало текста. Пример: «Штраф за теплицу» — карта не нужна. Фоллбек — правило.
+export async function shouldShowMapAI(slug: string, title: string, html: string): Promise<boolean> {
+  if (shouldShowMap(slug)) return true; // явные karta-слаги — без LLM
+  if (process.env.MAP_AI_CHECK === '0') return shouldShowMap(slug);
+  try {
+    const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 1500);
+    const resp = await invokeLLM({
+      maxTokens: 60,
+      messages: [
+        { role: 'system', content: 'Ты решаешь, уместна ли интерактивная кадастровая карта внизу статьи. Отвечай ТОЛЬКО JSON.' },
+        { role: 'user', content: `Статья: "${title}"\n\nНачало текста: ${text}\n\nКарта уместна ТОЛЬКО если сама ТЕМА статьи — карта/поиск/границы/расположение объектов (кадастровая карта, поиск по номеру, посмотреть участок, карта города). Карта НЕ нужна в статьях про документы, справки, выписки, ШТРАФЫ, налоги, законы, правила и процедуры — даже если в тексте есть совет «проверить участок»: попутное упоминание проверки НЕ делает карту уместной.\n\nФормат: {"map": true|false}` },
+      ],
+    });
+    const raw = (resp.choices[0]?.message.content ?? '').trim();
+    const m = raw.match(/"map"\s*:\s*(true|false)/i);
+    if (m) {
+      const v = m[1].toLowerCase() === 'true';
+      console.log(`[MapAI] "${title.slice(0, 50)}" → карта: ${v}`);
+      return v;
+    }
+  } catch (e: any) {
+    console.warn('[MapAI] fallback на правило:', e?.message);
+  }
+  return shouldShowMap(slug);
+}
+
 // ─── WordPress shortcodes — определяются по ключевому запросу статьи ─────────
 function getShortcodesHint(keyword: string): string {
   const kw = keyword.toLowerCase();
@@ -125,6 +248,11 @@ function getShortcodesHint(keyword: string): string {
   }
   if (/план.*(этаж|помещ|квартир|экспликац)|экспликац|этаж.*план|поэтажн/.test(kw)) {
     blocks.push('- [BLOCK_ETAGI_PLAN] — кнопка заказа плана этажей/экспликации. Вставляй в раздел "Как заказать" или после описания документа.');
+  }
+  // Новая услуга (2026-06-28): проверка документов/договоров ИИ — уместна в статьях
+  // про сделки, договоры, покупку, риски, проверку документов.
+  if (/договор|сделк|купл|покупк|продаж|проверк|риск|обременен|ипотек|наследств|дарен|аренд/.test(kw)) {
+    blocks.push('- УСЛУГА «Проверка документов и договоров с ИИ» (150 руб.): в разделе про риски/проверку добавь 1-2 предложения — перед подписанием договор или выписку можно загрузить на проверку искусственным интеллектом, который найдёт риски и ошибки; ссылка СТРОГО <a href="/spravki/?proverka-documentov-dogovorov">проверить документ с ИИ</a>. Не навязчиво, ОДИН раз на статью.');
   }
   return `${REAL_PRICES}\n\nWORDPRESS ШОРТКОДЫ (вставляй как отдельную строку в HTML):\n${blocks.join('\n')}`;
 }
@@ -210,19 +338,54 @@ function extractKeywordFromTitle(title: string): string {
 // Domain patterns for authority links (E-E-A-T signal for Russian real estate/law)
 const AUTHORITY_DOMAINS = /\b(?:rosreestr\.gov\.ru|consultant\.ru|garant\.ru|nalog\.ru|pravo\.gov\.ru|minjust\.ru|mos\.ru|gosuslugi\.ru|kremlin\.ru|sudrf\.ru)\b/i;
 
-async function fetchCompetitorArticles(
+// Страницы на 1-60 слов (пейволл, JS-заглушка, карточка объявления) парсятся успешно,
+// но конкурентом не являются: попав в тройку, они вытесняют реальную статью и тянут вниз
+// среднее по картинкам и FAQ. Порог отсекает их, волна идёт дальше по выдаче.
+const MIN_COMPETITOR_WORDS = 300;
+
+// Сколько конкурентов разбираем. От их статистики считаются цели статьи
+// (объём, картинки, FAQ, H2, внешние ссылки), поэтому выборка из трёх была
+// шумной: один тяжёлый или один куцый конкурент сдвигал цель.
+export const MAX_COMPETITORS = Number(process.env.MAX_COMPETITORS ?? 10);
+
+export async function fetchCompetitorArticles(
   serpResults: { url: string; domain: string; title: string }[],
   ourDomain: string,
-  maxCompetitors = 3,
+  maxCompetitors = MAX_COMPETITORS,
 ): Promise<{ position: number; domain: string; title: string; headings: string; content: string; wordCount: number; imageCount: number; faqCount: number; hasTable: boolean; altSamples: string[]; authLinkCount: number; internalLinkCount: number; videoCount: number; listCount: number; authDomains: string[] }[]> {
-  // Try 2x more candidates so blocked top-5 (cian, domclick, etc.) get replaced
-  // by lower-ranked pages that allow crawling
-  const candidates = serpResults
+  // 🚨 02.08.2026: бралось ровно maxCompetitors*2 кандидатов одной пачкой. В выдаче по
+  // коммерческим запросам верх стабильно занимают cian/domclick (401) и госпорталы
+  // (в SLOW_DOMAINS), поэтому из шести попыток выживала одна — при том что SERP отдавал
+  // 17 кандидатов. А от статистики конкурентов считаются ВСЕ цели статьи: объём, картинки,
+  // FAQ, H2, внешние ссылки. Один случайный конкурент = цели с потолка.
+  // Теперь идём вглубь выдачи волнами, пока не наберём нужное число или не кончатся
+  // кандидаты (потолок POOL_LIMIT, чтобы не жечь время на бесконечной выдаче).
+  const POOL_LIMIT = Math.max(15, maxCompetitors * 3);
+  const pool = serpResults
     .filter(r => !r.domain.includes(ourDomain) && !ourDomain.includes(r.domain))
-    .slice(0, maxCompetitors * 2);
+    .slice(0, POOL_LIMIT);
 
+  const collected: any[] = [];
+  let attempts = 0;
+  for (let offset = 0; offset < pool.length && collected.length < maxCompetitors; offset += maxCompetitors) {
+    const wave = pool.slice(offset, offset + maxCompetitors);
+    attempts += wave.length;
+    const fetchedWave = await fetchCompetitorWave(wave, offset);
+    collected.push(...fetchedWave);
+  }
+  const okDomains = collected.slice(0, maxCompetitors).map(c => c.domain).join(', ');
+  console.log(`[Competitors] попыток ${attempts} из ${pool.length} кандидатов → спарсилось ${collected.length}${okDomains ? ' (' + okDomains + ')' : ''}`);
+  return collected.slice(0, maxCompetitors);
+}
+
+// Одна волна: параллельно тянем страницы и оставляем те, где реально есть текст.
+async function fetchCompetitorWave(
+  candidates: { url: string; domain: string; title: string }[],
+  positionOffset: number,
+): Promise<any[]> {
   const fetched = await Promise.allSettled(
-    candidates.map(async (r, i) => {
+    candidates.map(async (r, idx) => {
+      const i = positionOffset + idx;
       const cached = cacheGet(pageCache, r.url);
       if (cached) { console.log(`[cache] PAGE HIT ${r.url}`); return cached; }
       const parsed = await Promise.race([
@@ -230,7 +393,7 @@ async function fetchCompetitorArticles(
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)),
       ]);
       const html = parsed.contentHtml || '';
-      // alt samples: up to 5 non-empty, longer-than-3-chars alts (for image prompt seeding)
+      // alt samples: up to 5 non-empty, longer-than-3-chars alts (for FLUX prompt seeding)
       const altMatches = Array.from(html.matchAll(/<img[^>]+alt=["']([^"']+)["']/gi));
       const altSamples = altMatches
         .map(m => m[1].trim())
@@ -273,9 +436,8 @@ async function fetchCompetitorArticles(
   );
 
   return fetched
-    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value.wordCount > 0)
-    .map(r => r.value)
-    .slice(0, maxCompetitors);
+    .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value.wordCount >= MIN_COMPETITOR_WORDS)
+    .map(r => r.value);
 }
 
 // ── LSI keyword extraction from SERP snippets ────────────────────────────────
@@ -316,13 +478,14 @@ function countWords(html: string): number {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean).length;
 }
 
-// Generate contextual image prompts based on article title, keyword and H2 sections
+// Generate contextual DALL-E image prompts based on article title, keyword and H2 sections
 export async function generateImagePrompts(title: string, keyword?: string, h2Sections?: string[], bodyText?: string, countRequested?: number, h2Bodies?: string[]): Promise<string[]> {
   // STYLE-ANCHOR (brand-kit) — единый суффикс на ВСЕ картинки статьи: общий свет/палитра/камера
   // → серия выглядит цельно. 50mm f/4 (не 85/1.8) — лучше для предметки/архитектуры/аэро, чем
   // портретный bokeh. Тёплая нейтральная палитра = русская middle-class эстетика.
-  const QUALITY = 'editorial real-estate photograph, warm neutral muted palette, soft natural daylight, sharp focus, high detail, photorealistic, shot on Canon EOS R5, 50mm f/4, balanced depth of field, subtle color grade';
-  // Компактный негатив: длинный хвост размывает субъект и ухудшает соблюдение промпта. Держим коротко
+  const QUALITY = 'editorial real-estate photograph, warm neutral muted palette, soft natural daylight, sharp focus, high detail, photorealistic, shot on Canon EOS R5, 50mm f/4, balanced depth of field, subtle color grade, and there is no writing anywhere in the frame: no street signs, no name plates, no notice boards, no lettering or patches on clothing, no logos on equipment or vehicles, no readable paper — every surface is plain and unmarked';
+  // Компактный негатив (FLUX негативы почти игнорирует; длинный хвост лишь РАЗМЫВАЛ субъект —
+  // подтв. FLUX prompt guides: >100 слов путают модель, subject уезжает в конец). Держим коротко
   // и позитивно. Главные запреты дублируются в system-prompt; финальный фильтр — CF vision QA-гейт.
   const NEGATIVE = 'clean uncluttered scene, simple physical props or architecture only, no text or letters or numbers, no logos or watermarks, no people, no hands, no electronics, no money';
   // Russian setting tokens (append to scenes where environment visible)
@@ -331,7 +494,7 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
 
   // 2026-04-20: keyword-aware theme detection — если тема статьи конкретная (дача, квартира,
   // участок, гараж), добавляем topical scenes в пул чтобы LLM выбирал их приоритетно.
-  // Без тематических подсказок промпты скатываются в generic real-estate.
+  // Без этого FLUX-prompts скатываются в "generic real-estate" (ключи+нотариус+СПб).
   const themeHints: string[] = [];
   const kwLower = (kw + ' ' + title).toLowerCase();
   if (/\b(дач\w*|снт|сад\w+ участ|садовод|огород)\b/i.test(kwLower)) {
@@ -371,9 +534,9 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
 
   // 10 diverse fallback prompts covering the common scenes for this site vertical.
   // Used when LLM call fails or doesn't return enough items; now cycled if target > 10.
-  // 2026-04-20: убраны сцены с крупным планом документа/плана (модели искажают буквы)
+  // 2026-04-20: убраны сцены с крупным планом документа/плана (FLUX пишет кривые буквы)
   // и Scandinavian-стиль (non-Russian); добавлены Russian-specific settings — двор с панельками, дача, канал Петербурга, МФЦ-интерьер.
-  // OBJECT / ARCHITECTURE / AERIAL ONLY — без людей и рук (меньше артефактов → QA бракует).
+  // OBJECT / ARCHITECTURE / AERIAL ONLY — без людей и рук (FLUX калечит анатомию → QA бракует).
   // Кадастровый аэро-мотив (top-down участков/районов = буквально кадастровая карта) — во главе.
   const fallback = [
     `Aerial top-down view of Russian suburban land plots with visible fenced boundaries, dirt roads dividing parcels, green summer fields, ${RU_SETTING}, ${QUALITY}, ${NEGATIVE}`,
@@ -411,18 +574,23 @@ export async function generateImagePrompts(title: string, keyword?: string, h2Se
       messages: [
         {
           role: 'system',
-          content: `You are a senior image prompt engineer for a Russian real estate / cadastral documents blog. Write cinematic, photorealistic prompts in English for square 1:1 compositions.
-Use this EXACT style suffix at the END of every prompt (brand-kit — keeps the whole article's image set visually consistent): ${QUALITY}.
-CRITICAL — NO TEXT AT ALL. Image models cannot render text legibly, especially Cyrillic/Russian — any visible letters come out garbled and unprofessional. Negative tokens (must be absent): no text, no letters, no words, no numbers, no digits, no characters, no labels, no captions, no Cyrillic, no Russian letters, no handwriting, no typography, no watermarks, no logos, no signs with text. AVOID objects that inherently carry numbers or text — analog clock faces, calendars, rulers, price tags, license plates, dashboards, calculators with a display. For a "time / deadline / срок" idea use an HOURGLASS / sand timer (no numbers); for "cost / price" do NOT show money — imply value via a miniature house model alone (NO keys — small metal deforms), never coins or banknotes. If a document/form/paper appears in the scene, it MUST be shown from a steep angle, folded, or out-of-focus so no text is readable. PREFER scenes WITHOUT visible documents — focus on simple physical props and clean interiors — NO people, NO hands (keys, pens, house models, plants, coins, books, folded papers). Also avoid: low quality, distorted faces, extra limbs, cartoon/illustration/stock-photo look.
+          content: `You are a senior image prompt engineer for Nano Banana (Gemini 3 Image), writing prompts for a Russian real estate / cadastral documents blog. Write descriptive, narrative prompts in English for square 1:1 photographs.
 
-CRITICAL — PHYSICAL OBJECTS. No inscriptions, engravings, or brand logos on any object in frame (pens, cups, folders — all blank/unlabeled). 🚨 DO NOT use keys / keychains / small intricate metal objects at all. Prefer ONE large simple clean object (house model, plant, folder, hourglass) with generous empty space.
+PROMPT STRUCTURE (the model follows it best): [subject with concrete attributes] performing [specific action] in [specific Russian location], [composition and camera angle], [lighting and time of day], [style]. End every prompt with this exact style suffix so the article's image set stays consistent: ${QUALITY}.
 
-CRITICAL — NO ELECTRONICS. NEVER include laptops, smartphones, tablets, computer monitors, keyboards, mice, or any electronic device in the scene. For "online / digital / website / order via internet" sections, convey the idea WITHOUT any gadget and WITHOUT people/hands: a tidy modern Russian interior, a single house model on a clean desk, blank manila folders flat-lay, or an aerial land/district view.
+WHAT IS ALLOWED AND ENCOURAGED — this model renders them correctly, unlike the older one we used:
+- People at work and their hands: a cadastral engineer with a total station, a clerk handing over a folder, a family on the porch of their house. Show the action described in the section.
+- Equipment and devices: surveyor tripod, tape measure, tablet, laptop, phone, printer, office equipment.
+- Paper documents, folders, plans and forms — as long as no readable text is on them (steep angle, partly turned away, or shallow depth of field).
+Use them whenever they genuinely illustrate the section. A photograph of a real scene beats an abstract prop still life.
 
-CRITICAL — CURRENCY. DO NOT depict money at all — no banknotes, no coins, no cash, no wallets, no bank cards. For "cost / price / payment" sections, SKIP money imagery entirely and imply value abstractly: a miniature house model alone (no keys), an hourglass for time.
-CRITICAL — NO PEOPLE, NO HANDS, NO FINGERS. Compose OBJECT-ONLY flat-lays (props on a desk, top view) or empty interiors/architecture. NEVER show a person, body part, or a hand holding / touching anything.
-ALL settings MUST be recognizably Russian — Moscow/Saint Petersburg architecture, Russian panel-frame apartment buildings (не хрущёвки, но типовые серии), Russian middle-class interiors, Russian dacha aesthetic. NO Scandinavian minimalism, NO American suburban houses, NO generic Western offices. When in doubt — tilt toward Moscow residential district / St Petersburg canal / typical Russian kitchen.
-Each prompt must be UNIQUE, match its specific H2 section, and feature a concrete composition + subject + environment + lighting time-of-day.`,
+THE ONE HARD LIMIT — NO READABLE TEXT ANYWHERE IN FRAME. The model garbles Cyrillic into nonsense letters, and that instantly looks fake. So: no signage, no shop fronts, no name plates, no printed captions, no license plates, no calendars, no digital displays showing text, no logos, no branded workwear, no lettering on clothing, helmets, vehicles or equipment. All clothing and objects must be plain and unbranded. If a document appears, its text must be unreadable by composition.
+
+NO MONEY: no banknotes, no coins, no cash, no wallets, no bank cards — the model substitutes Euro/USD from training bias. For "cost / price / payment" sections show the action instead (a person filling in a form, a handshake over a table) or a time metaphor such as an hourglass.
+
+RUSSIAN SETTING ALWAYS: Russian panel-frame apartment blocks and typical residential districts, Russian dachas and SNT plots, village houses with wooden fences, Russian middle-class interiors, Russian offices with plain walls. No Scandinavian minimalism, no American suburbs, no generic Western offices.
+
+Each prompt must be UNIQUE and must depict what its own H2 section actually talks about.`,
         },
         {
           role: 'user',
@@ -432,22 +600,25 @@ ${sectionsBlock}${bodyBlock}${themeHints.length > 0 ? `\nTHEMATIC SCENES (use at
 This article is about ordering official Russian property / cadastral documents via 100zem.ru.
 
 Write exactly ${targetCount} DIFFERENT prompts, one per H2 section in order. Each prompt MUST:
-- Be 15-25 words of content BEFORE the quality tags (describe subject, action, environment, lighting)
-- OBJECT / ARCHITECTURE / AERIAL ONLY — NO people, NO hands, NO faces. Vary scenes, don't repeat a setting. Mix from this pool: aerial-top-down-land-plots-with-fenced-boundaries, aerial-drone-Moscow-residential-district, Russian-panel-building-exterior, Russian-dacha-with-garden-plot, Russian-private-cottage-exterior, countryside-land-plot-with-surveyor-tripod (no person), bright-empty-Russian-apartment-interior, top-down-flat-lay-single-wooden-house-model-with-small-plant, top-down-flat-lay-blank-manila-folders-and-plant, hourglass-and-house-model, scale-architectural-maquette-of-apartment-building, aerial-land-plots-at-golden-sunset, Russian-birch-forest-or-field-landscape. PREFER aerial-land/fields/landscape/flat-lay/clean-interior scenes — TEXT-SAFE and deformation-safe (large simple forms).
-- 🚨 ANTI-DEFORMATION: avoid small intricate objects — keys, keychains, jewelry, watches, clustered items, rolled-paper-with-stamp. Prefer ONE large simple object with generous negative space.
-- AVOID street-level urban scenes, canal/embankment views, courtyards, shopfronts, building facades with signage — image models may hallucinate garbled text. Buildings only from HIGH AERIAL (rooftops) or as a clean studio maquette. For "online/digital" sections use a clean interior or object flat-lay (no device). AVOID close-ups of documents/forms/plans and naming ANY organization (МФЦ/Росреестр/ЕГРН).
-- Match the H2 section's ACTUAL CONTENT provided above (not just the heading) — pick a fitting OBJECT/ARCHITECTURE/AERIAL scene, no people. Generic "apartment interior" with no link to the text is REJECTED. Examples:
-  * Section "Стоимость / сроки получения" → top-down flat-lay of a glass hourglass next to a small wooden house model on a neutral desk, soft daylight (no money, no clock-face digits)
-  * Section "Какие сведения содержит / план квартиры" → aerial top-down view of Russian suburban land plots with fenced boundaries and dirt roads dividing parcels, summer fields
-  * Section "Когда требуется / при покупке квартиры" → bright empty modern Russian apartment interior with balcony windows and neutral furniture, sunlit
-  * Section "Виды документов" → top-down flat-lay of stacked blank manila folders and a small green plant on a neutral desk
-  * Section "Регистрация / межевание участка" → countryside land plot with wooden fence, tall grass and a surveyor tripod in the foreground (no person), summer daylight
-- End EVERY prompt with EXACTLY this style suffix: "${QUALITY}"
+- Be 25-45 words of description BEFORE the style suffix: subject with attributes, the action, the Russian location, camera angle, lighting.
+- Depict what its H2 section ACTUALLY says, using the section text given above — not just the heading. A scene unrelated to the text is rejected. Prefer showing the action the section describes: measuring a plot, handing over documents, inspecting an apartment, filling in a form, walking the boundary.
+- Show people and their work when the section is about an action or a service; show architecture, land or interiors when it is about an object or a place; use aerial top-down views of fenced land plots for sections about boundaries, maps, surveying and cadastral registration.
+- Vary the scenes across the article: do not repeat the same setting, distance or time of day twice.
+- Contain NO readable text: no signs, no branded workwear, no lettering on clothing or equipment, no license plates, no screens with text, no logos. Plain unbranded clothing and objects only.
+- Contain NO money in any form.
+- End with EXACTLY this style suffix: "${QUALITY}"
+
+Examples of scene choices that match a section's meaning:
+  * "Как проходит межевание" → cadastral engineer in plain blue workwear measuring a village plot with a tape measure beside a surveyor tripod, wooden fence, summer daylight
+  * "Стоимость и сроки" → glass hourglass beside a small wooden house model on a plain office desk, warm window light, top-down composition
+  * "Что содержит выписка" → a woman at a plain office desk turning the pages of an unmarked paper folder, shallow depth of field so no text is readable
+  * "Когда нужна при покупке квартиры" → a couple inspecting a bright empty Russian apartment with balcony windows, afternoon sunlight, wide interior shot
+  * "Границы участка на карте" → aerial top-down view of Russian suburban land plots with fenced boundaries and dirt roads dividing parcels, green summer fields
 
 Examples of EXCELLENT prompts (object/architecture/aerial, NO people):
 - "Aerial top-down view of Russian suburban land plots with fenced boundaries and dirt roads dividing parcels, green summer fields, ${QUALITY}"
 - "Aerial drone view of Moscow residential district at sunset, rows of modern panel-frame apartment buildings, golden hour long shadows, ${QUALITY}"
-- "Top-down flat-lay of a single wooden house model and a small green plant on a neutral desk, soft daylight, ${QUALITY}"
+- "A cadastral engineer in plain blue workwear kneels beside a wooden boundary marker on a Russian village plot, tape measure in hands, surveyor tripod behind, summer morning light, ${QUALITY}"
 
 Return ONLY a valid JSON array of ${targetCount} strings: ["prompt1", ...]. No prose, no markdown.`,
         },
@@ -470,6 +641,86 @@ Return ONLY a valid JSON array of ${targetCount} strings: ["prompt1", ...]. No p
     return padded.slice(0, targetCount);
   }
   return fallback.slice(0, targetCount);
+}
+
+// 🚨 18.08.2026: модель подмешивала англоязычные разделы в русские статьи —
+// за 08–17.08 так пострадали 32 публикации (📌 PROPERTY RIGHTS TO LAND и т.п.).
+// Сайт делается под русскоязычную аудиторию, поэтому такие блоки вырезаем.
+// Порог: блок целиком считается английским при >=6 словах и >=60% латиницы,
+// чтобы русский абзац с терминами (ЕГРН, URL, MFC) не пострадал.
+export function stripEnglishBlocks(html: string): { html: string; removed: number } {
+  let removed = 0;
+  const out = html.replace(
+    /<(p|h2|h3|h4|li|blockquote)\b[^>]*>([\s\S]*?)<\/\1>/gi,
+    (full: string, _tag: string, inner: string) => {
+      const text = inner.replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/gi, ' ');
+      const words = text.match(/[\p{L}][\p{L}\-']*/gu) || [];
+      if (words.length < 6) return full;
+      const latin = words.filter(w => /^[A-Za-z][A-Za-z\-']*$/.test(w)).length;
+      if (latin / words.length < 0.6) return full;
+      removed++;
+      return '';
+    },
+  );
+  return { html: out, removed };
+}
+
+// Доля латинских слов во всём тексте — для QA-отчёта.
+export function latinShare(html: string): number {
+  const text = html.replace(/<[^>]+>/g, ' ');
+  const words = text.match(/[\p{L}][\p{L}\-']*/gu) || [];
+  if (words.length < 50) return 0;
+  const latin = words.filter(w => /^[A-Za-z][A-Za-z\-']*$/.test(w)).length;
+  return latin / words.length;
+}
+
+// URL, вышедшие из батча с недобором до цели по конкурентам. Такие статьи
+// НЕ вычёркиваются из needs-improve.txt — их добивают в следующий заход.
+export const underTargetUrls = new Set<string>();
+
+// 🚨 19.08.2026: в промпт лился ПОЛНЫЙ текст каждого конкурента, и на темах с
+// десятью спарсенными страницами батч падал с 400 «Please reduce the length of the
+// messages or completion». Режем каждого и держим суммарный потолок: для анализа
+// структуры и объёма выдачи полный текст не нужен.
+const COMPETITOR_FRAGMENT_CHARS = 2500;
+const COMPETITOR_CONTEXT_BUDGET = 24000;
+
+function buildCompetitorContext(
+  competitors: Array<{ domain: string; wordCount?: number; title?: string; headings?: string; content?: string }>,
+  opts: { structureLabel?: string; textLabel?: string; empty?: string } = {},
+): string {
+  const structureLabel = opts.structureLabel ?? 'Структура';
+  const textLabel = opts.textLabel ?? 'Текст (фрагмент)';
+  if (!competitors.length) return opts.empty ?? '(конкуренты недоступны)';
+
+  const blocks: string[] = [];
+  let used = 0;
+  for (const [i, c] of competitors.entries()) {
+    const fragment = String(c.content ?? '').slice(0, COMPETITOR_FRAGMENT_CHARS);
+    const block = `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
+  Заголовок: ${c.title}
+  ${structureLabel}: ${c.headings || '—'}
+  ${textLabel}: ${fragment}`;
+    if (used + block.length > COMPETITOR_CONTEXT_BUDGET) {
+      blocks.push(`(ещё ${competitors.length - i} конкурентов опущены — не влезают в контекст)`);
+      break;
+    }
+    blocks.push(block);
+    used += block.length;
+  }
+  return blocks.join('\n\n');
+}
+
+// 🚨 19.08.2026: один конкурент спарсился целиком (меню + подвал) и дал 88 450 слов,
+// из-за чего цель стала 114 986 — Enhance десять проходов гнался за недостижимым.
+// Статей длиннее 15 000 слов не бывает, всё выше — битый парсинг, отсекаем.
+const COMPETITOR_WORDS_SANE_MAX = 15000;
+
+function saneCompetitorWords(competitors: Array<{ wordCount?: number }>): number[] {
+  const words = competitors
+    .map(c => Number(c.wordCount) || 0)
+    .filter(w => w > 0 && w <= COMPETITOR_WORDS_SANE_MAX);
+  return words;
 }
 
 // ── Article quality check: log pass/fail per criterion ───────────────────────
@@ -506,8 +757,10 @@ function checkArticleQuality(
 
   const issues: string[] = [];
   if (wordCount < targetWords) issues.push(`слов: ${wordCount}/${targetWords}`);
+  const latinPct = latinShare(html);
+  if (latinPct > 0.12) issues.push(`латиница: ${Math.round(latinPct * 100)}%`);
   if (faqCount < targetFaq)    issues.push(`FAQ: ${faqCount}/${targetFaq}`);
-  if (h2Count < 7)             issues.push(`H2: ${h2Count} (нужно 7+)`);
+  if (h2Count < 10)            issues.push(`H2: ${h2Count} (нужно 10+)`);
   if (!hasTable)               issues.push('нет таблицы');
   // External <a> links are NO LONGER required — authority sources are mentioned
   // as plain text (no PageRank leak). Auth mentions tracked via authLinksCount soft check.
@@ -559,7 +812,7 @@ async function ensureFeaturedSnippet(
   console.log(`[FeaturedSnippet] ${keyword}: first <p> has ${wordCount} words — rewriting for Block 0`);
   try {
     const resp = await invokeLLM({
-      model,
+      model: 'gemini-flash-agent',
       messages: [
         {
           role: 'system',
@@ -609,7 +862,7 @@ async function applyCriticalReview(
   let critique: string[] = [];
   try {
     const critiqueResp = await invokeLLM({
-      model,
+      model: 'gemini-pro-agent',
       messages: [
         {
           role: 'system',
@@ -639,7 +892,7 @@ async function applyCriticalReview(
   // Step 2: polish rewrite applying the critique
   try {
     const polishResp = await invokeLLM({
-      model,
+      model: 'gemini-pro-agent',
       messages: [
         {
           role: 'system',
@@ -676,7 +929,9 @@ async function enhanceIfNeeded(
   targetWords = 3500,
   targetFaq = 10,
 ): Promise<string> {
-  const MAX_PASSES = 6;
+  // Проходов доводки. Было 6: при цели 5751 слово (максимум из десяти конкурентов
+  // × 1.15) статья успевала дорасти лишь до ~4200 и обрывалась на 73% пути.
+  const MAX_PASSES = getEnhancePassLimit(process.env.ENHANCE_MAX_PASSES);
 
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const wordCount = countWords(html);
@@ -705,8 +960,8 @@ async function enhanceIfNeeded(
     if (!hasTable) {
       tasks.push(`Добавь таблицу <table> сравнения способов получения документа: колонки — Способ/Срок/Стоимость/Удобство. Цены — только через [BLOCK_PRICE].`);
     }
-    if (h2Count < 7) {
-      tasks.push(`Добавь ${7 - h2Count} новых H2-раздела по теме "${keyword}" которых ещё нет в статье (минимум 300 слов каждый).`);
+    if (h2Count < 10) {
+      tasks.push(`Добавь ${10 - h2Count} новых H2-раздела по теме "${keyword}" которых ещё нет в статье (минимум 300 слов каждый).`);
     }
     if (extLinksCount < 2) {
       const needed = 2 - extLinksCount;
@@ -751,6 +1006,71 @@ async function enhanceIfNeeded(
   }
 
   return html;
+}
+
+/**
+ * Догоняющий проход: адрес страницы обещал уточнение, а текст его не раскрыл.
+ *
+ * Ключ статьи берётся из заголовка, поэтому уточнение, живущее только в адресе
+ * («…-na-garazh-v-gsk», «…-cherez-gosuslugi»), раньше терялось целиком — в
+ * тексте таких страниц слов «ГСК» и «Госуслуги» не было ни разу. Основной
+ * промпт теперь про уточнение знает; этот проход — страховка на случай, когда
+ * модель его всё равно проигнорировала.
+ */
+async function coverSlugPromises(
+  html: string,
+  url: string,
+  keyword: string,
+  promises: string[],
+): Promise<string> {
+  if (promises.length === 0) return html;
+
+  const uncovered = findUncoveredPromises(html, promises);
+  if (uncovered.length === 0) return html;
+
+  console.log(`[SlugPromise] ${keyword}: адрес обещает "${uncovered.join(', ')}", в тексте не раскрыто — добираю`);
+
+  const enhanceModel = process.env.LLM_ENHANCE_MODEL ?? 'llama-3.1-8b-instant';
+  const response = await invokeLLM({
+    model: enhanceModel,
+    messages: [
+      { role: 'system', content: `Ты SEO-копирайтер. Генерируешь ДОПОЛНИТЕЛЬНЫЙ HTML для статьи о "${keyword}".
+СТРОГИЕ ПРАВИЛА:
+- Заказ документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. Цены — через [BLOCK_PRICE]
+- НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа у нас (о них можно писать как о внешних процедурах)
+- НЕ дублируй уже написанное, используй только H2/H3
+- Возвращай ТОЛЬКО новые HTML-блоки, без <html>/<body>` },
+      { role: 'user', content: `Адрес страницы: ${url}
+Статья должна раскрывать уточнения из адреса, но не раскрывает: ${uncovered.join(', ')}
+Это транслит с русского — расшифруй сам (например «gsk» = ГСК, гаражно-строительный кооператив; «gosuslugi» = портал Госуслуг; «novostrojke» = квартира в новостройке; «yuridicheskomu» = юридическому лицу).
+
+Начало статьи (не повторяй):
+${html.slice(0, 1500)}...
+
+Напиши под каждое уточнение отдельный H2-раздел минимум 300 слов: чем этот случай отличается, какие документы и сроки, типичные сложности. Термин из уточнения должен встречаться в тексте раздела несколько раз.` },
+    ],
+    maxTokens: 4000,
+  }).catch(() => null);
+
+  const raw = response?.choices[0]?.message.content;
+  const addition = typeof raw === 'string'
+    ? raw.trim().replace(/^```html?\s*/i, '').replace(/\s*```$/i, '').trim()
+    : '';
+  if (!addition || countWords(addition) < 50) {
+    console.warn(`[SlugPromise] ${keyword}: добрать не удалось, уточнения остались нераскрытыми: ${uncovered.join(', ')}`);
+    return html;
+  }
+
+  const conclusionMatch = html.match(/(<h2[^>]*>[^<]*(?:[Вв]ывод|[Зз]аключ)[^<]*<\/h2>)/);
+  const merged = conclusionMatch
+    ? html.replace(conclusionMatch[0], addition + '\n' + conclusionMatch[0])
+    : html + '\n' + addition;
+
+  const stillUncovered = findUncoveredPromises(merged, uncovered);
+  if (stillUncovered.length > 0) {
+    console.warn(`[SlugPromise] ${keyword}: после добора всё ещё не раскрыто: ${stillUncovered.join(', ')}`);
+  }
+  return merged;
 }
 
 // ── Extract headings from generated HTML ─────────────────────────────────────
@@ -838,6 +1158,12 @@ function convertMarkdownLeaks(html: string): string {
   return html;
 }
 
+// Legacy prompts overused decorative emoji. They add visual noise without
+// adding evidence or search value, so remove them before publication.
+function stripSeoEmojiNoise(html: string): string {
+  return html.replace(/[💡⚠️✅📌★📊💰⏱️🔍📋📄🏠🏦🛡📱⭐]/gu, '');
+}
+
 // ── Generate FAQPage + Article JSON-LD schema markup ─────────────────────────
 function generateSchemaMarkup(keyword: string, title: string, url: string, html: string): string {
   const faqItems: { question: string; answer: string }[] = [];
@@ -914,8 +1240,8 @@ function generateSchemaMarkup(keyword: string, title: string, url: string, html:
   //
   // To re-enable: wire a real review source (WP comments, WooCommerce reviews, or
   // a reviews plugin) and compute ratingValue/reviewCount from actual data.
-  // Reviews are never generated by the LLM. A visible review block is allowed
-  // only when backed by real WordPress/customer data.
+  // The visual "⭐ Отзывы клиентов" H3 block stays in the prompt for UX/trust but
+  // no longer claims a schema.org rating.
 
   // Article schema is omitted here — the WP theme outputs a full Article JSON-LD
   // in <head> via kadmap_article_jsonld(). Duplicating it in body content causes
@@ -936,7 +1262,7 @@ function extractH2Texts(html: string): string[] {
 }
 
 // Extract each H2 heading together with the first ~180 words of its body
-// (up to the next <h2>). Used to give the image prompt engineer concrete per-section
+// (up to the next <h2>). Used to give FLUX prompt engineer concrete per-section
 // context instead of a generic article intro.
 function extractH2Sections(html: string): { heading: string; body: string }[] {
   const results: { heading: string; body: string }[] = [];
@@ -961,7 +1287,7 @@ function extractH2Sections(html: string): { heading: string; body: string }[] {
   return results;
 }
 
-// ── Vision-based validation for risky topics (cost/МФЦ/ключи) ───────────────
+// ── Vision-based post-FLUX validation for risky topics (cost/МФЦ/ключи) ─────
 // Rejects images with visible foreign currency, English signage, brand logos,
 // EU symbols. Called ONLY for keyword-risky articles to keep cost +$0.006/статья.
 function isImageRiskyTopic(keyword: string, title: string): boolean {
@@ -971,7 +1297,6 @@ function isImageRiskyTopic(keyword: string, title: string): boolean {
   return /(стоимост|цена|тариф|плат|оплат|деньг|рубл|купить|заказать|мфц|госуслуг|госцентр|ключ|паспорт)/i.test(s);
 }
 
-// Декодирует изображение (file:// | data: | http) в массив байт для CF Workers AI.
 async function imageToBytes(imageUrl: string): Promise<number[] | null> {
   try {
     if (imageUrl.startsWith('data:')) {
@@ -1021,7 +1346,7 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
   try {
     const bytes = await imageToBytes(imageUrl);
     if (!bytes) return { ok: true, issues: [] };
-    const prompt = `You are a STRICT image QA validator for a modern Russian cadastral blog. Inspect the whole image for foreign currency, any text or logos, EU symbols, western-looking styling, ornate law-firm styling, deformed hands, and warped objects. Topic: "${topic}". Respond with STRICT JSON ONLY: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}.`;
+    const prompt = `You are a STRICT image QA validator for a modern Russian cadastral blog (2020s аудитория — обычные россияне, не юристы в США). Imagery must look recognizably modern Russian middle-class: IKEA-style furniture, panel-frame apartments, простые кабинеты — NOT a Western lawyer firm, English gentleman club, American courthouse, or ornate European 19th-century interior.\nTopic: "${topic}". Inspect the attached image and flag:\n1. foreignMoney — any non-Russian banknotes/currency visible\n2. englishText — ANY text/letters/words/numbers anywhere, including garbled or blurry pseudo-text and faint floating watermark-like lettering in the sky/distance/on walls (FLUX often hallucinates broken text — flag it). Tiny clean logos ok.\n3. brandLogos — Visa/Mastercard/Yale/manufacturer marks on objects\n4. euSymbols — EU flag, UE emblem, Euro symbol\n5. westernLook — overtly Instagram/Pinterest/American suburban aesthetic\n6. ornateLawFirm — ornate wooden-panelled office, gothic windows, Lady Justice statue, green banker lamp, massive oak desk, classical courthouse — anything screaming American/British law firm\n7. deformedHands — extra/missing/fused fingers, >5 fingers, impossible finger/wrist anatomy. FLUX frequently fails at hands — be strict.\n8. deformedObjects — warped/melted geometry, objects fused together, broken perspective, distorted electronics/furniture (laptop/phone/keyboard/monitor melting or merging into the desk). The most common FLUX failure — be strict.\nRespond with STRICT JSON ONLY — no preamble, no description, no markdown, just this exact object: {"foreignMoney":bool,"englishText":bool,"brandLogos":bool,"euSymbols":bool,"westernLook":bool,"ornateLawFirm":bool,"deformedHands":bool,"deformedObjects":bool}.`;
     // llama-3.2-vision изредка отдаёт ложный safety-отказ вместо JSON — ретраим один раз,
     // иначе такой ответ молча пропустит картинку без проверки (fail-open).
     let text = '';
@@ -1060,20 +1385,21 @@ async function validateFluxImage(imageUrl: string, topic: string): Promise<{ ok:
   }
 }
 
+
 // ── Best-of-N image generation with vision QA gate ──────────────────────────
-// Validate the generated frame and regenerate on distortion. Fail-open: returns
-// the last attempt even if not clean, so publishing never blocks.
+// FLUX стабильно выдаёт брак (кривые руки/объекты, псевдотекст), а негативные
+// промпты игнорирует. Генерим → проверяем vision-QA → перегенерим при браке.
+// Fail-open: без CF-ключей или при отказе QA публикация не блокируется.
 async function generateValidatedImage(prompt: string, topic: string, attempts = 2): Promise<string> {
   let lastUrl = '';
   for (let i = 0; i < attempts; i++) {
     const url = await generateImageWithFallback(prompt);
     lastUrl = url;
-    // validateFluxImage сам декодирует file:// | data: | http в байты для CF vision.
     const v = await validateFluxImage(url, topic);
     if (v.ok) return url;
     console.warn(`[ImgQA] attempt ${i + 1}/${attempts} rejected: ${v.issues.join(', ')} — regenerating`);
   }
-  return lastUrl; // all attempts flagged — fail-open with the last one
+  return lastUrl;
 }
 
 // ── Replace hardcoded price tables with [BLOCK_PRICE] shortcode ───────────────
@@ -1179,7 +1505,7 @@ async function filterRelevantMedia(
 }
 
 // ── Inject images after specific H2s with unique alts and correct dimensions ──
-// Square 1024x1024; width/height critical to avoid CLS > 0.7.
+// DALL-E 3 = 1792x1024; width/height critical to avoid CLS > 0.7.
 function injectImagesAfterH2s(
   html: string,
   media: { id: number; url: string; width?: number; height?: number }[],
@@ -1211,11 +1537,18 @@ function injectImagesAfterH2s(
   let indexes: number[];
   if (targetH2Indexes) {
     indexes = targetH2Indexes;
-  } else {
+  } else if (totalH2s >= 2) {
     const n = Math.min(mediaToUse.length, totalH2s - 1);
-    if (n <= 0) return html;
     const step = Math.max(1, Math.floor((totalH2s - 1) / n));
     indexes = Array.from({ length: n }, (_, i) => 2 + i * step);
+  } else if (totalH2s === 1) {
+    // 🚨 02.09.2026: короткие статьи с одним H2 никогда не получали картинок —
+    // формула для totalH2s>=2 пропускает «интро»-заголовок и при totalH2s=1
+    // даёт totalH2s-1=0 слотов, т.е. return html без единой вставки, хотя
+    // картинки уже сгенерированы и оплачены квотой Flow. Ставим после него.
+    indexes = [1];
+  } else {
+    indexes = [];
   }
 
   // SEO alt text helper: combines keyword + section + article context for image-search ranking.
@@ -1237,18 +1570,40 @@ function injectImagesAfterH2s(
       .slice(0, 120);  // Google/Yandex best-practice: alt ≤ 125 chars
   };
 
+  const renderFigure = (m: { url: string; width?: number; height?: number }, alt: string, pos: number): string => {
+    const w = m.width ?? 1024;
+    const h = m.height ?? 1024; // квадрат — стандарт сайта
+    const loadAttr = pos === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
+    // figcaption improves accessibility + gives Yandex/Google additional signal
+    return `<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" title="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;" ${loadAttr}><figcaption style="font-size:0.85em;color:#777;margin-top:0.4em;font-style:italic;">${alt}</figcaption></figure>`;
+  };
+
+  if (totalH2s === 0) {
+    // 🚨 02.09.2026: статьи вообще без H2 (короткие product-страницы) не имели
+    // ни одного якоря для вставки — картинки терялись целиком. Раскладываем
+    // по абзацам вместо секций, с тем же шагом, что и H2-ветка.
+    const n = mediaToUse.length;
+    const step = Math.max(2, Math.floor(20 / n) || 2);
+    const pIndexes = Array.from({ length: n }, (_, i) => 2 + i * step);
+    let pcount = 0;
+    return html.replace(/<\/p>/gi, () => {
+      pcount++;
+      const pos = pIndexes.indexOf(pcount);
+      if (pos !== -1 && mediaToUse[pos]) {
+        const alt = buildAlt(seoContext?.articleTitle ?? '', pos);
+        return `</p>\n${renderFigure(mediaToUse[pos], alt, pos)}`;
+      }
+      return '</p>';
+    });
+  }
+
   let h2count = 0;
   return html.replace(/<\/h2>/gi, () => {
     h2count++;
     const pos = indexes.indexOf(h2count);
     if (pos !== -1 && mediaToUse[pos]) {
-      const m = mediaToUse[pos];
       const alt = buildAlt(h2Texts[h2count - 1] || '', pos);
-      const w = m.width ?? 1024;
-      const h = m.height ?? 1024;
-      const loadAttr = pos === 0 ? 'loading="eager" fetchpriority="high"' : 'loading="lazy"';
-      // figcaption improves accessibility + gives Yandex/Google additional signal
-      return `</h2>\n<figure style="margin:1.5em 0;text-align:center;"><img src="${m.url}" alt="${alt}" title="${alt}" width="${w}" height="${h}" style="max-width:100%;height:auto;border-radius:8px;aspect-ratio:${w}/${h};" ${loadAttr}><figcaption style="font-size:0.85em;color:#777;margin-top:0.4em;font-style:italic;">${alt}</figcaption></figure>`;
+      return `</h2>\n${renderFigure(mediaToUse[pos], alt, pos)}`;
     }
     return '</h2>';
   });
@@ -1306,7 +1661,7 @@ export async function searchPexelsImages(
   _limit = 6
 ): Promise<{ id: number; url: string; width: number; height: number; alt: string; title: string }[]> {
   // Disabled: Pexels returns irrelevant foreign stock photos for Russian real estate queries.
-  // Images are generated by the Flow/Gemini bridge for topic-specific accuracy.
+  // All images are now generated by FLUX (Fireworks AI) for topic-specific accuracy.
   return [];
 }
 
@@ -1434,23 +1789,40 @@ function ensureAuthorityLinks(html: string, keyword: string): string {
 const sitePostsCache = new Map<string, { posts: { url: string; title: string }[]; expiresAt: number }>();
 
 async function getAllSitePosts(ourDomain: string): Promise<{ url: string; title: string }[]> {
-  const cached = sitePostsCache.get(ourDomain);
+  // 🚨 12.08.2026: evergreen-планировщик отдаёт статьи по origin-адресу
+  // (http://167.86.116.15:8082/kadastr/...), поэтому сюда приходил ourDomain = "167.86.116.15".
+  // Запрос уходил на https://167.86.116.15/wp-json/... — TLS там нет, `fetch failed`,
+  // перелинковка молча пустая: три статьи 12.08 вышли без внутренних ссылок, а
+  // ReverseLinks — без доноров. Нормализуем в публичный домен (там же PUBLIC_SITE_URL).
+  const host = (() => {
+    try { return new URL(publicSiteBase(`https://${ourDomain}`)).hostname.replace(/^www\./, ''); }
+    catch { return ourDomain; }
+  })();
+  const cached = sitePostsCache.get(host);
   if (cached && Date.now() < cached.expiresAt) return cached.posts;
 
+  const axiosInst = (await import('axios')).default;
   const posts: { url: string; title: string }[] = [];
   try {
     for (let page = 1; page <= 25; page++) { // cap 2500 постов
       const qs = new URLSearchParams({ per_page: '100', page: String(page), _fields: 'id,title,link', status: 'publish' });
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
       let batch: any[] = [];
-      try {
-        const resp = await fetch(`https://${ourDomain}/wp-json/wp/v2/posts?${qs}`, { signal: controller.signal });
-        if (!resp.ok) break;
-        const data = await resp.json();
-        batch = Array.isArray(data) ? data : [];
-      } finally {
-        clearTimeout(timer);
+      {
+        // 🚨 Список постов для перелинковки тянулся по публичному домену и обрывался
+        // транзитом (`This operation was aborted`) — перелинковка молча оставалась пустой.
+        // Идём на origin тем же путём, что и парсер статей.
+        // Слэш перед query обязателен (без него origin отвечает 301), Host — тоже:
+        // без Host nginx уходит в дефолтный vhost и точно так же отдаёт 301, а голый
+        // fetch() заголовок Host выставить не может — отсюда axios.
+        const target = toOriginFetch(`https://${host}/wp-json/wp/v2/posts/?${qs}`);
+        const resp = await axiosInst.get(target.url, {
+          headers: target.host ? { Host: target.host } : undefined,
+          timeout: 30000,
+          proxy: false,
+          maxRedirects: 3,
+          validateStatus: (s: number) => s === 200,
+        });
+        batch = Array.isArray(resp.data) ? resp.data : [];
       }
       if (!batch.length) break;
       for (const p of batch) {
@@ -1460,11 +1832,15 @@ async function getAllSitePosts(ourDomain: string): Promise<{ url: string; title:
       if (batch.length < 100) break;
     }
   } catch (e: any) {
-    console.warn(`[InternalLinks] WP API fetch failed for ${ourDomain}: ${e?.message}`);
+    console.warn(`[InternalLinks] WP API fetch failed for ${host}: ${e?.message}`);
   }
 
-  console.log(`[InternalLinks] cached ${posts.length} posts for ${ourDomain}`);
-  sitePostsCache.set(ourDomain, { posts, expiresAt: Date.now() + 12 * 60 * 60 * 1000 }); // 12h: одно перечисление на ночной прогон вместо шести
+  console.log(`[InternalLinks] cached ${posts.length} posts for ${host}`);
+  // 2026-07-23: пустой результат (WP REST timeout под нагрузкой батча) НЕ кешируем на 12h —
+  // иначе один сбой в 04:00 обнуляет ReverseLinks на весь день. Кешируем только успех.
+  if (posts.length > 0) {
+    sitePostsCache.set(host, { posts, expiresAt: Date.now() + 12 * 60 * 60 * 1000 });
+  }
   return posts;
 }
 
@@ -1550,20 +1926,14 @@ async function analyzeAndSaveArticle(userId: number, url: string): Promise<void>
   const competitors = await fetchCompetitorArticles(mergedResults, ourDomain);
 
   // Step 3: build competitor context for prompts
-  const avgCompetitorWords = competitors.length > 0
-    ? Math.round(competitors.reduce((s, c) => s + (c.wordCount || 0), 0) / competitors.length)
+  const saneWords1 = saneCompetitorWords(competitors);
+  const avgCompetitorWords = saneWords1.length
+    ? Math.round(saneWords1.reduce((s, w) => s + w, 0) / saneWords1.length)
     : 1200;
-  const maxCompetitorWords = competitors.length > 0
-    ? Math.max(...competitors.map(c => c.wordCount || 0))
-    : 1200;
+  const maxCompetitorWords = saneWords1.length ? Math.max(...saneWords1) : 1200;
   const targetWords = Math.max(3200, Math.round(maxCompetitorWords * 1.3));
 
-  const competitorContext = competitors.length > 0
-    ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
-  Заголовок: ${c.title}
-  Структура: ${c.headings || '—'}
-  Текст (фрагмент): ${c.content}`).join('\n\n')
-    : '(конкуренты недоступны)';
+  const competitorContext = buildCompetitorContext(competitors);
 
   const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
 
@@ -1629,7 +1999,7 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
 2. Структура HTML: один H1, 6-10 подзаголовков H2, H3 где уместно, списки <ul>/<ol>, таблицы <table> где есть данные для сравнения
 3. Начало: прямой ответ на запрос "${serpKeyword}" в первых 2-3 предложениях (featured snippet). КАЖДЫЙ H2-раздел тоже начинай с 1-2 предложений прямого ответа на под-вопрос раздела (для блока «Люди также спрашивают», Яндекс Нейро и Google AI Overview — короткие цитируемые пассажи)
 4. Охват тем: включи ВСЕ темы конкурентов которых нет у нас
-5. FAQ-раздел: H2 "Часто задаваемые вопросы" с 6-10 вопросами, которые реально следуют из текста. Не добавляй шаблонные или неподтверждённые ответы.
+5. FAQ-раздел: H2 "Часто задаваемые вопросы" с минимум 10 вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов (важно для блока "Люди также спрашивают" в Яндексе)
 6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно. ${getShortcodesHint(serpKeyword)}
 7. Пошаговые инструкции: нумерованные списки для процессов
 8. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на сайт», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — такой навигации у нас нет. ✅ Пиши: «перейдите по ссылке на /spravki/», «воспользуйтесь формой на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
@@ -1640,12 +2010,18 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
 13. ТЕМАТИЧЕСКАЯ ПОЛНОТА (топикал-авторитет Яндекса): естественно упомяни связанные сущности — ЕГРН, Росреестр, ФЗ-218 «О госрегистрации недвижимости», кадастровый инженер, кадастровая стоимость — где это уместно по смыслу.
 14. АКТУАЛЬНОСТЬ: где уместно укажи, что порядок/данные действуют в 2026 году (свежесть — сигнал ранжирования).
 15. БЕЗ ВОДЫ: каждое предложение несёт факт или пользу. Запрещены пустые вводные «стоит отметить», «в современном мире», «как известно», «в данной статье». Плотность пользы как у текста-ответа, а не SEO-простыни.
+16. ЭМОДЗИ В ТЕКСТЕ: активно используй эмодзи внутри параграфов и списков — минимум 20-30 на всю статью: 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, 📊 💰 ⏱️ по контексту. Ставь эмодзи в начале предложения или перед ключевым словом, НЕ в каждом предложении подряд. В каждом H2-разделе — 2-3 эмодзи в тексте.
 
 Верни ТОЛЬКО готовый HTML-текст статьи используя теги: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <tr>, <td>, <th>, <strong>, <em>. Без <html>/<body>/<head> тегов.`;
 
   const [seoResponse, improvedResponse] = await Promise.all([
-    invokeLLM({ messages: [{ role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON.' }, { role: 'user', content: seoPrompt }] }),
-    invokeLLM({ messages: [{ role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь длинные подробные статьи 3500+ слов для топа поиска. Никогда не сокращай разделы — каждый H2 минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE], не вставляй конкретные цифры цен в рублях.' }, { role: 'user', content: improvePrompt }], maxTokens: 8192 }),
+    invokeLLM({
+      model: 'gemini-flash-agent',
+      messages: [{ role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON.' }, { role: 'user', content: seoPrompt }],
+      maxTokens: 1200,
+      responseFormat: { type: 'json_object' },
+    }),
+    invokeLLM({ messages: [{ role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь ТОЛЬКО на русском языке для русскоязычной аудитории — английские абзацы, заголовки и разделы СТРОГО ЗАПРЕЩЕНЫ (латиница допустима лишь в аббревиатурах, названиях законов и доменах). Пишешь длинные подробные статьи 3500+ слов для топа поиска. Никогда не сокращай разделы — каждый H2 минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE], не вставляй конкретные цифры цен в рублях.' }, { role: 'user', content: improvePrompt }], maxTokens: 8192 }),
   ]);
 
   let seo: SeoAnalysis;
@@ -1669,7 +2045,7 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
 
   improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword, targetWords, 10);
   improvedContent = filterGarbageH2(improvedContent, serpKeyword);
-  improvedContent = stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent)));
+  improvedContent = stripSeoEmojiNoise(stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent))));
   improvedContent = beautifyArticleHtml(improvedContent);
 
   // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
@@ -1678,6 +2054,9 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
   // QA log
   checkArticleQuality(improvedContent, url, targetWords, 10);
 
+  // Deterministic semantic gate: structural counters alone cannot catch
+  // unrelated FAQ answers or invented service promises. Keep unsafe output in
+  // history for review, but never trigger reindexing.
   const seoGate = validateSeoArticle(improvedContent, serpKeyword, seo.metaTitle || parsed.title, 10);
   if (!seoGate.ok) {
     console.warn(`[SEO-GATE] BLOCK ${url}: ${seoGate.issues.map((i) => i.message).join('; ')}`);
@@ -1754,10 +2133,63 @@ async function runBatchJob(userId: number, urls: string[]): Promise<void> {
   setTimeout(() => { if (!batchJobs.get(userId)?.running) batchJobs.delete(userId); }, 30 * 60 * 1000);
 }
 
+/**
+ * Прочитать собственную страницу, которая ещё не опубликована.
+ *
+ * 🚨 Новая evergreen-тема лежит черновиком, пока конвейер её наполняет, поэтому
+ * публичного HTML нет и parseArticleFromUrl отдаёт 404. Для такой страницы
+ * парсить всё равно нечего — нужен только заголовок, а он есть в WP REST.
+ */
+async function parseOwnDraft(userId: number, url: string) {
+  const account = (await wordpressDb.getUserWordpressAccounts(userId))[0];
+  if (!account) return null;
+  const slug = (() => { try { return new URL(url).pathname.replace(/\/$/, '').split('/').pop() || ''; } catch { return ''; } })();
+  if (!slug) return null;
+
+  const axiosInst = (await import('axios')).default;
+  const base = account.siteUrl.replace(/\/$/, '');
+  const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+  const resp = await axiosInst.get(`${base}/wp-json/wp/v2/posts/`, {
+    params: { slug, status: 'draft', context: 'edit', _fields: 'id,title,content', per_page: 1 },
+    headers: { Authorization: auth }, timeout: 20000, proxy: false,
+  }).catch(() => null);
+
+  const p = Array.isArray(resp?.data) ? resp!.data[0] : null;
+  if (!p) return null;
+
+  const title = String(p.title?.raw ?? p.title?.rendered ?? '').replace(/<[^>]+>/g, '').trim();
+  if (!title) return null;
+  const contentHtml = String(p.content?.raw ?? p.content?.rendered ?? '');
+  const text = contentHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+  return {
+    url, title, content: text, contentHtml, metaDescription: '',
+    headings: [] as { level: string; text: string }[],
+    wordCount: text ? text.split(/\s+/).length : 0,
+  };
+}
+
 async function rewriteArticle(userId: number, url: string): Promise<void> {
-  const parsed = await parseArticleFromUrl(url);
+  let parsed;
+  try {
+    parsed = await parseArticleFromUrl(url);
+  } catch (e: any) {
+    // Публичной версии нет — возможно, это наш собственный неопубликованный черновик.
+    parsed = await parseOwnDraft(userId, url);
+    if (!parsed) throw e;
+    console.log(`[Draft] публичной страницы нет, наполняю черновик: ${url}`);
+  }
   const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const keyword = extractKeywordFromTitle(parsed.title);
+
+  // Уточнения, которые есть в адресе, но не в заголовке: ключ берётся из
+  // заголовка, поэтому без этого они теряются — статья выходит «вообще про
+  // тему», хотя пользователь пришёл за конкретным случаем.
+  const slugPromises = extractSlugPromises(url, parsed.title);
+  const slugPromiseBlock = buildSlugPromiseBlock(url, slugPromises);
+  if (slugPromises.length > 0) {
+    console.log(`[SlugPromise] ${url} обещает сверх заголовка: ${slugPromises.join(', ')}`);
+  }
 
   // Google + Яндекс параллельно (пропускаем если SKIP_SERP=1 — экономим API-кредиты)
   const skipSerp = process.env.SKIP_SERP === '1';
@@ -1779,22 +2211,35 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   // Анализируем ровно топ-3 конкурентов (fetchCompetitorArticles возьмёт 6 кандидатов
   // как запас на случай блокировки парсинга у cian/domclick/rosreestr).
   // 2026-04-20: 5 → 3, чтобы копировать стандарт ТОП-3, а не размывать средним по top-5.
-  const competitors = await fetchCompetitorArticles(mergedSerp, ourDomain, 3);
+  const competitors = await fetchCompetitorArticles(mergedSerp, ourDomain, MAX_COMPETITORS);
   // Лог сколько конкурентов реально спарсилось — сигнал качества анализа.
   // Если 0/3 часто — надо пересмотреть список блокирующих доменов или взять фоллбэк.
   const compStatus = competitors.length === 0 ? ' ⚠️ ZERO — SERP-snippet fallback' : (competitors.length < 3 ? ' ⚠️ partial' : ' ✅');
-  console.log(`[Competitors] "${keyword}": got ${competitors.length}/3 (from ${mergedSerp.length} SERP candidates)${compStatus}`);
-  const avgCompetitorWords = competitors.length
-    ? Math.round(competitors.reduce((s, c) => s + c.wordCount, 0) / competitors.length) : 1200;
-  const maxCompetitorWords = competitors.length
-    ? Math.max(...competitors.map(c => c.wordCount)) : 1200;
+  console.log(`[Competitors] "${keyword}": got ${competitors.length}/${MAX_COMPETITORS} (from ${mergedSerp.length} SERP candidates)${compStatus}`);
+  const saneWords2 = saneCompetitorWords(competitors);
+  const avgCompetitorWords = saneWords2.length
+    ? Math.round(saneWords2.reduce((s, w) => s + w, 0) / saneWords2.length) : 1200;
+  const maxCompetitorWords = saneWords2.length ? Math.max(...saneWords2) : 1200;
   // Aggressive mode (set by loop-improve after 2+ non-top-3 attempts): push depth, not bulk.
   // 2026-04-20: уменьшены множители (было 1.6/1.3 + floor 4500/3500 → давало 2-2.6x от конкурентов)
   // Google/AI Overviews ранжируют по query satisfaction, не по объёму. Длиннее конкурентов —
   // максимум +25% в aggressive, +15% в обычном. Floor учитывает минимум для коммерч. статей.
   const aggressive = process.env.LOOP_AGGRESSIVE_MODE === '1';
   const wordMultiplier = aggressive ? 1.25 : 1.15;
-  const targetWords = Math.max(aggressive ? 3000 : 2400, Math.round(maxCompetitorWords * wordMultiplier));
+  // 🚨 02.08.2026: цель считалась только по конкурентам и не смотрела на нашу же страницу.
+  // Конкуренты часто не парсятся (cian/domclick отдают 401 — типичный расклад «got 1/3»),
+  // тогда работал floor 2400, который оказывался НИЖЕ текущего объёма, и «улучшение»
+  // укорачивало статью: на денежной spravka-iz-egrn-o-nedvizhimosti 4767 → 3078 слов.
+  // Ниже уже достигнутого не опускаемся — правило «не меньше конкурентов» бессмысленно,
+  // если при этом мы режем сами себя.
+  // Разовый пол объёма: статью, укороченную прошлой версией расчёта, иначе не нарастить —
+  // цель считается от текущего объёма, а он уже занижен. Ставится только вручную, через env.
+  const forcedFloor = Number(process.env.TARGET_WORDS_FLOOR) || 0;
+  const ourWords = Math.max(Number((parsed as any).wordCount) || 0, forcedFloor);
+  const targetWords = Math.max(aggressive ? 3000 : 2400, Math.round(maxCompetitorWords * wordMultiplier), ourWords);
+  if (ourWords > 0 && targetWords === ourWords) {
+    console.log(`[Words] цель = текущий объём ${ourWords} (конкуренты дали ${maxCompetitorWords}) — статью не укорачиваем`);
+  }
 
   // Competitor media/structure stats — used to set our target
   const avgCompetitorImages = competitors.length
@@ -1804,12 +2249,10 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
   const avgCompetitorFaq = competitors.length
     ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
   const competitorHasTables = competitors.some(c => c.hasTable);
-  // 2026-04-20 v2: не отстаём от конкурентов — floor 8, cap 16, target = maxCompetitor+1.
-  // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
-  // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
-  const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
-  // FAQ quantity is a completeness floor, not a ranking target.
-  const targetFaq = Math.max(6, Math.min(10, avgCompetitorFaq + 2));
+  // Five to eight original illustrations are enough to explain the material
+  // without inflating page weight, generation time or LCP.
+  const targetImages = Math.max(5, Math.min(8, avgCompetitorImages + 1));
+  const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
   // New deep-competitor stats (auth links, internal links, videos, alts)
   const avgAuthLinks = competitors.length
@@ -1844,8 +2287,12 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
     .join('\n');
 
   const competitorContext = competitors.length
-    ? competitors.map(c =>
-        `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов, ${c.imageCount} изобр., ${c.faqCount} FAQ, таблицы: ${c.hasTable ? 'есть' : 'нет'}) ---\nЗаголовки: ${c.headings}\nФрагмент:\n${c.content.slice(0, 3000)}`
+    ? competitors.map((c, idx) =>
+        `--- Конкурент ${c.position}: ${c.domain} (${c.wordCount} слов, ${c.imageCount} изобр., ${c.faqCount} FAQ, таблицы: ${c.hasTable ? 'есть' : 'нет'}) ---\nЗаголовки: ${c.headings}`
+        // Полный текст — только у первых трёх: десять фрагментов по 3000 символов
+        // раздувают промпт вчетверо и размывают фокус. Остальные нужны ради цифр
+        // (объём, картинки, FAQ) и структуры заголовков.
+        + (idx < 3 ? `\nФрагмент:\n${c.content.slice(0, 3000)}` : '')
       ).join('\n\n')
     : serpFallback
       ? `(полный текст конкурентов недоступен, используй сниппеты из SERP)\n${serpFallback}`
@@ -1864,7 +2311,7 @@ async function rewriteArticle(userId: number, url: string): Promise<void> {
 
   const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
 - Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
-- Изображений: макс. у конкурентов ${maxCompetitorImages}, наша цель ${targetImages}+ (равномерно по тексту, после каждого 2-го H2)
+- Изображений: макс. у конкурентов ${maxCompetitorImages}, наша цель ${targetImages}+ (равномерно по тексту, после большинства H2)
 - FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
 - Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО добавить' : 'добавить для сравнения способов'}
 - Авторитетные ссылки (E-E-A-T): у конкурентов макс. ${maxAuthLinks}, средн. ${avgAuthLinks} — наша цель ${targetAuthLinks}+ (rosreestr.gov.ru, consultant.ru, garant.ru, nalog.ru, pravo.gov.ru)
@@ -1925,39 +2372,44 @@ ${parsed.content.slice(0, 3000)}
 
 КОНКУРЕНТЫ ТОП-5 (лучший конкурент: ${maxCompetitorWords} слов, средний: ${avgCompetitorWords} слов):
 ${competitorContext}
-${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDomainsBlock}${competitorAltSamplesBlock}${intentBlock}${aggressiveBlock}
+${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDomainsBlock}${competitorAltSamplesBlock}${intentBlock}${aggressiveBlock}${slugPromiseBlock}
 ТРЕБОВАНИЯ:
 1. Объём: минимум ${targetWords} слов — это ${aggressive ? '25' : '15'}% больше лучшего конкурента (${maxCompetitorWords} слов). Пиши плотно, без воды — пользователь ищет ответ, а не километры текста. Каждый раздел завершён, но не разведён синонимами ради объёма.
-2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
+2. HTML: H1, H2 (10-16), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. FEATURED SNIPPET (ОБЯЗАТЕЛЬНО): сразу после H1 — абзац 40-60 слов с прямым ответом на "${keyword}". Без вступлений типа "В этой статье...". Формат: "**${keyword}** — это [определение]. [Ключевой факт]. [CTA-намёк]." Это попадает в блок 0 Яндекса и Гугла.
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с 6-${targetFaq} действительно полезными вопросами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details>. Не добавляй вопросы ради количества и не выдумывай условия сервиса.
+5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>. Минимум ${targetFaq} вопросов — это критично для Яндекс AI-ответов (FAQ-схема).
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
-7b. ДОПОЛНИТЕЛЬНЫЙ CTA: если тема связана с ПОКУПКОЙ/ПРОВЕРКОЙ квартиры, СДЕЛКОЙ, юридической чистотой, проверкой собственника/продавца, рисками при покупке — добавь РОВНО ОДНО уместное упоминание услуги проверки договора прямой ссылкой <a href="/proverka-dogovora/">/proverka-dogovora/</a> (юристы проверят договор купли-продажи перед сделкой). Это ВТОРИЧНЫЙ CTA; /spravki/ остаётся основным. Не вставляй, если тема не про сделку/покупку.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${keyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
-13. Доверие: не выдумывай отзывы, гарантии, способы оплаты, скидки или характеристики мобильного приложения. Добавляй такие сведения только если они подтверждены исходной статьёй или официальной страницей сервиса; иначе честно укажи, что условия нужно проверить перед заказом.
-14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2-раздела. Пиши достаточно подробно в каждом H2 — минимум 300 слов — чтобы картинка имела контекст.
-15. ЭМОДЗИ В ТЕКСТЕ: используй эмодзи умеренно, только если они улучшают навигацию; не добавляй их ради объёма:
+13. 🚨 02.09.2026: старые ОБЯЗАТЕЛЬНЫЕ H3-блоки (гарантия возврата, отчёт в
+    смартфоне, отзывы клиентов) удалены — это ровно те неподтверждённые
+    обещания сервиса, которые validateSeoArticle (seoQualityGate.ts,
+    unsupportedPromise) блокирует как unsupported_service_claim. Промпт и
+    гейт требовали друг от друга взаимоисключающего: 100% батчей падали
+    на публикации. Не добавляй подобных H3 с гарантиями/акциями/отзывами,
+    если они не подтверждены реальными данными о сервисе.
+14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после H2-разделов по всему тексту. Пиши достаточно подробно в каждом H2 — минимум 300 слов — чтобы картинка имела контекст.
+15. ЭМОДЗИ В ТЕКСТЕ: активно используй эмодзи внутри параграфов и списков — минимум 25-35 на всю статью:
     - 💡 — для советов и лайфхаков ("💡 Совет: ...")
     - ⚠️ — для предупреждений ("⚠️ Важно: ...")
     - ✅ — для преимуществ и успешных шагов
     - 📌 — для ключевых фактов
     - ★ — для выделения важных выводов
     - 📊 💰 ⏱️ 🔍 📋 📄 🏠 🏦 — по контексту раздела
-    Не дублируй эмодзи и не заполняй ими каждый раздел.
+    Эмодзи ставь в начале предложения или перед ключевым словом. В каждом H2-разделе должно быть 2-3 эмодзи в тексте.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
+    : `Ключ: "${keyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n${lsiBlock}${slugPromiseBlock}\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${keyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${keyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${keyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${keyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${keyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с атрибутом open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- ⛔ НЕ вставляй <img>, <figure> и любые ссылки на картинки: изображения подбирает и вставляет система после генерации. Выдуманные пути (/images/foo.jpg, image1.jpg) дают битые картинки на живой странице.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
 
   // SEO analysis: fast 8B (simple JSON task)
   // Article generation: best available model for TOP-3 quality
-  const mainModel = process.env.LLM_MAIN_MODEL ?? 'openai/gpt-oss-120b';
-  const seoModel  = process.env.LLM_SEO_MODEL  ?? 'openai/gpt-oss-120b';
+  const mainModel = process.env.CODE_ASSIST_ARTICLE_MODEL ?? 'gemini-auto-agent';
+  const seoModel  = process.env.CODE_ASSIST_SEO_MODEL ?? 'gemini-flash-agent';
 
   const [seoResponse, improvedResponse] = await Promise.all([
     invokeLLM({
@@ -1966,11 +2418,13 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
         { role: 'system', content: 'Ты SEO-эксперт по российскому рынку. Отвечай ТОЛЬКО валидным JSON без markdown. НЕ копируй шаблонные строки (типа "до 60 символов") — подставляй реальные значения.' },
         { role: 'user', content: `Напиши мета-данные для статьи. Верни ТОЛЬКО JSON (без пояснений, без markdown-блоков).\n\nСТАТЬЯ:\nЗаголовок: ${parsed.title}\nКлюч: ${keyword}\nОбъём: ${parsed.wordCount} слов\n\nПРАВИЛА:\n- metaTitle: РЕАЛЬНЫЙ заголовок с ключом "${keyword}" в начале, длина 45-60 символов. Без фраз "в N символов", "или меньше".\n- metaDescription: РЕАЛЬНОЕ описание с призывом к действию и ключом, длина 120-155 символов, заканчивается точкой. Без фраз "до N символов".\n- keywords: массив из 5-10 LSI-ключей.\n- score: число 50-95.\n\nФОРМАТ (подставь реальные значения вместо <...>):\n{"metaTitle":"<реальный title>","metaDescription":"<реальное описание>","keywords":["<ключ1>","<ключ2>"],"headingsSuggestions":[],"generalSuggestions":[],"score":<число>}` },
       ],
+      maxTokens: 1200,
+      responseFormat: { type: 'json_object' },
     }),
     invokeLLM({
       model: mainModel,
       messages: [
-        { role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь длинные подробные статьи 3500+ слов для топа поиска. Каждый H2-раздел минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE]. СТРОГО ЗАПРЕЩЕНО: markdown-синтаксис (НЕ ставить # ## ### для заголовков, НЕ **жирный**, НЕ _курсив_, НЕ - списки). Используй ТОЛЬКО HTML-теги: <h1>, <h2>, <h3>, <p>, <ul><li>, <ol><li>, <strong>, <em>, <table><tr><td>, <details class="faq-item"><summary>. Если отдашь markdown — статья будет выглядеть сломанной.' },
+        { role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь ТОЛЬКО на русском языке для русскоязычной аудитории — английские абзацы, заголовки и разделы СТРОГО ЗАПРЕЩЕНЫ (латиница допустима лишь в аббревиатурах, названиях законов и доменах). Пишешь длинные подробные статьи 3500+ слов для топа поиска. Каждый H2-раздел минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE]. СТРОГО ЗАПРЕЩЕНО: markdown-синтаксис (НЕ ставить # ## ### для заголовков, НЕ **жирный**, НЕ _курсив_, НЕ - списки). Используй ТОЛЬКО HTML-теги: <h1>, <h2>, <h3>, <p>, <ul><li>, <ol><li>, <strong>, <em>, <table><tr><td>, <details class="faq-item"><summary>. Если отдашь markdown — статья будет выглядеть сломанной.' },
         { role: 'user', content: improvePrompt },
       ],
       maxTokens: 8192,
@@ -1996,8 +2450,11 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
 
   // Post-generation quality check: fix missing content vs competitor targets
   improvedContent = await enhanceIfNeeded(improvedContent, keyword, targetWords, targetFaq);
+  // Уточнение из адреса должно быть отработано, иначе страница обещает одно, а даёт другое
+  improvedContent = await coverSlugPromises(improvedContent, url, keyword, slugPromises)
+    .catch((e: any) => { console.warn('[SlugPromise] проход пропущен:', e?.message ?? e); return improvedContent; });
   improvedContent = filterGarbageH2(improvedContent, keyword);
-  improvedContent = stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent)));
+  improvedContent = stripSeoEmojiNoise(stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent))));
 
   // LLM critical self-review → one polishing rewrite when substantive issues found.
   // Opt-out via LLM_CRITICAL_PASS=0. Enabled by default because it's high-leverage
@@ -2013,11 +2470,13 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
   // до публикации. Источник деиндекса — выдуманная статистика — устраняется здесь.
   // Opt-out: LLM_CRAG_PASS=0. Никогда не роняет пайплайн (всё в catch).
   if (process.env.LLM_CRAG_PASS !== '0') {
+    // fetchFreeGoogleSerp (searxng/ddg): ~8 уникальных запросов на статью — платные
+    // квоты CSE (100/день) и SerpAPI (250/мес) фактчек сжёг бы за одну-две ночи.
     improvedContent = await verifyAndCorrectClaims(
       improvedContent,
       keyword,
       seoModel,
-      (q: string) => cachedGoogleSerp(q),
+      (q: string) => fetchFreeGoogleSerp(q),
     ).then(r => r.html).catch((e) => {
       console.warn('[CRAG] pass skipped:', e?.message ?? e);
       return improvedContent;
@@ -2029,13 +2488,19 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
   // just that paragraph if out of range.
   improvedContent = await ensureFeaturedSnippet(improvedContent, keyword, mainModel);
 
+  const enStrip = stripEnglishBlocks(improvedContent);
+  if (enStrip.removed) console.log(`[Lang] вырезано англоязычных блоков: ${enStrip.removed}`);
+  improvedContent = enStrip.html;
+
   improvedContent = beautifyArticleHtml(improvedContent);
 
   // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
   improvedContent = ensureMinFaq(improvedContent, keyword, targetFaq);
 
   // QA log: verify article meets TOP-3 standards
-  checkArticleQuality(improvedContent, url, targetWords, targetFaq);
+  const qaReport = checkArticleQuality(improvedContent, url, targetWords, targetFaq);
+  // Недобрала до цели по конкурентам — оставляем в очереди на добивку.
+  if (qaReport.pass) underTargetUrls.delete(url); else underTargetUrls.add(url);
 
   // Add internal links to related articles on the same site
   improvedContent = await addInternalLinks(improvedContent, userId, ourDomain, parsed.title);
@@ -2047,14 +2512,6 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
   // Breadcrumb → Yandex rich result, freshness → Yandex ranking factor,
   // TOC anchors → Google SERP jump-links (+25% organic CTR).
   improvedContent = addTopMatterBlocks(improvedContent, seo.metaTitle || parsed.title, url);
-
-  // Deterministic semantic gate: structural counters alone cannot catch
-  // unrelated FAQ answers or invented service promises. Keep unsafe output in
-  // history for review, but never send it to WordPress or trigger reindexing.
-  const seoGate = validateSeoArticle(improvedContent, keyword, seo.metaTitle || parsed.title, targetFaq);
-  if (!seoGate.ok) {
-    console.warn(`[SEO-GATE] BLOCK ${url}: ${seoGate.issues.map((i) => i.message).join('; ')}`);
-  }
 
   // Append FAQPage + Article + Breadcrumb + HowTo + AggregateRating JSON-LD
   const schemaMarkup = generateSchemaMarkup(keyword, seo.metaTitle || parsed.title, url, improvedContent);
@@ -2080,10 +2537,7 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
     metaTitle: seo.metaTitle || null,
     metaDescription: seo.metaDescription || null,
     keywords: JSON.stringify(seo.keywords || []),
-    generalSuggestions: JSON.stringify([
-      ...(seo.generalSuggestions || []),
-      ...seoGate.issues.map((issue) => `[${issue.severity}] ${issue.code}: ${issue.message}`),
-    ]),
+    generalSuggestions: JSON.stringify(seo.generalSuggestions || []),
     headings: JSON.stringify(parsed.headings || []),
     seoScore: seo.score || 0,
     serpKeyword: keyword || null,
@@ -2091,21 +2545,58 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
     yandexPos: findPos(yandexSerp.results),
   });
 
+  // Final deterministic gate after every transformation (links, top matter and
+  // schema included). Failed output remains in the analysis history and queue,
+  // but never overwrites a live WordPress article.
+  const publishGate = validateArticleForPublish(improvedContent, {
+    targetWords,
+    targetFaq,
+    minH2: 3,
+  });
+  // Structural gate above cannot catch a plausible-looking FAQ that is
+  // unrelated to the article or an invented service promise (guarantees,
+  // fake reviews, payment methods) — this semantic gate does.
+  const seoGate = validateSeoArticle(improvedContent, keyword, seo.metaTitle || parsed.title, targetFaq);
+  if (!publishGate.pass || !seoGate.ok) {
+    const reasons = [...publishGate.issues, ...seoGate.issues.map((i) => `${i.code}: ${i.message}`)];
+    console.warn(`[PublishGate] ⛔ ${url}: ${reasons.join(', ')} — публикация отменена`);
+    underTargetUrls.add(url);
+    return;
+  }
+
   // Auto-publish to WordPress (batch mode: no image generation).
-  // imagesNeeded from competitor data, capped to prevent runaway generation.
+  // imagesNeeded from competitor data (max competitor images + 2), capped at MAX_FLUX_IMAGES
+  // to prevent runaway FLUX generation (each image ≈ 30s sequential). Default cap 20 —
   // matches top-3 competitors' image count (our audit found some have 23+ images).
   // Each +5 images costs ~2-3 min per article, trade-off vs matching competitor parity.
   // 2026-04-20 v2: cap 12→16, floor 6→8 (sync with targetImages — паритет с конкурентами)
-  const imageCap = Number(process.env.MAX_IMAGE_COUNT ?? 16);
-  const imagesForWp = Math.min(Math.max(targetImages, 10), imageCap);
+  // Потолок высокий: догоняем выдачу по числу иллюстраций, время генерации не
+  // экономим — конвейер работает круглосуточно с низким приоритетом.
+  // 🚨 18.08.2026: батч перезаписывал статью КОРОЧЕ исходника («Электронный кадастр»
+  // 3291 → 2424 слова). Цель targetWords от этого защищена (в Math.max входит ourWords),
+  // а результат — нет: QA печатал ❌ FAIL, публикация всё равно шла и затирала более
+  // полный текст. Мелкие страницы Яндекс бракует как малоценные (LOW_DEMAND), поэтому
+  // ужавшуюся версию не публикуем: оставляем прежнюю и возвращаем URL на добивку.
+  const newWords = countWords(improvedContent);
+  if (ourWords > 0 && newWords < ourWords * 0.9) {
+    console.warn(
+      `[Words] ⛔ публикация отменена: ${newWords} слов против ${ourWords} было ` +
+      `(${Math.round((newWords / ourWords) * 100)}%) — статью не укорачиваем`,
+    );
+    underTargetUrls.add(url);
+    return;
+  }
+
+  const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 60);
+  const imagesForWp = Math.min(targetImages, fluxCap);
   console.log(`[Img] Competitors: max=${maxCompetitorImages}, avg=${avgCompetitorImages} → our target=${imagesForWp}`);
-  if (!seoGate.ok) return;
-  await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
+  const published = await autoPublishToWP(userId, url, seo.metaTitle || parsed.title, improvedContent, {
     metaDescription: seo.metaDescription ? truncateMetaDesc(seo.metaDescription) : undefined,
     focusKeyword: keyword || undefined,
     keywords: seo.keywords?.length ? seo.keywords : undefined,
     imagesNeeded: imagesForWp,
-  }).catch((e: any) => console.error(`[WP] Auto-publish failed for ${url}:`, e?.message ?? e));
+  });
+  if (!published) throw new Error(`[WP] Auto-publish was not confirmed for ${url}`);
 
   // Post-publish image check: compare actual <img> count on the live page
   // against our target (competitor max + 2). Runs async so it doesn't slow the loop.
@@ -2118,6 +2609,12 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
       const imgCount = (liveHtml.match(/<img\b/gi) || []).length;
       const ok = imgCount >= targetImages;
       console.log(`[PostQA] ${url} → images ${imgCount}/${targetImages} ${ok ? '✅' : '⚠️ LOW'}`);
+      // Автодозаливка: недобор картинок (пик 03.07: 10 из 17 статей LOW из-за очередей
+      // генераторов) — доливаем недостающие тем же findAndInjectImages и чистим кеш.
+      if (!ok && imgCount < Math.ceil(targetImages * 0.7)) {
+        await topUpArticleImages(userId, url, missing(targetImages, imgCount))
+          .catch((e: any) => console.warn('[PostQA] top-up failed:', e?.message));
+      }
     } catch (err: any) {
       // swallow — PostQA is best-effort
     }
@@ -2125,11 +2622,185 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
 
   // Notify search engines about the updated article
   void submitToIndexNow(url);
+
+  // Пост-обработка (best-effort, не блокирует батч): GSC-снапшот позиции для отчёта
+  // «до/после» (scripts/position-report.ts) + обратная перелинковка со старых статей.
+  void postImproveTasks(userId, url, keyword).catch(() => {});
+}
+
+function missing(target: number, have: number): number {
+  return Math.max(2, Math.min(10, target - have));
+}
+
+// Дозаливка картинок в уже опубликованную статью (вызывается PostQA при LOW).
+async function topUpArticleImages(userId: number, url: string, needed: number): Promise<void> {
+  const accounts = await wordpressDb.getUserWordpressAccounts(userId);
+  const account = accounts[0];
+  if (!account) return;
+  const slug = new URL(url).pathname.replace(/\/$/, '').split('/').pop() || '';
+  if (!slug) return;
+  const post = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);
+  if (!post) return;
+  const axios = (await import('axios')).default;
+  const base = account.siteUrl.replace(/\/$/, '');
+  const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+  const resp = await axios.get(`${base}/wp-json/wp/v2/posts/${post.id}/`, {
+    params: { context: 'edit', _fields: 'id,title,content' },
+    headers: { Authorization: auth }, timeout: 20000, proxy: false,
+  });
+  const html: string = resp.data?.content?.raw ?? '';
+  const title: string = resp.data?.title?.raw ?? slug;
+  if (!html) return;
+  console.log(`[PostQA] top-up: доливаю ${needed} картинок в ${slug}`);
+  const { html: withImages } = await findAndInjectImages(
+    account.siteUrl, account.username, account.appPassword, slug, title, html, needed, post.id,
+  );
+  if (withImages === html) return;
+  await wp.updatePost(account.siteUrl, account.username, account.appPassword, post.id, { content: withImages });
+  await purgeOriginCache(new URL(url).pathname).catch(() => {});
+  console.log(`[PostQA] top-up done: ${slug}`);
+}
+
+// ── Пост-improve задачи ──────────────────────────────────────────────────────
+
+// Снапшот лучшей GSC-позиции страницы на момент improve → data/position-history.jsonl.
+// Отчёт «было/стало»: npx tsx scripts/position-report.ts
+async function snapshotGscPosition(url: string, keyword: string): Promise<void> {
+  const qs = await fetchGscPageQueries(url, 7, 10);
+  const best = qs.length ? Math.min(...qs.map(q => q.position)) : null;
+  appendJsonl(path.join(DATA_DIR, 'position-history.jsonl'), {
+    url,
+    keyword,
+    date: new Date().toISOString().slice(0, 10),
+    gscBestPos7d: best,
+    topQueries: qs.slice(0, 5).map(q => ({ q: q.query, pos: q.position, imp: q.impressions })),
+  });
+  console.log(`[GSC] snapshot ${url}: bestPos7d=${best ?? 'нет данных'}`);
+}
+
+// Обратная перелинковка: входящие внутренние ссылки двигают страницу сильнее исходящих.
+// До 2 статей-доноров (title пересекается с ключом, ссылки на цель ещё нет) получают
+// <a> на первом текстовом вхождении ключа. Отключение: REVERSE_LINKS=0.
+const REVERSE_LINKS_MAX_DONORS = 2;
+
+async function addReverseInternalLinks(userId: number, targetUrl: string, keyword: string): Promise<void> {
+  if (!keyword || keyword.trim().split(/\s+/).length < 2) return; // однословный ключ — слишком шумно
+  const accounts = await wordpressDb.getUserWordpressAccounts(userId);
+  const account = accounts[0];
+  if (!account) return;
+
+  const target = new URL(targetUrl);
+  const targetPath = target.pathname;
+  const posts = await getAllSitePosts(target.hostname.replace(/^www\./, ''));
+  const kwTokens = keyword.toLowerCase().split(/\s+/).filter(t => t.length > 3);
+  if (!kwTokens.length) return;
+
+  const candidates = posts
+    .filter(p => { try { return new URL(p.url).pathname !== targetPath; } catch { return false; } })
+    .map(p => ({ ...p, score: kwTokens.filter(t => p.title.toLowerCase().includes(t)).length }))
+    .filter(p => p.score >= Math.min(2, kwTokens.length))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+
+  const axios = (await import('axios')).default;
+  const base = account.siteUrl.replace(/\/$/, '');
+  const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
+  // Полная фраза ключа редко встречается в чужом тексте дословно — пробуем каскад:
+  // полный ключ → первые 3 значимых слова → первые 2. Доноры уже отфильтрованы по
+  // пересечению title (score >= 2), так что даже короткий анкор релевантен.
+  const kwWords = keyword.trim().split(/\s+/);
+  const phrases = [...new Set([
+    keyword.trim(),
+    kwWords.slice(0, 3).join(' '),
+    kwWords.slice(0, 2).join(' '),
+  ])].filter(p => p.split(/\s+/).length >= 2);
+  const phraseRes = phrases.map(p => new RegExp(
+    p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s\\u00a0]+'),
+    'i',
+  ));
+
+  let linked = 0;
+  for (const donor of candidates) {
+    if (linked >= REVERSE_LINKS_MAX_DONORS) break;
+    try {
+      const donorSlug = new URL(donor.url).pathname.replace(/\/$/, '').split('/').pop() || '';
+      if (!donorSlug) continue;
+      const post = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, donorSlug);
+      if (!post) continue;
+
+      // WP в этот момент занят генерацией картинок соседней статьи — первая попытка
+      // нередко падает по таймауту/aborted stream, вторая с паузой обычно проходит.
+      let resp: any = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          resp = await axios.get(`${base}/wp-json/wp/v2/posts/${post.id}/`, {
+            params: { context: 'edit', _fields: 'id,content' },
+            headers: { Authorization: auth },
+            timeout: 30000,
+          });
+          break;
+        } catch (e: any) {
+          if (attempt === 2) throw e;
+          console.warn(`[ReverseLinks] попытка ${attempt} для ${donorSlug} не удалась (${e?.message}), ретрай через 5с`);
+          await new Promise(r => setTimeout(r, 5000));
+        }
+      }
+      const html: string = resp?.data?.content?.raw ?? '';
+      if (!html) continue;
+      if (html.includes(`href="${targetPath}`) || html.includes(`href="${targetUrl}`)) continue; // уже ссылается
+
+      const $ = cheerio.load(html, { xml: { decodeEntities: false } });
+      let inserted = false;
+      for (const kwRe of phraseRes) {
+        if (inserted) break;
+        $('p').each((_, el) => {
+          if (inserted) return;
+          const $el = $(el);
+          if ($el.find('a').length) return;                       // абзац уже со ссылкой
+          if ($el.parents('a, blockquote, table, figure').length) return;
+          const pHtml = $el.html() ?? '';
+          const m = pHtml.match(kwRe);
+          if (!m || m.index === undefined) return;
+          // вхождение должно быть в тексте, не внутри тега/атрибута
+          const before = pHtml.slice(0, m.index);
+          if ((before.match(/</g)?.length ?? 0) !== (before.match(/>/g)?.length ?? 0)) return;
+          $el.html(pHtml.replace(kwRe, (found) => `<a href="${targetPath}">${found}</a>`));
+          inserted = true;
+        });
+      }
+      if (!inserted) continue;
+
+      const newHtml = $('body').length ? ($('body').html() ?? '') : $.html();
+      if (!newHtml || newHtml.length < html.length * 0.9) continue; // guard: cheerio не должен терять контент
+      await wp.updatePost(account.siteUrl, account.username, account.appPassword, post.id, { content: newHtml });
+      linked++;
+      console.log(`[ReverseLinks] ${donor.url} → ссылка на ${targetPath} ("${keyword}")`);
+      appendJsonl(path.join(DATA_DIR, 'reverse-links.jsonl'), {
+        date: new Date().toISOString().slice(0, 10), donor: donor.url, target: targetPath, keyword,
+      });
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (e: any) {
+      console.warn(`[ReverseLinks] донор ${donor.url} пропущен:`, e?.message);
+    }
+  }
+  if (linked === 0) console.log(`[ReverseLinks] доноры для "${keyword}" не найдены (${candidates.length} кандидатов)`);
+}
+
+async function postImproveTasks(userId: number, url: string, keyword: string): Promise<void> {
+  await snapshotGscPosition(url, keyword).catch((e: any) => console.warn('[GSC] snapshot failed:', e?.message));
+  if (process.env.REVERSE_LINKS !== '0') {
+    // Ссылка с живой статьи на черновик — битая ссылка на опубликованной странице.
+    if (!(await isPubliclyLive(url))) {
+      console.warn(`[ReverseLinks] пропуск — цель недоступна публично: ${url}`);
+    } else {
+      await addReverseInternalLinks(userId, url, keyword).catch((e: any) => console.warn('[ReverseLinks] failed:', e?.message));
+    }
+  }
 }
 
 /**
  * Find, upload and inject images into article HTML.
- * Priority: optional WP Media Library → Flow/Gemini generation.
+ * Priority: WP Media Library → FLUX generation (sequential to avoid rate limits).
  * Returns updated HTML with images injected after H2s, and the featured media ID.
  */
 
@@ -2169,6 +2840,7 @@ export async function findAndInjectImages(
   title: string,
   html: string,
   imagesNeeded = 9,
+  postId?: number,
 ): Promise<{ html: string; featuredMediaId: number | undefined }> {
   if (process.env.SKIP_IMAGE_GENERATION === '1') {
     console.log(`[Img] SKIP_IMAGE_GENERATION=1 — leaving images unchanged for "${slug}"`);
@@ -2182,15 +2854,35 @@ export async function findAndInjectImages(
     .slice(0, 3)
     .join(' ');
 
-  // По умолчанию генерируем свежие Flow/Gemini-картинки (релевантные теме), НЕ переиспользуем
+  // По умолчанию форсим СВЕЖИЕ FLUX-картинки (релевантные теме), НЕ переиспользуем
   // старый generic-сток из WP-библиотеки (2018-е jpg). Включить библиотеку обратно:
   // USE_WP_LIBRARY_IMAGES=1.
   const useLibrary = process.env.USE_WP_LIBRARY_IMAGES === '1';
+  // 🚨 19.08.2026: сначала ищем СВОИ картинки — они называются <слаг>-img-N и остаются
+  // в медиатеке, даже если не попали в текст (так 126 статей потеряли иллюстрации из-за
+  // бага HEAD-проверки, а изображения для них уже оплачены квотой).
+  // 🚨 02.09.2026: поиск по слагу (searchMedia, текстовый search у WP) для новых
+  // загрузок стабильно возвращал 0 даже при точном совпадении заголовка —
+  // 15993 картинок скопились неприкреплёнными. Пока есть postId, ищем по
+  // post_parent (индексированное точное совпадение, без угадывания релевантности
+  // поисковым движком WP); текстовый поиск по слагу остаётся резервом на случай,
+  // если postId не передан или картинки не были привязаны при загрузке.
+  const ownSlug = String(slug || '').trim();
+  const ownMedia = postId
+    ? await wp.getMediaByParent(siteUrl, username, appPassword, postId, Math.max(imagesNeeded, 12))
+        .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[])
+    : ownSlug.length > 8
+      ? await wp.searchMedia(siteUrl, username, appPassword, ownSlug, Math.max(imagesNeeded, 12))
+          .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[])
+      : [];
+  if (ownMedia.length) {
+    console.log(`[Img] Свои картинки из медиатеки (${postId ? 'по post_parent' : 'по слагу'} "${postId ?? ownSlug}"): ${ownMedia.length}`);
+  }
   const libraryImages = useLibrary
     ? await wp.searchMedia(siteUrl, username, appPassword, titleKeywords, 8)
         .catch(() => [] as { id: number; url: string; width: number; height: number; alt: string; title: string }[])
     : [];
-  console.log(`[Img] WP library: ${libraryImages.length}${useLibrary ? '' : ' (отключена — используем Flow)'}`);
+  console.log(`[Img] WP library: ${libraryImages.length}${useLibrary ? '' : ' (отключена — форсим FLUX)'}`);
 
   // Vision-filter for relevance
   const relevant = libraryImages.length > 0
@@ -2198,10 +2890,15 @@ export async function findAndInjectImages(
     : [];
   if (useLibrary) console.log(`[Img] Relevant after filter: ${relevant.length}/${libraryImages.length}`);
 
-  let validMedia: { id: number; url: string; width?: number; height?: number }[] = relevant
-    .filter(m => m.id > 0)
-    .slice(0, imagesNeeded)
-    .map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height }));
+  // Свои картинки ставим первыми и через фильтр релевантности не гоняем: они
+  // сгенерированы под эту же статью, проверять их нечего. Flow дальше добирает
+  // только недостающее — на 126 статей квота не тратится вовсе.
+  let validMedia: { id: number; url: string; width?: number; height?: number }[] = [
+    ...ownMedia.filter(m => m.id > 0).map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height })),
+    ...relevant.filter(m => m.id > 0).map(m => ({ id: m.id, url: m.url, width: m.width, height: m.height })),
+  ]
+    .filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i)
+    .slice(0, imagesNeeded);
 
   // agy image generation — fills gap when WP library is short
   const agNeeded = validMedia.length < imagesNeeded ? imagesNeeded - validMedia.length : 1;
@@ -2216,13 +2913,29 @@ export async function findAndInjectImages(
   if (!cachedPrompts || cachedPrompts.length < agNeeded) saveImagePromptsToCache(slug, prompts);
   console.log(`[Img] Generating ${agNeeded} images via agy`);
   const agValid: { id: number; url: string; width?: number; height?: number }[] = [];
-  const BATCH_SIZE = 2;
+  // По сколько картинок просим у моста одновременно. Вернуть прежнее — IMG_BATCH_SIZE=2.
+  const BATCH_SIZE = Number(process.env.IMG_BATCH_SIZE ?? 2);
+
+  // 🚨 14.08.2026: пауза между пачками. После перевода конвейера на круглосуточную
+  // работу запросы к Flow шли вплотную, и Google показал reCAPTCHA в браузере моста —
+  // генерация встала полностью. Разброс обязателен: ровный интервал сам по себе
+  // выглядит машинным. По умолчанию 45 секунд ± 20.
+  const IMG_PAUSE_MS = Number(process.env.IMG_PAUSE_MS ?? 45_000);
+  const IMG_PAUSE_JITTER_MS = Number(process.env.IMG_PAUSE_JITTER_MS ?? 20_000);
+  let _firstImgBatch = true;
+
   for (let start = 0; start < Math.min(agNeeded, prompts.length); start += BATCH_SIZE) {
+    if (!_firstImgBatch && IMG_PAUSE_MS > 0) {
+      const pause = IMG_PAUSE_MS + Math.floor(Math.random() * (IMG_PAUSE_JITTER_MS + 1));
+      await new Promise(r => setTimeout(r, pause));
+    }
+    _firstImgBatch = false;
     const indices = Array.from({ length: Math.min(BATCH_SIZE, agNeeded - start) }, (_, k) => start + k);
     const results = await Promise.allSettled(
       indices.map(async (i) => {
         const imgUrl = await generateValidatedImage(prompts[i], title);
         const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-${i + 1}.webp`);
+        if (postId) await wp.setMediaParent(siteUrl, username, appPassword, up.id, postId);
         return up;
       })
     );
@@ -2246,6 +2959,7 @@ export async function findAndInjectImages(
       try {
         const imgUrl = await generateValidatedImage(prompts[i], title);
         const up = await wp.uploadMediaFromUrl(siteUrl, username, appPassword, imgUrl, `${slug}-img-r${i + 1}.webp`);
+        if (postId) await wp.setMediaParent(siteUrl, username, appPassword, up.id, postId);
         validMedia.push(up);
         console.log(`[Img] retry[${i}] uploaded → WP id ${up.id}`);
       } catch (e: any) {
@@ -2260,6 +2974,14 @@ export async function findAndInjectImages(
     return { html, featuredMediaId: undefined };
   }
 
+  // 🚨 WP отдаёт source_url на старом домене kadastrmap.info (он жив, но 301 на
+  // 100zem.ru). Лишний редирект в теле статьи не нужен — переписываем на публичный.
+  const publicHost = (process.env.PUBLIC_SITE_URL || 'https://100zem.ru').replace(/\/$/, '');
+  for (const m of validMedia) {
+    if (typeof m.url === 'string') {
+      m.url = m.url.replace(/^https?:\/\/(www\.)?kadastrmap\.info/i, publicHost);
+    }
+  }
   console.log(`[Img] Injecting ${validMedia.length} images into article`);
   // SEO context for alt texts: article title supplies the keyword themes
   const htmlWithImages = injectImagesAfterH2s(html, validMedia, undefined, { articleTitle: title, keyword: titleKeywords });
@@ -2270,25 +2992,69 @@ export async function findAndInjectImages(
  * Pre-publish broken-image guard: HEAD-checks every absolute <img> URL and removes
  * any that don't return 2xx (404, 5xx, DNS fail). Bare-filename placeholders are already
  * stripped in beautifyArticleHtml; this catches dead absolute URLs (deleted WP media,
- * failed image uploads, expired stock URLs) before they reach the live page.
+ * failed FLUX uploads, expired stock URLs) before they reach the live page.
  * Returns the cleaned HTML and a list of removed URLs for logging.
  */
 async function removeBrokenImages(html: string): Promise<{ html: string; removed: string[] }> {
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
   const imgs = $('img').toArray();
+
+  // 🚨 13.08.2026: раньше проверялись только абсолютные URL, поэтому выдуманные
+  // моделью пути вроде /images/servitut_def1.jpg проходили насквозь — каталога
+  // /images на проде нет вовсе, и в 38 статьях висели битые картинки.
+  // Корневые относительные пути резолвим к публичному домену и проверяем так же.
+  const publicBase = (process.env.PUBLIC_SITE_URL || 'https://100zem.ru').replace(/\/$/, '');
+  // 🚨 19.08.2026: https://100zem.ru из контейнера не открывается — домен резолвится
+  // на kad через extra_hosts, а тот слушает только HTTP. Проверять надо по http,
+  // иначе живые картинки получают 000 и вырезаются все до одной.
+  const ownHosts = ['100zem.ru', 'www.100zem.ru', 'kadastrmap.info', 'www.kadastrmap.info'];
+  const downgradeOwn = (u: string): string => {
+    try {
+      const parsed = new URL(u);
+      if (parsed.protocol === 'https:' && ownHosts.includes(parsed.hostname)) {
+        parsed.protocol = 'http:';
+        return parsed.toString();
+      }
+    } catch { /* не URL — вернём как есть */ }
+    return u;
+  };
+  const toAbsoluteForCheck = (s: string): string | null => {
+    if (/^https?:\/\//i.test(s)) return downgradeOwn(s);
+    if (s.startsWith('//')) return 'https:' + s;
+    if (s.startsWith('/')) return downgradeOwn(publicBase + s);
+    return null; // data:, пустые и прочая экзотика — не трогаем
+  };
+
   const srcs = Array.from(new Set(
-    imgs.map((el) => $(el).attr('src') || '').filter((s) => /^https?:\/\//i.test(s)),
+    imgs.map((el) => $(el).attr('src') || '').filter((s) => toAbsoluteForCheck(s) !== null),
   ));
   if (srcs.length === 0) return { html, removed: [] };
 
-  const checkOne = async (src: string): Promise<boolean> => {
+  const checkOne = async (rawSrc: string): Promise<boolean> => {
+    const abs = toAbsoluteForCheck(rawSrc);
+    if (!abs) return true;
+    // Свои картинки проверяем на origin: публичный домен ходит через транзит,
+    // который умеет рвать соединение и давать ложные «битые».
+    // 🚨 19.08.2026: но НЕ через toOriginFetch — он добавляет заголовок Host, а undici
+    // из-за него уходит на 443 (ECONNREFUSED 192.168.80.2:443) и объявляет битыми все
+    // картинки подряд. Замер: fetch(http://kad/…, Host: 100zem.ru) падает,
+    // fetch(http://100zem.ru/…) без Host отдаёт 200 — домен и так резолвится на origin
+    // через extra_hosts. Поэтому свои http-ссылки берём как есть.
+    let isOwnHttpUrl = false;
+    try {
+      const parsed = new URL(abs);
+      isOwnHttpUrl = parsed.protocol === 'http:' && ownHosts.includes(parsed.hostname);
+    } catch { /* не URL — пойдём общим путём */ }
+    const target = isOwnHttpUrl ? { url: abs, host: undefined as string | undefined } : toOriginFetch(abs);
+    const src = target.url;
+    const hostHeader = target.host ? { Host: target.host } : undefined;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 8000);
     try {
-      let r = await fetch(src, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal });
+      let r = await fetch(src, { method: 'HEAD', redirect: 'follow', signal: ctrl.signal, headers: hostHeader as any });
       // Some servers reject HEAD (405) but serve GET — retry with a ranged GET
       if (r.status === 405 || r.status === 501) {
-        r = await fetch(src, { method: 'GET', redirect: 'follow', signal: ctrl.signal, headers: { Range: 'bytes=0-0' } });
+        r = await fetch(src, { method: 'GET', redirect: 'follow', signal: ctrl.signal, headers: { Range: 'bytes=0-0', ...(hostHeader ?? {}) } });
       }
       return r.ok || r.status === 206;
     } catch {
@@ -2330,7 +3096,7 @@ function truncateMetaDesc(text: string, max = 155): string {
 
 /**
  * Publish an article to WordPress automatically (batch mode).
- * Finds/uploads images from WP Library or generates via Flow/Gemini.
+ * Finds/uploads images from WP Library, Pexels, Wikimedia, or generates via FLUX.
  */
 async function autoPublishToWP(
   userId: number,
@@ -2338,19 +3104,27 @@ async function autoPublishToWP(
   title: string,
   content: string,
   opts: { metaDescription?: string; focusKeyword?: string; keywords?: string[]; imagesNeeded?: number } = {},
-): Promise<void> {
+): Promise<boolean> {
   const accounts = await wordpressDb.getUserWordpressAccounts(userId);
   const account = accounts[0];
-  if (!account) { console.log(`[WP] No WP account for userId=${userId}, skipping auto-publish`); return; }
+  if (!account) { console.log(`[WP] No WP account for userId=${userId}, skipping auto-publish`); return false; }
 
   const slug = new URL(url).pathname.replace(/\/$/, '').split('/').pop() || '';
-  if (!slug) { console.log(`[WP] Could not extract slug from ${url}`); return; }
+  if (!slug) { console.log(`[WP] Could not extract slug from ${url}`); return false; }
 
   const post = await wp.findPostBySlug(account.siteUrl, account.username, account.appPassword, slug);
-  if (!post) { console.log(`[WP] Post not found for slug "${slug}", skipping`); return; }
+  if (!post) { console.log(`[WP] Post not found for slug "${slug}", skipping`); return false; }
 
-  const ctaUrl = `${account.siteUrl.replace(/\/$/, '')}/spravki/`;
-  const ctaTexts = ['Заказать документ онлайн', 'Получить справку сейчас', 'Проверить объект на 100zem.ru'];
+  const isContractTopic = /договор|сделк|купл|покупк|продаж|риск|ипотек|наследств|дарен|аренд/i.test(url + ' ' + title);
+  // UTM: атрибуция конверсий из статей (какая статья продаёт) — utm_content = слаг
+  const utm = `utm_source=article&utm_medium=cta&utm_content=${encodeURIComponent(slug)}`;
+  // 🚨 Ссылка для читателя — только публичный домен. account.siteUrl указывает на origin
+  // (http://167.86.116.15:8082), потому что запись в WP через публичный хост рвётся транзитом;
+  // подставлять его в CTA нельзя — это http-ссылка на неканонический хост прямо в статье.
+  const ctaUrl = `${publicSiteBase(account.siteUrl)}/spravki/?${isContractTopic ? 'proverka-documentov-dogovorov&' : ''}${utm}`;
+  const ctaTexts = isContractTopic
+    ? ['Проверить договор с ИИ за 150 ₽', 'Заказать документ онлайн', 'Проверить документы перед сделкой']
+    : ['Заказать документ онлайн', 'Получить справку сейчас', 'Проверить объект на 100zem.ru'];
   const ctaBlock = (text: string) =>
     `\n<div style="text-align:center;margin:2em 0 2.5em;">` +
     `<a href="${ctaUrl}" style="display:inline-block;background:#4CAF50;color:#fff;` +
@@ -2365,7 +3139,7 @@ async function autoPublishToWP(
   // Find and inject images — imagesNeeded driven by competitor stats from rewriteArticle
   const { html: htmlWithImages, featuredMediaId } = await findAndInjectImages(
     account.siteUrl, account.username, account.appPassword,
-    slug, title, htmlContent, opts.imagesNeeded,
+    slug, title, htmlContent, opts.imagesNeeded, post.id,
   ).catch((e: any) => {
     console.warn('[WP] Image injection failed:', e?.message);
     return { html: htmlContent, featuredMediaId: undefined };
@@ -2383,7 +3157,7 @@ async function autoPublishToWP(
   // already corrupted from a previous bad run and the upstream fallback may surface it.
   if (isPlaceholderTitle(title)) {
     console.warn(`[WP] BLOCKED placeholder title for "${slug}": "${title}". Skipping wp.updatePost.`);
-    return;
+    return false;
   }
   if (opts.metaDescription && isPlaceholderMeta(opts.metaDescription)) {
     console.warn(`[WP] Dropping placeholder metaDescription for "${slug}": "${opts.metaDescription}"`);
@@ -2398,7 +3172,7 @@ async function autoPublishToWP(
   });
 
   // Update outsearch + outmap + Yoast SEO meta via custom WP endpoint
-  const showMap = shouldShowMap(slug);
+  const showMap = await shouldShowMapAI(slug, title, htmlContent);
   const siteBase = account.siteUrl.replace(/\/$/, '');
   const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
   const axiosInst = (await import('axios')).default;
@@ -2414,10 +3188,56 @@ async function autoPublishToWP(
   console.log(`[WP] outmap=${showMap} metadesc=${!!opts.metaDescription} keywords=${opts.keywords?.length ?? 0} for slug="${slug}"`);
 
   console.log(`[WP] Published: ${url} → ${account.siteUrl}`);
+
+  // Purge fastcgi-кеша origin: статьи /kadastr/ кешируются 30 дней — без чистки
+  // обновлённая версия невидима юзерам и ботам. Чистим страницу статьи + каталог.
+  await purgeOriginCache(new URL(url).pathname).catch((e: any) =>
+    console.warn('[Purge] failed:', e?.message));
+  return true;
 }
 
-export async function runBatchRewrite(userId: number, urls: string[]): Promise<void> {
+// Дергает cache_purge.php на origin (kad, порт 8082) с токеном из env.
+export async function purgeOriginCache(pagePath: string): Promise<void> {
+  const purgeUrl = process.env.PURGE_URL;   // напр. http://167.86.116.15:8082
+  const purgeToken = process.env.PURGE_TOKEN;
+  if (!purgeUrl || !purgeToken) return;
+  const axios = (await import('axios')).default;
+  const resp = await axios.get(`${purgeUrl.replace(/\/$/, '')}/reestr/api/cache_purge.php`, {
+    params: { path: pagePath, catalog: 1 },
+    headers: { Host: '100zem.ru', 'X-Purge-Token': purgeToken },
+    timeout: 10000,
+    proxy: false,
+  });
+  console.log(`[Purge] ${pagePath}: purged=${resp.data?.purged}`);
+}
+
+/**
+ * Строка замера на каждую обработанную статью. Нужна, чтобы понимать реальную
+ * пропускную способность конвейера: при круглосуточной работе именно она
+ * определяет, сколько новых статей заводить и сколько старых улучшать.
+ */
+function recordThroughput(url: string, startedAt: number, ok: boolean): void {
+  try {
+    const dir = process.env.DATA_DIR || nodePathArticles.join(process.cwd(), 'data');
+    const row = {
+      ts: new Date().toISOString(),
+      url,
+      seconds: Math.round((Date.now() - startedAt) / 1000),
+      ok,
+    };
+    nodeFsArticles.appendFileSync(
+      nodePathArticles.join(dir, 'throughput.jsonl'),
+      JSON.stringify(row) + '\n',
+    );
+  } catch (e: any) {
+    console.warn('[Throughput] замер не записался:', e?.message?.slice(0, 80));
+  }
+}
+
+export async function runBatchRewrite(userId: number, urls: string[]): Promise<{ failed: string[] }> {
+  underTargetUrls.clear();
   let stopped = false;
+  const failed: string[] = [];
   const queue = [...urls];
   const state: BatchRewriteJobState = {
     total: urls.length,
@@ -2433,11 +3253,50 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<v
   while (!stopped && queue.length > 0) {
     const url = queue.shift()!;
     state.current = url;
+    const _startedAt = Date.now();
     try {
       await rewriteArticle(userId, url);
-    } catch (err) {
+      recordThroughput(url, _startedAt, true);
+      // 2026-07-23: обязательный purge fastcgi-кеша (TTL 30д) — иначе заглушки/старые версии
+      // видны Яндексу сутками (найдено: свежая статья 2322 слов, кеш отдавал 362-словную заглушку)
+      await purgeOriginCache(new URL(url).pathname).catch((e: any) =>
+        console.warn(`[BatchRewrite] purge failed ${url}:`, e?.message));
+    } catch (err: any) {
       console.error(`[BatchRewrite] Failed: ${url}`, err);
+      recordThroughput(url, _startedAt, false);
+      failed.push(url);
       state.errors++;
+
+      // Code Assist quota exhaustion is batch-wide: retrying the remaining URLs
+      // only repeats expensive SERP/competitor work and cannot publish anything.
+      // Keep every unprocessed URL in the scheduler queue and stop immediately.
+      const codeAssistQuota = err?.code === 429 ||
+        /codeassist\s+429|resource has been exhausted|not enough credits/i.test(String(err?.message || ''));
+      if (codeAssistQuota) {
+        console.warn('[BatchRewrite] квота Code Assist исчерпана — батч остановлен, оставшиеся URL сохраняются в очереди');
+        // Do not retry every 10-minute scheduler tick while the provider quota is exhausted.
+        try {
+          const { pauseForQuota } = await import('../articleScheduler');
+          pauseForQuota('квота Gemini Code Assist исчерпана');
+        } catch { /* планировщик мог быть не загружен */ }
+        stopped = true;
+      }
+
+      // Квота картинок на сегодня выбрана: продолжать прогон нельзя — статьи
+      // пойдут без иллюстраций, а это запрещено. Останавливаемся до новых суток.
+      if (err?.quotaExhausted || /QuotaExhausted|daily-limit|project-quota/.test(String(err?.message || ''))) {
+        console.warn('[BatchRewrite] дневная квота картинок исчерпана — прогон остановлен');
+        try {
+          const { pauseForQuota } = await import('../articleScheduler');
+          pauseForQuota('дневная квота картинок Flow исчерпана');
+        } catch { /* планировщик мог быть не загружен */ }
+        try {
+          const { alertPublishFailure } = await import('../_core/alert');
+          await alertPublishFailure('Дневная квота картинок Flow исчерпана',
+            `Прогон остановлен до сброса суток. Обработано: ${state.done}, осталось в очереди: ${queue.length}`);
+        } catch { /* алерт не критичен */ }
+        stopped = true;
+      }
     }
     state.done++;
     // Cooldown between articles: let PHP-FPM/MariaDB recover (prevent CrowdSec triggering on 127.0.0.1)
@@ -2447,6 +3306,8 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<v
   state.running = false;
   state.current = '';
   setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
+  if (failed.length) console.warn(`[BatchRewrite] не удалось: ${failed.length}/${urls.length}`);
+  return { failed };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2525,11 +3386,14 @@ export const articlesRouter = router({
       const avgCompetitorFaq = competitors.length > 0
         ? Math.round(competitors.reduce((s, c) => s + (c.faqCount || 0), 0) / competitors.length) : 0;
       const competitorHasTables = competitors.some(c => c.hasTable);
-      // 2026-04-20 v2: не отстаём от конкурентов — floor 8, cap 16, target = maxCompetitor+1.
-  // Предыдущая правка (cap 12) оказалась слишком консервативной: если у конкурентов 15 картинок,
-  // наша статья выглядела "пустой" в конце. Держим паритет +1 с потолком 16 (cost-safe).
-  const targetImages = Math.max(10, Math.min(18, maxCompetitorImages + 3));
-      const targetFaq = Math.max(6, Math.min(10, avgCompetitorFaq + 2));
+      // 🚨 18.08.2026: цель считаем ОТ КОНКУРЕНТОВ, без фиксированного пола 16.
+  // Было max(avg, 16): при 8 картинках у ТОПа мы рисовали 16 — вдвое больше выдачи
+  // и ~40 мин генерации на статью впустую. Теперь паритет со средним по ТОП + 2.
+  // Пол 8 — страница совсем без иллюстраций считается малополезной.
+  // Потолок MAX_FLUX_IMAGES отсекает аномалии выдачи (у отдельных конкурентов 290
+  // «изображений» — это иконки и галереи, а не иллюстрации к тексту).
+  const targetImages = Math.max(5, Math.min(8, avgCompetitorImages + 1));
+      const targetFaq = Math.max(12, avgCompetitorFaq + 2);
 
       // Extract unique H2 topics from competitors missing in our article
       const ourH2s = new Set(
@@ -2616,27 +3480,35 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}
 2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
 3. Прямой ответ на "${serpKeyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
 4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
-5. FAQ: H2 "Часто задаваемые вопросы" с 6-${targetFaq} вопросами, которые реально следуют из статьи. Не добавляй шаблонные или неподтверждённые ответы.
+5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary>
 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
-7b. ДОПОЛНИТЕЛЬНЫЙ CTA: если тема связана с ПОКУПКОЙ/ПРОВЕРКОЙ квартиры, СДЕЛКОЙ, юридической чистотой, проверкой собственника/продавца, рисками при покупке — добавь РОВНО ОДНО уместное упоминание услуги проверки договора прямой ссылкой <a href="/proverka-dogovora/">/proverka-dogovora/</a> (юристы проверят договор купли-продажи перед сделкой). Это ВТОРИЧНЫЙ CTA; /spravki/ остаётся основным. Не вставляй, если тема не про сделку/покупку.
 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
 10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
 11. Авторитетные источники (E-E-A-T): упоминай в ТЕКСТЕ — Росреестр (rosreestr.gov.ru), Федеральный закон №218-ФЗ, Гражданский кодекс РФ, ГАРАНТ.РУ, КонсультантПлюс, ФНС. Минимум 3 упоминания. ⚠️ НЕ ОБОРАЧИВАЙ их в <a href> — просто пиши доменное имя как текст (не кликабельно). Это защищает наш PageRank от утечки на внешние сайты. Пример правильно: "согласно ФЗ-218 (pravo.gov.ru)"; пример неправильно: &lt;a href="..."&gt;Росреестр&lt;/a&gt;.
 12. СТРОГО по теме запроса "${serpKeyword}" — НЕ включай разделы про другие продукты если они не относятся к теме.
-13. Доверие: не выдумывай отзывы, гарантии, скидки, способы оплаты или характеристики мобильного приложения. Используй только подтверждённые сведения из исходной статьи и официальных материалов.
+13. 🚨 02.09.2026: старые ОБЯЗАТЕЛЬНЫЕ H3-блоки (гарантия возврата, отчёт в
+    смартфоне, отзывы клиентов) удалены — это ровно те неподтверждённые
+    обещания сервиса, которые validateSeoArticle (seoQualityGate.ts,
+    unsupportedPromise) блокирует как unsupported_service_claim. Промпт и
+    гейт требовали друг от друга взаимоисключающего: 100% батчей падали
+    на публикации. Не добавляй подобных H3 с гарантиями/акциями/отзывами,
+    если они не подтверждены реальными данными о сервисе.
 14. ИЗОБРАЖЕНИЯ: в статье будет ${targetImages} изображений, равномерно после каждого 2-го H2. Пиши каждый H2-раздел полностью (300+ слов) — это обеспечивает контекст для картинки.
 
 Верни ТОЛЬКО HTML без <html>/<body>.`
-        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
+        : `Ключ: "${serpKeyword}"\n\nОригинальная статья (${parsed.wordCount} слов):\n${parsed.title}\n${parsed.content.slice(0, 5000)}\n\nНапиши расширенную SEO-статью строго по следующей структуре. Каждый раздел ОБЯЗАТЕЛЕН и должен содержать указанный минимум слов:\n\n<h1>${parsed.title}</h1>\n<p>[Прямой ответ: что такое "${serpKeyword}" — 120-150 слов, featured snippet]</p>\n\n<h2>Что такое ${serpKeyword}</h2>\n<p>[Подробное определение, правовая база, зачем нужно — 200-250 слов]</p>\n\n<h2>Когда требуется ${serpKeyword}</h2>\n<p>[5-7 конкретных случаев с пояснением — 200-250 слов]</p>\n\n<h2>Какие сведения содержит ${serpKeyword}</h2>\n<p>[Список с пояснениями — 200-250 слов, используй <ul>]</p>\n\n<h2>Как заказать ${serpKeyword} онлайн через 100zem.ru</h2>\n<p>[Пошаговая инструкция заказа — 250-300 слов, <ol>. Пункты говорят о действиях на странице заказа: 1) «Перейдите на <a href="/spravki/">/spravki/</a>», 2) «Выберите тип документа (краткая / полная / расширенная выписка и т.п.)», 3) «Введите кадастровый номер или адрес объекта», 4) «Проверьте данные в форме», 5) «Оплатите онлайн (карта/СБП)». ⛔ НЕ пиши «зайдите на главную», «в меню», «найдите раздел» — пользователь уже на /spravki/ после клика по ссылке.]</p>\n\n<h2>Сроки и стоимость</h2>\n<p>[Вступление к разделу — 1-2 предложения]</p>\n[BLOCK_PRICE]\n<p>[Краткое пояснение — 60-80 слов]</p>\n\n<h2>Преимущества заказа через 100zem.ru</h2>\n<p>[Почему удобнее заказать на нашем сайте: скорость, простота, электронная доставка — 200-250 слов]</p>\n\n<h2>Типичные ошибки при заказе</h2>\n<p>[4-5 частых ошибок с советами — 150-200 слов]</p>\n\n<h2>Часто задаваемые вопросы</h2>\n[10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные 9 без него. НЕ используй <h3> для вопросов.]\n\n<h2>Вывод</h2>\n<p>[Итог + CTA: заказать на <a href="/spravki/">base.100zem.ru/spravki/</a> — 100-120 слов]</p>\n\nПравила:\n- Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на главную», «в меню выберите», «найдите раздел Заказать» — такой навигации нет. ✅ Пиши: «перейдите на /spravki/», «заполните форму на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.\n- Конкретные факты, законы РФ, сроки. Цены — ТОЛЬКО через [BLOCK_PRICE], не вставляй цифры.\n- FAQ ТОЛЬКО через <details class="faq-item">/<summary>, НЕ через <h3>.\n- Только HTML без <html>/<body>.\n- ⛔ НЕ вставляй <img>, <figure> и любые ссылки на картинки: изображения подбирает и вставляет система после генерации. Выдуманные пути (/images/foo.jpg, image1.jpg) дают битые картинки на живой странице.\n- Не сокращай разделы — каждый должен быть полным.\n- ЭМОДЗИ: активно используй в тексте (минимум 25): 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, ★ выводы, 📊 💰 ⏱️ по контексту.`;
 
       const [seoResponse, improvedResponse] = await Promise.all([
         invokeLLM({
+          model: 'gemini-flash-agent',
           messages: [
             { role: "system", content: "Ты SEO-эксперт по российскому рынку. Отвечай только валидным JSON." },
             { role: "user", content: seoPrompt },
           ],
+          maxTokens: 1200,
+          responseFormat: { type: 'json_object' },
         }),
         invokeLLM({
           messages: [
@@ -3221,12 +4093,11 @@ ${competitorSection}
         : 1500;
       const targetWords = Math.max(3200, avgWords + 800);
 
-      const competitorContext = competitors.length > 0
-        ? competitors.map((c, i) => `Конкурент #${i + 1} (${c.domain}, ~${c.wordCount} слов):
-  Заголовок: ${c.title}
-  Структура H2/H3: ${c.headings || '—'}
-  Фрагмент текста: ${c.content}`).join('\n\n')
-        : '(данные конкурентов недоступны)';
+      const competitorContext = buildCompetitorContext(competitors, {
+        structureLabel: 'Структура H2/H3',
+        textLabel: 'Фрагмент текста',
+        empty: '(данные конкурентов недоступны)',
+      });
 
       // 3. Generate article
       const prompt = `Ты SEO-копирайтер экстра-класса для русскоязычного поиска. Напиши НОВУЮ статью для ТОП-3 Яндекса и Google.
@@ -3265,6 +4136,7 @@ ${competitorContext}
 
       // 4. SEO meta
       const metaResponse = await invokeLLM({
+        model: 'gemini-flash-agent',
         messages: [
           { role: 'system', content: 'Ты SEO-эксперт. Отвечай только валидным JSON.' },
           { role: 'user', content: `Для статьи по запросу "${input.keyword}" сгенерируй SEO-мету. Верни только JSON:
@@ -3275,6 +4147,8 @@ ${competitorContext}
   "faqQuestions": ["вопрос1?", ...до 6]
 }` },
         ],
+        maxTokens: 1200,
+        responseFormat: { type: 'json_object' },
       });
 
       let meta = { metaTitle: input.keyword, metaDescription: '', keywords: [] as string[], faqQuestions: [] as string[] };
@@ -3344,6 +4218,7 @@ ${competitorContext}
         .trim();
       const [ctaResponse, metaResponse, excerptResponse, imagePrompts] = await Promise.all([
         invokeLLM({
+          model: 'gemini-flash-agent',
           messages: [
             { role: 'system', content: 'Ты копирайтер. Пишешь короткие призывы к действию для кнопок.' },
             { role: 'user', content: `Статья: "${input.title}"
@@ -3353,6 +4228,8 @@ ${competitorContext}
 Верни ТОЛЬКО JSON-массив из 3 строк без markdown:
 ["текст кнопки 1", "текст кнопки 2", "текст кнопки 3"]` },
           ],
+          maxTokens: 300,
+          responseFormat: { type: 'json_object' },
         }),
         invokeLLM({
           messages: [
@@ -3382,7 +4259,7 @@ ${competitorContext}
       const imageResults = await Promise.all(
         input.generateImage
           ? (imagePrompts as string[]).map((p) =>
-              generateValidatedImage(p, input.title).catch((e) => { console.error('[Articles] ImgGen failed:', e.message); return null; })
+              generateImageWithFallback(p).catch((e) => { console.error('[Articles] ImgGen failed:', e.message); return null; })
             )
           : [Promise.resolve(null), Promise.resolve(null), Promise.resolve(null)]
       );
@@ -3609,7 +4486,7 @@ ${competitorContext}
         console.log(`[Draft] Generating ${dalleNeeded} DALL-E images (confirmed: ${confirmedImages.length})`);
         const dalleUrls = await Promise.all(
           imagePrompts.slice(0, dalleNeeded).map((p: string, i: number) =>
-            generateValidatedImage(p, input.title)
+            generateImageWithFallback(p)
               .then(url => { console.log(`[Draft] ImgGen[${i}] OK`); return url; })
               .catch((e: any) => { console.warn(`[Draft] ImgGen[${i}] failed:`, e?.message); return null; })
           )
@@ -3699,10 +4576,52 @@ ${competitorContext}
       const auth = 'Basic ' + Buffer.from(`${account.username}:${account.appPassword}`).toString('base64');
       const axiosInst = (await import('axios')).default;
 
+      const headers = { Authorization: auth, 'Content-Type': 'application/json' };
+
+      // Черновик создавался со слагом «<слаг>-draft-rev» в расчёте на плагин
+      // Revisionize, который перенёс бы содержимое в оригинал. Плагина нет,
+      // поэтому переносим сами — иначе технический слаг уходит в публичный URL.
+      const { data: draftPost } = await axiosInst.get(
+        `${siteBase}/wp-json/wp/v2/posts/${input.draftId}/`,
+        { params: { context: 'edit', _fields: 'id,slug,title,content,featured_media,categories' }, headers },
+      );
+
+      const draftSlug: string = draftPost?.slug ?? '';
+      const cleanSlug = draftSlug.replace(/-draft-rev(?:-\d+)?$/, '');
+
+      if (cleanSlug && cleanSlug !== draftSlug) {
+        // Ищем оригинал с чистым слагом — он и должен остаться единственным URL.
+        const { data: found } = await axiosInst.get(`${siteBase}/wp-json/wp/v2/posts/`, {
+          params: { slug: cleanSlug, status: 'publish,draft', _fields: 'id,link,status' },
+          headers,
+        });
+        const original = Array.isArray(found)
+          ? found.find((p: any) => p.id !== input.draftId)
+          : undefined;
+
+        if (original) {
+          // Переносим содержимое в оригинал, ревизию убираем в корзину.
+          const { data: updated } = await axiosInst.post(
+            `${siteBase}/wp-json/wp/v2/posts/${original.id}/`,
+            {
+              title: draftPost?.title?.raw ?? undefined,
+              content: draftPost?.content?.raw ?? undefined,
+              status: 'publish',
+              ...(draftPost?.featured_media ? { featured_media: draftPost.featured_media } : {}),
+            },
+            { headers },
+          );
+          await axiosInst.delete(`${siteBase}/wp-json/wp/v2/posts/${input.draftId}`, { headers })
+            .catch((e: any) => console.warn('[Revision] черновик не удалён:', e?.message));
+          return { success: true, link: updated.link as string };
+        }
+      }
+
+      // Оригинала нет — публикуем саму ревизию, но под чистым слагом.
       const { data } = await axiosInst.post(
-        `${siteBase}/wp-json/wp/v2/posts/${input.draftId}`,
-        { status: 'publish' },
-        { headers: { Authorization: auth, 'Content-Type': 'application/json' } }
+        `${siteBase}/wp-json/wp/v2/posts/${input.draftId}/`,
+        { status: 'publish', ...(cleanSlug && cleanSlug !== draftSlug ? { slug: cleanSlug } : {}) },
+        { headers },
       );
 
       return { success: true, link: data.link as string };
@@ -4223,6 +5142,8 @@ ${competitorSection}
       hour:             z.number().min(0).max(23),
       userId:           z.number().min(1),
       skipImprovedDays: z.number().min(0).max(365),
+      newsShare:        z.number().min(0).max(1).optional(),
+      evergreenPerNight: z.number().min(0).max(50).optional(),
     }))
     .mutation(async ({ input }) => {
       const { saveSchedulerConfig } = await import('../articleScheduler');
@@ -4352,7 +5273,7 @@ function pickHeadingEmoji(text: string): string {
  * - <ul> → green checkmark cards
  * - "Важно:" / "Обратите внимание" → yellow info-box
  */
-function beautifyArticleHtml(html: string): string {
+export function beautifyArticleHtml(html: string): string {
   // Strip full-document wrapper the LLM sometimes emits despite "без <html>/<body>/<head>"
   // in the prompt. Without this, cheerio.load() below re-serializes the whole document
   // (<!DOCTYPE><html><head><title>…</head><body>…) straight into post_content → nested
@@ -4372,10 +5293,42 @@ function beautifyArticleHtml(html: string): string {
     html = html.trim();
   }
 
+  // Fix LLM-hallucinated YouTube embeds. Gemini emits JSX-style self-closing <iframe .../>,
+  // which is INVALID in HTML: the browser treats the tag as unclosed and swallows all
+  // following markup — including the /reestr/ map scripts — so the article map stops
+  // loading. Also drop placeholder VIDEO_ID/video_id embeds (no real video was picked).
+  // Runs BEFORE cheerio.load so the parser gets valid HTML. (Incident 2026-07-21: 20 100zem posts.)
+  html = html.replace(/<p>\s*<iframe\b[^>]*embed\/(?:VIDEO_ID|video_id)[^>]*>\s*(?:<\/iframe>)?\s*<\/p>/gis, '');
+  html = html.replace(/<iframe\b[^>]*embed\/(?:VIDEO_ID|video_id)[^>]*>\s*(?:<\/iframe>)?/gis, '');
+  html = html.replace(/<iframe\b([^>]*?)\s*\/>/gi, '<iframe$1></iframe>');
+
   // Demote any <h1> in the body to <h2>: the kadastrmap theme already renders the page <h1>
   // from the post title (article <header class="entry-header"><h1>). An <h1> inside the
   // article content makes two <h1> per page (SEO). Fixed across 35 live posts on 2026-06-14.
   html = html.replace(/<(\/?)h1\b/gi, '<$1h2');
+
+  // 🚨 14.08.2026: остатки markdown. Модель подмешивает разметку к HTML: заголовок
+  // «### Что это» конвейер превращал в <h2>, а решётки оставались перед тегом и
+  // висели на странице отдельной строкой. По базе: ### в 140 статьях,
+  // markdown-ссылки в 33, звёздочки списков в 22, **жирный** в 16.
+  const markdownLeftovers = (s: string): string => {
+    // решётки заголовков — перед тегом, в начале строки или после </p>
+    s = s.replace(/(^|\n|<\/(?:p|h[1-6]|ul|ol|li|div|figure)>)\s*#{1,6}[ \t]*(?=<|\n|$)/gi, '$1');
+    s = s.replace(/(^|\n|>)[ \t]*#{1,6}[ \t]+(?=[^\s<])/g, '$1');
+    // **жирный** → <strong> (внутри строки, без переносов и тегов)
+    s = s.replace(/\*\*([^*<>\n]{2,120})\*\*/g, '<strong>$1</strong>');
+    // markdown-ссылка → обычная ссылка (внешние потом развернёт правило ниже)
+    // ссылки бывают не только http: mailto и относительные пути тоже встречаются
+    s = s.replace(/\[([^\]\n<>]{1,120})\]\(((?:https?:\/\/|mailto:|\/)[^)\s"']+)\)/g, '<a href="$2">$1</a>');
+    // одиночная решётка в конце строки/абзаца — тоже след markdown
+    s = s.replace(/(^|\n|>)[ \t]*#{1,6}[ \t]*(?=\n|<\/|$)/g, '$1');
+    // ограждения блоков кода
+    s = s.replace(/```[a-z0-9]*\n?/gi, '');
+    // горизонтальная линия markdown отдельной строкой
+    s = s.replace(/(^|\n|>)[ \t]*(-{3,}|_{3,})[ \t]*(?=\n|<|$)/g, '$1');
+    return s;
+  };
+  html = markdownLeftovers(html);
 
   // Strip any inline JSON-LD script blocks the LLM may have hallucinated.
   // We always (re)generate structured data programmatically in generateSchemaMarkup()
@@ -4391,6 +5344,27 @@ function beautifyArticleHtml(html: string): string {
   // (Incident 2026-06-06: karta-po-kadastrovomu-nomeru had 8 live placeholderN.jpg → broken images.)
   html = html.replace(/<figure[^>]*>\s*<img[^>]*\ssrc=["'][^"':\/]+\.(?:jpe?g|png|webp|gif|avif)["'][^>]*\/?>\s*(?:<figcaption[^>]*>.*?<\/figcaption>\s*)?<\/figure>/gis, '');
   html = html.replace(/<img[^>]*\ssrc=["'][^"':\/]+\.(?:jpe?g|png|webp|gif|avif)["'][^>]*\/?>/gi, '');
+
+  // 🚨 13.08.2026: тот же артефакт, но уже с путём — модель выдумывает
+  // /images/definition.jpg, /images/servitut_def1.jpg и подобное. Каталога
+  // /images на проде нет вовсе, поэтому такие картинки висели битыми в 38 статьях,
+  // а removeBrokenImages их не ловил: он проверял только абсолютные URL.
+  // Настоящие изображения вставляет конвейер (injectImagesAfterH2s) и кладёт в
+  // /wp-content/uploads/, так что любой ДРУГОЙ относительный путь — артефакт.
+  // Абсолютные URL не трогаем: их проверяет removeBrokenImages по факту доступности.
+  const hallucinatedImgPath = (s: string): boolean => {
+    if (/^(?:https?:)?\/\//i.test(s) || /^data:/i.test(s)) return false; // абсолютные и data: — не наша забота
+    if (!s.startsWith('/')) return true;                                   // относительные без корня
+    return !/^\/(?:wp-content\/uploads|reestr\/img|wp-content\/themes)\//i.test(s);
+  };
+  html = html.replace(
+    /<figure[^>]*>\s*<img[^>]*\ssrc=["']([^"']+)["'][^>]*\/?>[\s\S]*?<\/figure>/gi,
+    (m: string, s: string) => (hallucinatedImgPath(s) ? '' : m),
+  );
+  html = html.replace(
+    /<img[^>]*\ssrc=["']([^"']+)["'][^>]*\/?>/gi,
+    (m: string, s: string) => (hallucinatedImgPath(s) ? '' : m),
+  );
 
   const $ = cheerio.load(html, { xml: { decodeEntities: false } });
 
@@ -4564,7 +5538,7 @@ function beautifyArticleHtml(html: string): string {
     $(td).attr('style', ($(td).attr('style') || '') + 'background:#f8fafc;');
   });
 
-  return ($.root().html() || '').trim();
+  return ensureParagraphEmojis(($.root().html() || '').trim());
 }
 
 /**

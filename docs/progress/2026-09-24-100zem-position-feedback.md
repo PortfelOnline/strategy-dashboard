@@ -12,7 +12,7 @@
 ## Production rollout
 
 - Dashboard app was rebuilt and restarted successfully.
-- `SEO_POSITION_FEEDBACK_ENABLED` remains unset/disabled as of this entry.
+- `SEO_POSITION_FEEDBACK_ENABLED=1` was enabled after the supervised dry-run.
 - Article scheduler is enabled and configured for three articles per night; enabling the feedback flag would therefore permit the next scheduled feedback batch.
 - Production backups are under `/root/backups/strategy-dashboard-seo-*` and `/root/backups/strategy-dashboard-seo-migration-*`.
 
@@ -22,6 +22,7 @@
 - `npm run build` passes locally and in the production Docker build.
 - The dashboard app is running; unauthenticated root requests correctly receive HTTP 401.
 - Supervised dry-run passed: GSC returned 754 page positions, the queue selected exactly three URLs, and zero `/reestr/` URLs were selected.
+- The flag was verified as enabled inside the restarted production app; no WordPress publication was performed by the dry-run.
 
 ## Follow-up
 

@@ -1,5 +1,6 @@
 import * as nodeFsArticles from 'fs';
 import * as nodePathArticles from 'path';
+import { createHash } from 'crypto';
 import { router, protectedProcedure } from "../_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
@@ -2169,7 +2170,17 @@ async function parseOwnDraft(userId: number, url: string) {
   };
 }
 
-async function rewriteArticle(userId: number, url: string): Promise<void> {
+interface PublishedRewriteResult {
+  url: string;
+  beforeContentHash: string;
+  afterContentHash: string;
+}
+
+function contentHash(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+async function rewriteArticle(userId: number, url: string): Promise<PublishedRewriteResult | null> {
   let parsed;
   try {
     parsed = await parseArticleFromUrl(url);
@@ -2561,7 +2572,7 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
     const reasons = [...publishGate.issues, ...seoGate.issues.map((i) => `${i.code}: ${i.message}`)];
     console.warn(`[PublishGate] ⛔ ${url}: ${reasons.join(', ')} — публикация отменена`);
     underTargetUrls.add(url);
-    return;
+    return null;
   }
 
   // Auto-publish to WordPress (batch mode: no image generation).
@@ -2584,7 +2595,7 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
       `(${Math.round((newWords / ourWords) * 100)}%) — статью не укорачиваем`,
     );
     underTargetUrls.add(url);
-    return;
+    return null;
   }
 
   const fluxCap = Number(process.env.MAX_FLUX_IMAGES ?? 60);
@@ -2626,6 +2637,11 @@ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDoma
   // Пост-обработка (best-effort, не блокирует батч): GSC-снапшот позиции для отчёта
   // «до/после» (scripts/position-report.ts) + обратная перелинковка со старых статей.
   void postImproveTasks(userId, url, keyword).catch(() => {});
+  return {
+    url,
+    beforeContentHash: contentHash(parsed.contentHtml || parsed.content),
+    afterContentHash: contentHash(improvedContent),
+  };
 }
 
 function missing(target: number, have: number): number {
@@ -3191,8 +3207,7 @@ async function autoPublishToWP(
 
   // Purge fastcgi-кеша origin: статьи /kadastr/ кешируются 30 дней — без чистки
   // обновлённая версия невидима юзерам и ботам. Чистим страницу статьи + каталог.
-  await purgeOriginCache(new URL(url).pathname).catch((e: any) =>
-    console.warn('[Purge] failed:', e?.message));
+  await purgeOriginCache(new URL(url).pathname);
   return true;
 }
 
@@ -3234,10 +3249,11 @@ function recordThroughput(url: string, startedAt: number, ok: boolean): void {
   }
 }
 
-export async function runBatchRewrite(userId: number, urls: string[]): Promise<{ failed: string[] }> {
+export async function runBatchRewrite(userId: number, urls: string[]): Promise<{ failed: string[]; published: PublishedRewriteResult[] }> {
   underTargetUrls.clear();
   let stopped = false;
   const failed: string[] = [];
+  const published: PublishedRewriteResult[] = [];
   const queue = [...urls];
   const state: BatchRewriteJobState = {
     total: urls.length,
@@ -3255,12 +3271,10 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<{
     state.current = url;
     const _startedAt = Date.now();
     try {
-      await rewriteArticle(userId, url);
+      const result = await rewriteArticle(userId, url);
+      if (!result) throw new Error(`[WP] Publish was not confirmed for ${url}`);
+      published.push(result);
       recordThroughput(url, _startedAt, true);
-      // 2026-07-23: обязательный purge fastcgi-кеша (TTL 30д) — иначе заглушки/старые версии
-      // видны Яндексу сутками (найдено: свежая статья 2322 слов, кеш отдавал 362-словную заглушку)
-      await purgeOriginCache(new URL(url).pathname).catch((e: any) =>
-        console.warn(`[BatchRewrite] purge failed ${url}:`, e?.message));
     } catch (err: any) {
       console.error(`[BatchRewrite] Failed: ${url}`, err);
       recordThroughput(url, _startedAt, false);
@@ -3307,7 +3321,7 @@ export async function runBatchRewrite(userId: number, urls: string[]): Promise<{
   state.current = '';
   setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
   if (failed.length) console.warn(`[BatchRewrite] не удалось: ${failed.length}/${urls.length}`);
-  return { failed };
+  return { failed, published };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

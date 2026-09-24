@@ -41,7 +41,7 @@ export function normalizeYandexIndexStatus(status: string | null | undefined): Y
 }
 
 export function normalizeGscSnapshot(input: {
-  url: string; periodStart: Date; periodEnd: Date; clicks?: number; impressions?: number; ctr?: number; position?: number; queries?: PageQueryInput[];
+  url: string; periodStart: Date; periodEnd: Date; clicks?: number; impressions?: number; ctr?: number; position?: number | null; queries?: PageQueryInput[];
 }): NormalizedGscSnapshot {
   return {
     snapshot: {

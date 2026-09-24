@@ -318,7 +318,11 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
     // остальных денежные идут первыми, иначе они годами ждут очереди в хвосте каталога.
     const isMoney = (u: string) => MONEY_SLUG_RE.test(u);
     const moneyFirst = (list: string[]) => [...list.filter(isMoney), ...list.filter(u => !isMoney(u))];
-    const toProcess = [...moneyFirst(nm), ...moneyFirst(rest)].slice(0, config.articlesPerNight);
+    const feedbackEnabled = process.env.SEO_POSITION_FEEDBACK_ENABLED === '1';
+    const rankedUrls = [...moneyFirst(nm), ...moneyFirst(rest)];
+    const toProcess = feedbackEnabled
+      ? selectPositionFeedbackBatch(rankedUrls, priority).urls
+      : rankedUrls.slice(0, config.articlesPerNight);
     console.log(`[ArticleScheduler] денежных в батче: ${toProcess.filter(isMoney).length}/${toProcess.length}`);
     if (nm.length) {
       console.log(`[ArticleScheduler] 🎯 rank-feedback: ${nm.length} near-miss статей (поз.4-20) в приоритет — дожимаем в топ`);
@@ -334,8 +338,48 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
     }
 
     console.log(`[ArticleScheduler] Обрабатываем ${toProcess.length} статей...`);
+    const feedbackCycleIds = new Map<string, number>();
+    if (feedbackEnabled) {
+      const [{ fetchGscPageSnapshot }, { seoPositionFeedbackRepository }, { normalizeGscSnapshot, segmentForUrl }, { chooseHypothesis }] = await Promise.all([
+        import('./_core/gscClient'),
+        import('./seoPositionFeedback.db'),
+        import('./seoPositionFeedback'),
+        import('./seoImprovementScorer'),
+      ]);
+      for (const url of toProcess) {
+        try {
+          const signal = await fetchGscPageSnapshot(url);
+          const normalized = signal.ok && signal.snapshot ? normalizeGscSnapshot({ url, ...signal.snapshot }) : null;
+          const snapshot = normalized
+            ? await seoPositionFeedbackRepository.saveSnapshot({ ...normalized.snapshot, source: 'google' })
+            : null;
+          if (snapshot && normalized) await seoPositionFeedbackRepository.saveQueries(snapshot.id, normalized.queries);
+          const cycle = await seoPositionFeedbackRepository.createCycle({
+            url,
+            segment: segmentForUrl(url),
+            snapshotBeforeId: snapshot?.id ?? null,
+            hypothesis: chooseHypothesis({
+              badQuality: normalized?.snapshot.indexStatus === 'bad_quality',
+              crawledNotIndexed: normalized?.snapshot.indexStatus === 'crawled_not_indexed',
+              lowCtr: (normalized?.snapshot.ctr ?? 0) < 0.02,
+            }),
+          });
+          feedbackCycleIds.set(url, cycle.id);
+        } catch (error: any) {
+          console.warn(`[SEO feedback] не удалось поставить цикл ${url}:`, error?.message);
+        }
+      }
+    }
     const startedAt = new Date().toISOString();
-    const { failed } = await runBatchRewrite(config.userId, toProcess.slice(0, config.articlesPerNight));
+    const { failed, published } = await runBatchRewrite(config.userId, toProcess.slice(0, config.articlesPerNight));
+    if (feedbackCycleIds.size) {
+      const { seoPositionFeedbackRepository } = await import('./seoPositionFeedback.db');
+      const { applyPublishResults } = await import('./seoPositionFeedbackCycle');
+      await applyPublishResults(seoPositionFeedbackRepository, published.flatMap((result) => {
+        const cycleId = feedbackCycleIds.get(result.url);
+        return cycleId == null ? [] : [{ cycleId, ...result, published: true }];
+      })).catch((error: any) => console.warn('[SEO feedback] не удалось отметить публикации:', error?.message));
+    }
     const { underTargetUrls } = await import('./routers/articles');
 
     // Вычеркнуть обработанные из needs-improve.txt.

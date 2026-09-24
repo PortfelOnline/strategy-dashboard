@@ -24,10 +24,21 @@ function isValidArticleTitle(title: string): boolean {
 }
 
 async function fetchListingPage(url: string): Promise<{ articles: CatalogArticle[]; totalPages: number }> {
-  const response = await axios.get(url, {
+  const opts = {
     headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ContentAnalyzer/1.0)' },
     timeout: 30000,
-  });
+  };
+  let response;
+  try {
+    response = await axios.get(url, opts);
+  } catch (e: any) {
+    // 🚨 25.08.2026: изнутри контейнера у 100zem.ru не поднят TLS (ECONNREFUSED на :443),
+    // из-за чего скан каталога падал и батч получал 1 кандидата вместо 10. Адреса статей
+    // берутся из разметки самой страницы, поэтому протокол пробы на них не переносится.
+    const viaHttp = url.replace(/^https:\/\//i, 'http://');
+    if (viaHttp === url) throw e;
+    response = await axios.get(viaHttp, opts);
+  }
 
   const $ = cheerio.load(response.data as string);
   const articles: CatalogArticle[] = [];
@@ -144,6 +155,44 @@ const SLOW_DOMAINS = [
   'www.gosuslugi.ru',
 ];
 
+// 🚨 2026-08-02: наши же страницы нельзя тянуть по публичному https. Маршрут
+// n → proxy4 → туннель → n рвёт большие тела (13–23 КБ) и держит соединение до
+// таймаута → axios «aborted». Страдали самые крупные статьи, а это ровно денежные
+// (ЕГРН/выписки/справки, 160–176 КБ) — они падали каждую ночь и не улучшались.
+// Origin отдаёт ту же страницу целиком за миллисекунды.
+export function toOriginFetch(url: string): { url: string; host?: string } {
+  const base = process.env.SELF_ORIGIN_BASE;            // напр. http://167.86.116.15:8082
+  if (!base) return { url };
+  try {
+    const u = new URL(url);
+    const hosts = (process.env.SELF_ORIGIN_HOSTS || '100zem.ru,www.100zem.ru')
+      .split(',').map(h => h.trim().replace(/^www\./, '')).filter(Boolean);
+    if (!hosts.includes(u.hostname.replace(/^www\./, ''))) return { url };
+    return { url: base.replace(/\/$/, '') + u.pathname + u.search, host: u.hostname };
+  } catch { return { url }; }
+}
+
+// Заголовки, которые нельзя пускать в генерацию: это не тема, а признак того,
+// что страница не отдалась (500, JS-рендер, заглушка).
+// 🚨 Не \b на конце: в JS \b считает границу по [A-Za-z0-9_], для кириллицы её нет —
+// «Без заголовка: …» мимо. Отсечка через (?![\p{L}\p{N}]) с флагом u.
+const PLACEHOLDER_TITLE_RE = /^\s*(без\s+заголовка|untitled|no\s+title|document|新規)(?![\p{L}\p{N}])/iu;
+
+export function isOwnUrl(url: string): boolean {
+  try {
+    const hosts = (process.env.SELF_ORIGIN_HOSTS || '100zem.ru,www.100zem.ru')
+      .split(',').map(h => h.trim().replace(/^www\./, '')).filter(Boolean);
+    return hosts.includes(new URL(url).hostname.replace(/^www\./, ''));
+  } catch {
+    return false;
+  }
+}
+
+export function isUsableTitle(title: string): boolean {
+  const t = String(title || '').trim();
+  return t.length >= 8 && !PLACEHOLDER_TITLE_RE.test(t);
+}
+
 export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
   // Skip punycode (cyrillic) домены — Node DNS нестабильно их резолвит (ENOTFOUND),
   // тратим 3 × 45s = 2.25 мин на попытки. Fail fast.
@@ -168,8 +217,10 @@ export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
   const MAX_ATTEMPTS = 3;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      const response = await axios.get(url, {
+      const target = toOriginFetch(url);
+      const response = await axios.get(target.url, {
         headers: {
+          ...(target.host ? { Host: target.host } : {}),
           'User-Agent': uas[attempt],
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'ru-RU,ru;q=0.9,en;q=0.8',
@@ -183,12 +234,42 @@ export async function parseArticleFromUrl(url: string): Promise<ParsedArticle> {
         },
         timeout: 25000, // было 45000 — Cian/Avito либо отвечают быстро, либо 403/429
         maxRedirects: 5,
+        // 🚨 Origin отдаёт 301 на канонический адрес, СОХРАНЯЯ порт 8082 — редирект уводил
+        // на http://100zem.ru:8082, то есть на публичный IP прокси, где этот порт закрыт
+        // (ECONNREFUSED 161.104.16.26:8082). Держим переходы на origin.
+        beforeRedirect: (opts: any) => {
+          if (!target.host) return;
+          try {
+            const base = new URL(target.url);
+            if (opts.hostname && opts.hostname !== base.hostname) {
+              opts.hostname = base.hostname;
+              opts.host = base.host;
+              opts.port = base.port || opts.port;
+              opts.protocol = base.protocol;
+              if (opts.headers) opts.headers.Host = target.host;
+            }
+          } catch { /* оставляем как есть */ }
+        },
         validateStatus: (s) => s < 400,
         proxy: false, // фетчить напрямую (датацентр-прокси мёртв → таймауты 0/3 конкурентов; домашний IP лучше для скрейпинга)
       });
-      return parseHtml(url, response.data as string);
+      const parsed = parseHtml(url, response.data as string);
+      // Свою страницу без внятного заголовка в генерацию не отдаём: её title
+      // становится темой статьи, и пайплайн уходит писать «про без заголовка».
+      if (isOwnUrl(url) && !isUsableTitle(parsed.title)) {
+        console.error(
+          `[articleParser] свой URL без пригодного заголовка: ${url} ` +
+          `(title=${JSON.stringify(parsed.title)}, h1=${parsed.headings.filter(h => h.level === 'H1').length}, ` +
+          `words=${parsed.wordCount}) — отказ вместо мусорной темы`
+        );
+        const titleError: any = new Error(`unusable title for own page: ${url}`);
+        titleError.noRetry = true; // не сеть — повтор даст тот же результат
+        throw titleError;
+      }
+      return parsed;
     } catch (err: any) {
       lastError = err;
+      if (err?.noRetry) throw err;
       // 401/403/429 — сайт нас блокирует, повтор не поможет, bail early
       const status = err?.response?.status;
       if (status === 401 || status === 403 || status === 429) {
@@ -207,11 +288,13 @@ function parseHtml(url: string, html: string): ParsedArticle {
   // Remove noise — keep <header> because WP puts <h1 class="entry-title"> inside it
   $('script, style, nav, footer, aside, .sidebar, .menu, .navigation, .ad, .advertisement, .comments, .comment-form, iframe, noscript, #masthead, .site-header, header.site-header, #colophon').remove();
 
-  // Title
+  // Title. Никакого placeholder-фолбэка: пустой заголовок должен быть виден
+  // вызывающему коду как пустой, иначе он уезжает темой в генерацию статьи.
   const title =
     $('h1').first().text().trim() ||
+    ($('meta[property="og:title"]').attr('content') || '').trim() ||
     $('title').text().trim() ||
-    'Без заголовка';
+    '';
 
   // Meta description
   const metaDescription =

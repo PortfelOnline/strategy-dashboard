@@ -49,16 +49,24 @@ function imageExtension(mimeType: string, source: string): string {
 /**
  * Verify credentials by calling /wp-json/wp/v2/users/me
  */
+const _connCache = new Map<string, { val: WpUserInfo; ts: number }>();
+
 export async function testConnection(
   siteUrl: string,
   username: string,
   appPassword: string
 ): Promise<WpUserInfo> {
+  // Кеш 10 мин: дашборд дергал users/me на каждый чих (505 запросов/2 дня по ~0.7с)
+  const key = `${siteUrl}|${username}`;
+  const hit = _connCache.get(key);
+  if (hit && Date.now() - hit.ts < 600_000) return hit.val;
   try {
     const response = await axios.get(`${apiBase(siteUrl)}/users/me`, {
       headers: { Authorization: basicAuth(username, appPassword) },
     });
-    return { name: response.data.name, url: response.data.url || siteUrl };
+    const val = { name: response.data.name, url: response.data.url || siteUrl };
+    _connCache.set(key, { val, ts: Date.now() });
+    return val;
   } catch (error: any) {
     const msg = error?.response?.data?.message || error?.message || 'Connection failed';
     console.error('[WordPress API] testConnection error:', msg);
@@ -81,7 +89,18 @@ export async function findPostBySlug(
       headers: { Authorization: basicAuth(username, appPassword) },
       proxy: false,  // don't route WP reads through the SERP proxy (avoids 400)
     });
-    const posts = response.data;
+    let posts = response.data;
+    // 🚨 Без status WP отдаёт только publish. Новая evergreen-страница лежит
+    // черновиком, пока её наполняет конвейер, — иначе пустышка «<Заголовок>.»
+    // висела бы в выдаче все сорок минут генерации. Ищем и среди черновиков.
+    if (!Array.isArray(posts) || posts.length === 0) {
+      const draftResp = await axios.get(`${apiBase(siteUrl)}/posts/`, {
+        params: { slug, status: 'draft', context: 'edit', _fields: 'id,title,slug,link,content,excerpt', per_page: 1 },
+        headers: { Authorization: basicAuth(username, appPassword) },
+        proxy: false,
+      }).catch(() => null);
+      posts = draftResp?.data;
+    }
     if (!Array.isArray(posts) || posts.length === 0) return null;
     const p = posts[0];
     return { id: p.id, title: p.title?.rendered || p.title, slug: p.slug, link: p.link, content: p.content, excerpt: p.excerpt };
@@ -325,7 +344,10 @@ export async function searchMedia(
   perPage = 10
 ): Promise<{ id: number; url: string; width: number; height: number; alt: string; title: string }[]> {
   try {
-    const response = await axios.get(`${apiBase(siteUrl)}/media`, {
+    // 🚨 19.08.2026: без завершающего слеша WP отдаёт 301, axios теряет параметры
+    // и поиск всегда возвращал пусто — отсюда «WP library: 0» при 23 588 картинках
+    // в медиатеке. У /posts/ слеш есть, у /media его забыли.
+    const response = await axios.get(`${apiBase(siteUrl)}/media/`, {
       params: {
         search: keyword,
         per_page: perPage,
@@ -349,6 +371,65 @@ export async function searchMedia(
 }
 
 /**
+ * Media items attached to a post (post_parent). Reliable alternative to
+ * searchMedia's text search — used to find images already generated for
+ * a given article. 02.09.2026: searchMedia missed exact-title matches
+ * (15993 orphaned images accumulated over time, post_parent=0), while
+ * lookup by parent is an indexed, exact match — no search-relevance guesswork.
+ */
+export async function getMediaByParent(
+  siteUrl: string,
+  username: string,
+  appPassword: string,
+  parentId: number,
+  perPage = 20
+): Promise<{ id: number; url: string; width: number; height: number; alt: string; title: string }[]> {
+  try {
+    const response = await axios.get(`${apiBase(siteUrl)}/media/`, {
+      params: {
+        parent: parentId,
+        per_page: perPage,
+        media_type: 'image',
+        _fields: 'id,source_url,alt_text,title,media_details',
+      },
+      headers: { Authorization: basicAuth(username, appPassword) },
+    });
+    return (response.data as any[]).map((item) => ({
+      id: item.id,
+      url: item.source_url,
+      width: item.media_details?.width ?? 0,
+      height: item.media_details?.height ?? 0,
+      alt: item.alt_text || item.title?.rendered || '',
+      title: item.title?.rendered || '',
+    }));
+  } catch (e: any) {
+    console.warn('[WordPress API] getMediaByParent error:', e?.message);
+    return [];
+  }
+}
+
+/**
+ * Attach an uploaded media item to its article (post_parent) right after
+ * upload, so it stops being an orphan and getMediaByParent can find it later.
+ */
+export async function setMediaParent(
+  siteUrl: string,
+  username: string,
+  appPassword: string,
+  mediaId: number,
+  parentId: number,
+): Promise<void> {
+  try {
+    await axios.post(`${apiBase(siteUrl)}/media/${mediaId}/`, { post: parentId }, {
+      headers: { Authorization: basicAuth(username, appPassword), 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
+  } catch (e: any) {
+    console.warn('[WordPress API] setMediaParent error:', e?.message);
+  }
+}
+
+/**
  * Delete a WP post (move to trash)
  */
 export async function deletePost(
@@ -358,7 +439,7 @@ export async function deletePost(
   postId: number,
 ): Promise<void> {
   try {
-    await axios.delete(`${apiBase(siteUrl)}/posts/${postId}`, {
+    await axios.delete(`${apiBase(siteUrl)}/posts/${postId}/`, {
       headers: { Authorization: basicAuth(username, appPassword) },
     });
   } catch (error: any) {

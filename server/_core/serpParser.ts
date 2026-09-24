@@ -1,3 +1,5 @@
+import * as nodeFs from 'fs';
+import * as nodePath from 'path';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -121,16 +123,41 @@ const SEARXNG_URL = process.env.SEARXNG_URL;
 
 async function fetchSearxngSerp(keyword: string, engine: 'google' | 'yandex'): Promise<SerpData> {
   if (!SEARXNG_URL) return { engine, keyword, results: [], error: 'SEARXNG_URL not configured' };
-  // Google actively blocks SearXNG scraping → for the "google" slot use reliable
-  // captcha-free engines instead; Yandex works directly.
-  const engines = engine === 'yandex' ? 'yandex' : 'duckduckgo';
+  // 🚨 13.08.2026: SearXNG используем только под Яндекс. Раньше google-слот
+  // подменялся на duckduckgo, но тот отдаёт CAPTCHA, и половина кандидатов
+  // приходила пустой. Google берётся через свои API выше по цепочке
+  // (fetchGoogleSerp: SerpApi/CSE), поэтому здесь просто выходим.
+  if (engine !== 'yandex') {
+    return { engine, keyword, results: [], error: 'searxng: google идёт через API' };
+  }
+  const engines = 'yandex';
+  // Сколько страниц выдачи забираем. Одной не хватает: из ~18 кандидатов живыми
+  // (не 401/403, не SLOW_DOMAINS) оказываются примерно пять, а конкурентов
+  // разбираем десять.
+  const SERP_PAGES = Number(process.env.SERP_PAGES ?? 2);
+
   try {
-    const resp = await axios.get(`${SEARXNG_URL.replace(/\/$/, '')}/search`, {
-      params: { q: keyword, format: 'json', language: 'ru-RU', engines },
-      timeout: 25000,
-      proxy: false,
-    });
-    const raw: any[] = resp.data?.results ?? [];
+    const pages = await Promise.all(
+      Array.from({ length: Math.max(1, SERP_PAGES) }, (_, i) =>
+        axios.get(`${SEARXNG_URL.replace(/\/$/, '')}/search`, {
+          params: { q: keyword, format: 'json', language: 'ru-RU', engines, pageno: i + 1 },
+          timeout: 25000,
+          proxy: false,
+        }).catch(() => null),
+      ),
+    );
+
+    const seen = new Set<string>();
+    const raw: any[] = [];
+    for (const resp of pages) {
+      for (const r of (resp?.data?.results ?? [])) {
+        const u = typeof r?.url === 'string' ? r.url : '';
+        if (!u || seen.has(u)) continue;
+        seen.add(u);
+        raw.push(r);
+      }
+    }
+    if (raw.length === 0) return { engine, keyword, results: [], error: 'searxng empty' };
     const results: SerpResult[] = raw
       .filter((r) => typeof r?.url === 'string' && r.url.startsWith('http'))
       .map((r, i) => ({
@@ -140,7 +167,7 @@ async function fetchSearxngSerp(keyword: string, engine: 'google' | 'yandex'): P
         domain: extractDomain(r.url),
         snippet: cleanText(r.content || '').slice(0, 300),
       }))
-      .slice(0, 30);
+      .slice(0, 50);
     if (results.length > 0) return { engine, keyword, results };
     return { engine, keyword, results: [], error: 'searxng empty' };
   } catch (err: any) {
@@ -173,9 +200,129 @@ async function fetchGoogleSerpPuppeteer(keyword: string): Promise<SerpData> {
   return { engine: 'google', keyword, results: [], error: 'puppeteer failed' };
 }
 
+// Real Google SERP via SerpAPI (free 250 searches/month). When the quota is out
+// the call errors and we fall back to the SearXNG surrogate, then Puppeteer.
+async function fetchGoogleSerpViaSerpApi(keyword: string): Promise<SerpData | null> {
+  if (!SERPAPI_KEY) return null;
+  try {
+    const data = await fetchViaSerpApi({ engine: 'google', q: keyword, hl: 'ru', gl: 'ru', num: '20' });
+    const raw: any[] = data?.organic_results ?? [];
+    const results: SerpResult[] = raw
+      .filter((r) => typeof r?.link === 'string' && r.link.startsWith('http'))
+      .map((r, i) => ({
+        position: r.position ?? i + 1,
+        title: cleanText(r.title || ''),
+        url: r.link,
+        domain: extractDomain(r.link),
+        snippet: cleanText(r.snippet || '').slice(0, 300),
+      }));
+    if (results.length > 0) return { engine: 'google', keyword, results };
+  } catch (err: any) {
+    console.warn('[SERP] SerpAPI Google error:', err?.response?.data?.error || err?.message);
+  }
+  return null;
+}
+
+// Real Google via Custom Search JSON API — free 100 requests/day (3000/мес), enough
+// for the nightly batch. Needs GOOGLE_CSE_KEY (API key, GCP) + GOOGLE_CSE_CX (engine id
+// from programmablesearchengine.google.com with "search the entire web" enabled).
+const GOOGLE_CSE_KEY = process.env.GOOGLE_CSE_KEY;
+const GOOGLE_CSE_CX = process.env.GOOGLE_CSE_CX;
+
+async function fetchGoogleSerpViaCse(keyword: string): Promise<SerpData | null> {
+  if (!GOOGLE_CSE_KEY || !GOOGLE_CSE_CX) return null;
+  try {
+    const results: SerpResult[] = [];
+    for (const start of [1, 11]) { // две страницы по 10 = топ-20
+      const resp = await axios.get('https://www.googleapis.com/customsearch/v1', {
+        params: { key: GOOGLE_CSE_KEY, cx: GOOGLE_CSE_CX, q: keyword, hl: 'ru', gl: 'ru', num: 10, start },
+        timeout: 20000,
+      });
+      const items: any[] = resp.data?.items ?? [];
+      for (const it of items) {
+        if (typeof it?.link !== 'string' || !it.link.startsWith('http')) continue;
+        results.push({
+          position: results.length + 1,
+          title: cleanText(it.title || ''),
+          url: it.link,
+          domain: extractDomain(it.link),
+          snippet: cleanText(it.snippet || '').slice(0, 300),
+        });
+      }
+      if (items.length < 10) break;
+    }
+    if (results.length > 0) return { engine: 'google', keyword, results };
+  } catch (err: any) {
+    console.warn('[SERP] Google CSE error:', err?.response?.data?.error?.message || err?.message);
+  }
+  return null;
+}
+
+// Real Google via Serper.dev (free 2500 credits, аккаунт grudeves@gmail.com).
+// Основной источник: CSE отпал — Google закрыл «Search the entire web» для новых движков.
+const SERPER_KEY = process.env.SERPER_KEY;
+
+function bumpSerperUsage(kind: string): void {
+  // 🚨 13.08.2026: здесь был require() внутри ESM-сборки — вызов падал, а пустой
+  // catch его глушил, поэтому расход Serper не считался вообще (0 записей типа
+  // "search" при живых запросах). Пишем через статические импорты.
+  try {
+    const dir = process.env.DATA_DIR || nodePath.join(process.cwd(), 'data');
+    nodeFs.appendFileSync(nodePath.join(dir, 'serper-usage.log'),
+      `${new Date().toISOString().slice(0, 10)}\t${kind}\n`);
+  } catch (e: any) {
+    console.warn('[SERP] счётчик Serper не записался:', e?.message?.slice(0, 80));
+  }
+}
+
+async function fetchGoogleSerpViaSerper(keyword: string): Promise<SerpData | null> {
+  if (!SERPER_KEY) return null;
+  try {
+    bumpSerperUsage('search');
+    const resp = await axios.post('https://google.serper.dev/search',
+      { q: keyword, gl: 'ru', hl: 'ru', num: 20 },
+      { headers: { 'X-API-KEY': SERPER_KEY, 'Content-Type': 'application/json' }, timeout: 20000 },
+    );
+    const raw: any[] = resp.data?.organic ?? [];
+    const results: SerpResult[] = raw
+      .filter((r) => typeof r?.link === 'string' && r.link.startsWith('http'))
+      .map((r, i) => ({
+        position: r.position ?? i + 1,
+        title: cleanText(r.title || ''),
+        url: r.link,
+        domain: extractDomain(r.link),
+        snippet: cleanText(r.snippet || '').slice(0, 300),
+      }));
+    if (results.length > 0) return { engine: 'google', keyword, results };
+  } catch (err: any) {
+    console.warn('[SERP] Serper error:', err?.response?.data?.message || err?.message);
+  }
+  return null;
+}
+
 export async function fetchGoogleSerp(keyword: string): Promise<SerpData> {
+  // Логируем, КАКОЙ источник реально отдал выдачу: 13.08.2026 счётчик serper-usage
+  // не рос, и понять по логам, работает ли основной источник, было нельзя.
+  const srp = await fetchGoogleSerpViaSerper(keyword); // 2500 фри-кредитов — основной
+  if (srp) { console.log(`[SERP] Google via serper: ${srp.results.length} рез. "${keyword}"`); return srp; }
+  const cse = await fetchGoogleSerpViaCse(keyword); // задел: если появится engine со всем вебом
+  if (cse) { console.log(`[SERP] Google via CSE: ${cse.results.length} рез.`); return cse; }
+  const api = await fetchGoogleSerpViaSerpApi(keyword); // 250/мес — резерв
+  if (api) { console.warn(`[SERP] Google via SerpApi (резерв 250/мес): ${api.results.length} рез.`); return api; }
   const sx = await fetchSearxngSerp(keyword, 'google');
   if (sx.results.length > 0) return sx;
+  return fetchGoogleSerpPuppeteer(keyword);
+}
+
+// Бесплатная цепочка без API-квот (searxng/ddg → puppeteer) — для массовых фоновых
+// проверок вроде CRAG-фактчека (~8 запросов на статью), где жечь CSE/SerpAPI нельзя.
+export async function fetchFreeGoogleSerp(keyword: string): Promise<SerpData> {
+  const sx = await fetchSearxngSerp(keyword, 'google');
+  if (sx.results.length > 0) return sx;
+  // ddg при серийных запросах (CRAG: 8 подряд) пустеет — яндекс-движок надёжнее
+  // и для проверки русскоязычных фактов даже релевантнее.
+  const yx = await fetchSearxngSerp(keyword, 'yandex');
+  if (yx.results.length > 0) return yx;
   return fetchGoogleSerpPuppeteer(keyword);
 }
 

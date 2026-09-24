@@ -21,7 +21,8 @@
 - 23 targeted Vitest tests pass.
 - `npm run build` passes locally and in the production Docker build.
 - The dashboard app is running; unauthenticated root requests correctly receive HTTP 401.
+- Supervised dry-run passed: GSC returned 754 page positions, the queue selected exactly three URLs, and zero `/reestr/` URLs were selected.
 
 ## Follow-up
 
-Perform a supervised dry-run before setting `SEO_POSITION_FEEDBACK_ENABLED=1`. Confirm no `/reestr/` URL and no more than three candidates, then review the first published cycles and their snapshots.
+Review the first published cycles and their snapshots after the next scheduled batch. Disable the flag immediately if a cycle lacks a baseline snapshot, contains `/reestr/`, or exceeds the three-URL cap.

@@ -51,9 +51,9 @@ CREATE TABLE `seo_improvement_cycles` (
   `cooldown_until` timestamp,
   `updated_at` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
   CONSTRAINT `seo_improvement_cycles_id` PRIMARY KEY(`id`),
-  CONSTRAINT `seo_improvement_cycles_snapshot_before_id_seo_page_snapshots_id_fk`
+  CONSTRAINT `seo_cycles_before_snapshot_fk`
     FOREIGN KEY (`snapshot_before_id`) REFERENCES `seo_page_snapshots`(`id`),
-  CONSTRAINT `seo_improvement_cycles_snapshot_after_id_seo_page_snapshots_id_fk`
+  CONSTRAINT `seo_cycles_after_snapshot_fk`
     FOREIGN KEY (`snapshot_after_id`) REFERENCES `seo_page_snapshots`(`id`)
 );
 

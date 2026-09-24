@@ -36,6 +36,21 @@ let lastStubSweep = 0;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
+/**
+ * Merge measured candidates with the existing safe queue. The feedback loop
+ * must never stop a nightly batch when GSC is unavailable, and never expands
+ * an automated batch beyond three URLs.
+ */
+export function selectPositionFeedbackBatch(rankedUrls: string[], fallbackUrls: string[]): { urls: string[]; usedFallback: boolean } {
+  const urls: string[] = [];
+  for (const url of [...rankedUrls, ...fallbackUrls]) {
+    if (!url || url.includes('/reestr/') || urls.includes(url)) continue;
+    urls.push(url);
+    if (urls.length === 3) break;
+  }
+  return { urls, usedFallback: rankedUrls.length === 0 };
+}
+
 export function getSchedulerConfig(): ArticleSchedulerConfig {
   try {
     if (fs.existsSync(CONFIG_FILE)) {

@@ -56,4 +56,15 @@ describe("SEO position feedback repository", () => {
     expect(saved[0]?.query).toBe("запрос 55");
     expect(saved.at(-1)?.query).toBe("запрос 6");
   });
+
+  it("reads a persisted snapshot by its cycle reference", async () => {
+    const repository = createInMemorySeoPositionFeedbackRepository();
+    const snapshot = await repository.saveSnapshot({
+      url: "https://100zem.ru/kadastr/a/", segment: "article", source: "google",
+      periodStart: new Date("2026-08-01"), periodEnd: new Date("2026-08-28"),
+      impressions: 100, clicks: 4, ctr: 0.04, position: 12, indexStatus: null,
+    });
+
+    expect((await repository.getSnapshot(snapshot.id))?.url).toBe(snapshot.url);
+  });
 });

@@ -54,6 +54,7 @@ export interface SeoCycleRecord extends ImprovementCycleInput {
 export interface SeoPositionFeedbackRepository {
   saveSnapshot(input: PageSnapshotInput): Promise<SeoSnapshotRecord>;
   saveQueries(snapshotId: number, queries: PageQueryInput[]): Promise<SeoQueryRecord[]>;
+  getSnapshot(id: number): Promise<SeoSnapshotRecord | null>;
   getLatestSnapshot(url: string, source?: SeoSource): Promise<SeoSnapshotRecord | null>;
   createCycle(input: ImprovementCycleInput): Promise<SeoCycleRecord>;
   updateCycle(id: number, patch: Partial<Omit<SeoCycleRecord, "id" | "url" | "segment" | "queuedAt">>): Promise<SeoCycleRecord | null>;
@@ -112,6 +113,7 @@ export function createInMemorySeoPositionFeedbackRepository(): SeoPositionFeedba
       queries.set(id, saved);
       return saved;
     },
+    async getSnapshot(id) { return snapshots.get([...snapshots.entries()].find(([, snapshot]) => snapshot.id === id)?.[0] ?? '') ?? null; },
     async getLatestSnapshot(url, source) {
       return [...snapshots.values()]
         .filter((snapshot) => snapshot.url === url && (!source || snapshot.source === source))
@@ -159,6 +161,12 @@ export const seoPositionFeedbackRepository: SeoPositionFeedbackRepository = {
     if (selected.length) await db.insert(seoPageQueries).values(selected.map((query) => ({ ...query, snapshotId })));
     const rows = await db.select().from(seoPageQueries).where(eq(seoPageQueries.snapshotId, snapshotId));
     return rows.map(toQueryRecord).sort((left, right) => right.impressions - left.impressions || right.clicks - left.clicks || left.query.localeCompare(right.query));
+  },
+  async getSnapshot(id) {
+    const db = await getDb();
+    if (!db) return null;
+    const rows = await db.select().from(seoPageSnapshots).where(eq(seoPageSnapshots.id, id)).limit(1);
+    return rows[0] ? toSnapshotRecord(rows[0]) : null;
   },
   async getLatestSnapshot(url, source) {
     const db = await getDb();

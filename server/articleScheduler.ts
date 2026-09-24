@@ -36,6 +36,24 @@ let lastStubSweep = 0;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let running = false;
 
+async function evaluateDuePositionFeedback(): Promise<void> {
+  if (process.env.SEO_POSITION_FEEDBACK_ENABLED !== '1') return;
+  const [{ fetchGscPageSnapshot }, { seoPositionFeedbackRepository }, { normalizeGscSnapshot }, { evaluateDueCycles }] = await Promise.all([
+    import('./_core/gscClient'),
+    import('./seoPositionFeedback.db'),
+    import('./seoPositionFeedback'),
+    import('./seoOutcomeEvaluator'),
+  ]);
+  await evaluateDueCycles(seoPositionFeedbackRepository, new Date(), async (url) => {
+    const signal = await fetchGscPageSnapshot(url);
+    if (!signal.ok || !signal.snapshot) return null;
+    const normalized = normalizeGscSnapshot({ url, ...signal.snapshot });
+    const snapshot = await seoPositionFeedbackRepository.saveSnapshot({ ...normalized.snapshot, source: 'google' });
+    await seoPositionFeedbackRepository.saveQueries(snapshot.id, normalized.queries);
+    return snapshot;
+  });
+}
+
 /**
  * Merge measured candidates with the existing safe queue. The feedback loop
  * must never stop a nightly batch when GSC is unavailable, and never expands
@@ -167,6 +185,8 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
   console.log('[ArticleScheduler] Ночной батч запущен');
 
   try {
+    await evaluateDuePositionFeedback().catch((error: any) =>
+      console.warn('[SEO feedback] не удалось оценить отложенные циклы:', error?.message));
     // Startup-race fix: дождаться готовности Flow (Nano Banana), чтобы ВСЕ картинки шли
     // через мост, а не в фолбэк (Chrome в viralcraft поднимается дольше, чем стартует батч).
     {

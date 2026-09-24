@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { double, index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -168,3 +168,56 @@ export const backlinkPosts = mysqlTable("backlinkPosts", {
 
 export type BacklinkPost = typeof backlinkPosts.$inferSelect;
 export type InsertBacklinkPost = typeof backlinkPosts.$inferInsert;
+
+/** Normalized 28-day search measurements. Raw provider payloads are never stored. */
+export const seoPageSnapshots = mysqlTable("seo_page_snapshots", {
+  id: int("id").autoincrement().primaryKey(),
+  url: varchar("url", { length: 512 }).notNull(),
+  segment: mysqlEnum("segment", ["article", "news", "reestr", "other"]).notNull(),
+  source: mysqlEnum("source", ["google", "yandex"]).notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  impressions: int("impressions").notNull().default(0),
+  clicks: int("clicks").notNull().default(0),
+  ctr: double("ctr").notNull().default(0),
+  position: double("position"),
+  indexStatus: varchar("index_status", { length: 128 }),
+  capturedAt: timestamp("captured_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("seo_page_snapshots_url_source_period_end_unique").on(table.url, table.source, table.periodEnd),
+  index("seo_page_snapshots_url_source_period_end_idx").on(table.url, table.source, table.periodEnd),
+]);
+
+export const seoPageQueries = mysqlTable("seo_page_queries", {
+  id: int("id").autoincrement().primaryKey(),
+  snapshotId: int("snapshot_id").notNull().references(() => seoPageSnapshots.id, { onDelete: "cascade" }),
+  query: varchar("query", { length: 512 }).notNull(),
+  impressions: int("impressions").notNull().default(0),
+  clicks: int("clicks").notNull().default(0),
+  ctr: double("ctr").notNull().default(0),
+  position: double("position"),
+}, (table) => [index("seo_page_queries_snapshot_idx").on(table.snapshotId)]);
+
+export const seoImprovementCycles = mysqlTable("seo_improvement_cycles", {
+  id: int("id").autoincrement().primaryKey(),
+  url: varchar("url", { length: 512 }).notNull(),
+  segment: mysqlEnum("segment", ["article", "news", "reestr", "other"]).notNull(),
+  snapshotBeforeId: int("snapshot_before_id").references(() => seoPageSnapshots.id),
+  snapshotAfterId: int("snapshot_after_id").references(() => seoPageSnapshots.id),
+  hypothesis: mysqlEnum("hypothesis", ["intent_gap", "snippet", "ctr_metadata", "internal_links", "freshness", "content_quality"]).notNull(),
+  status: mysqlEnum("status", ["queued", "published", "measuring", "won", "lost", "inconclusive"]).notNull().default("queued"),
+  outcomeReason: text("outcome_reason"),
+  beforeContentHash: varchar("before_content_hash", { length: 64 }),
+  afterContentHash: varchar("after_content_hash", { length: 64 }),
+  queuedAt: timestamp("queued_at").notNull().defaultNow(),
+  publishedAt: timestamp("published_at"),
+  nextMeasurementAt: timestamp("next_measurement_at"),
+  cooldownUntil: timestamp("cooldown_until"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow().onUpdateNow(),
+}, (table) => [
+  index("seo_improvement_cycles_url_status_idx").on(table.url, table.status),
+  index("seo_improvement_cycles_measurement_idx").on(table.nextMeasurementAt),
+]);
+
+export type SeoPageSnapshot = typeof seoPageSnapshots.$inferSelect;
+export type SeoImprovementCycle = typeof seoImprovementCycles.$inferSelect;

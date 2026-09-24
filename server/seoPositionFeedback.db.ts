@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, lte } from "drizzle-orm";
 import { seoImprovementCycles, seoPageQueries, seoPageSnapshots } from "../drizzle/schema";
 import { getDb } from "./db";
 
@@ -59,6 +59,8 @@ export interface SeoPositionFeedbackRepository {
   createCycle(input: ImprovementCycleInput): Promise<SeoCycleRecord>;
   updateCycle(id: number, patch: Partial<Omit<SeoCycleRecord, "id" | "url" | "segment" | "queuedAt">>): Promise<SeoCycleRecord | null>;
   listDueCycles(now: Date): Promise<SeoCycleRecord[]>;
+  listRecentCycles(limit: number): Promise<SeoCycleRecord[]>;
+  hasActiveHypothesisCooldown(url: string, hypothesis: SeoHypothesis, now: Date): Promise<boolean>;
 }
 
 const toSnapshotRecord = (row: typeof seoPageSnapshots.$inferSelect): SeoSnapshotRecord => ({
@@ -138,6 +140,12 @@ export function createInMemorySeoPositionFeedbackRepository(): SeoPositionFeedba
     async listDueCycles(now) {
       return [...cycles.values()].filter((cycle) => cycle.nextMeasurementAt && cycle.nextMeasurementAt <= now);
     },
+    async listRecentCycles(limit) {
+      return [...cycles.values()].sort((left, right) => right.queuedAt.getTime() - left.queuedAt.getTime() || right.id - left.id).slice(0, limit);
+    },
+    async hasActiveHypothesisCooldown(url, hypothesis, now) {
+      return [...cycles.values()].some((cycle) => cycle.url === url && cycle.hypothesis === hypothesis && cycle.cooldownUntil != null && cycle.cooldownUntil > now);
+    },
     async countSnapshots() { return snapshots.size; },
   };
 }
@@ -198,5 +206,18 @@ export const seoPositionFeedbackRepository: SeoPositionFeedbackRepository = {
       .where(and(inArray(seoImprovementCycles.status, ["published", "measuring"]), lte(seoImprovementCycles.nextMeasurementAt, now)))
       .orderBy(seoImprovementCycles.nextMeasurementAt);
     return rows.map(toCycleRecord);
+  },
+  async listRecentCycles(limit) {
+    const db = await getDb();
+    if (!db) return [];
+    const rows = await db.select().from(seoImprovementCycles).orderBy(desc(seoImprovementCycles.queuedAt), desc(seoImprovementCycles.id)).limit(Math.max(1, Math.min(limit, 100)));
+    return rows.map(toCycleRecord);
+  },
+  async hasActiveHypothesisCooldown(url, hypothesis, now) {
+    const db = await getDb();
+    if (!db) return false;
+    const rows = await db.select({ id: seoImprovementCycles.id }).from(seoImprovementCycles)
+      .where(and(eq(seoImprovementCycles.url, url), eq(seoImprovementCycles.hypothesis, hypothesis), gt(seoImprovementCycles.cooldownUntil, now))).limit(1);
+    return Boolean(rows[0]);
   },
 };

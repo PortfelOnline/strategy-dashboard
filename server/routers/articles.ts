@@ -24,6 +24,7 @@ import { extractSlugPromises, findUncoveredPromises, buildSlugPromiseBlock } fro
 import { publicSiteBase } from "../_core/publicUrl";
 import { getEnhancePassLimit, validateArticleForPublish } from "../articlePublishGate";
 import * as wordpressDb from "../wordpress.db";
+import { seoPositionFeedbackRepository } from "../seoPositionFeedback.db";
 
 // ── Google Indexing API: реальный запрос переобхода (заменяет мёртвый ping sitemap,
 //    который Google отключил в 2023). Требует, чтобы service account был OWNER ресурса в GSC.
@@ -5132,6 +5133,11 @@ ${competitorSection}
       if (!job) return { running: false, done: 0, total: 0, errors: 0, current: '' };
       return { running: job.running, done: job.done, total: job.total, errors: job.errors, current: job.current };
     }),
+
+  /** Read-only status for the measured SEO feedback loop. */
+  getPositionFeedbackCycles: protectedProcedure
+    .input(z.object({ limit: z.number().int().min(1).max(100).optional() }).optional())
+    .query(async ({ input }) => seoPositionFeedbackRepository.listRecentCycles(input?.limit ?? 20)),
 
   stopBatchRewrite: protectedProcedure
     .mutation(async ({ ctx }) => {

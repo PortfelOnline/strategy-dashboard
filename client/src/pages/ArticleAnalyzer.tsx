@@ -3920,6 +3920,10 @@ export default function ArticleAnalyzer() {
   const { data: schedulerData, refetch: refetchScheduler } = trpc.articles.getSchedulerConfig.useQuery(undefined, {
     enabled: activeTab === 'auto',
   });
+  const { data: positionFeedbackCycles = [] } = trpc.articles.getPositionFeedbackCycles.useQuery(
+    { limit: 12 },
+    { enabled: activeTab === 'auto', refetchInterval: 30_000 },
+  );
   const [schedulerForm, setSchedulerForm] = useState({
     enabled: false, catalogUrl: 'https://kadastrmap.info/kadastr/',
     articlesPerNight: 20, hour: 2, userId: 1, skipImprovedDays: 30,
@@ -4720,6 +4724,47 @@ export default function ArticleAnalyzer() {
                       <div className="text-center py-6 text-slate-400 text-sm">
                         <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
                         Загрузка статистики...
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <TrendingUp className="w-4 h-4 text-emerald-600" />
+                      SEO feedback: измеряемые циклы
+                      <Badge variant="outline" className="text-xs font-normal ml-1">read-only</Badge>
+                    </CardTitle>
+                    <p className="text-sm text-slate-500">Публикация не управляется отсюда: здесь только гипотеза, замер и итог.</p>
+                  </CardHeader>
+                  <CardContent>
+                    {positionFeedbackCycles.length === 0 ? (
+                      <p className="py-3 text-sm text-slate-400">Циклов пока нет: feature flag выключен или первый измеряемый batch ещё не запускался.</p>
+                    ) : (
+                      <div className="overflow-x-auto rounded-lg border">
+                        <table className="w-full text-xs">
+                          <thead className="bg-slate-50 text-slate-500">
+                            <tr>
+                              <th className="px-3 py-2 text-left font-medium">URL</th>
+                              <th className="px-3 py-2 text-left font-medium">Гипотеза</th>
+                              <th className="px-3 py-2 text-left font-medium">Статус</th>
+                              <th className="px-3 py-2 text-left font-medium">Причина</th>
+                              <th className="px-3 py-2 text-left font-medium">Следующий замер</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {positionFeedbackCycles.map((cycle) => (
+                              <tr key={cycle.id} className="hover:bg-slate-50/70">
+                                <td className="max-w-[260px] truncate px-3 py-2 font-medium text-slate-700" title={cycle.url}>{cycle.url}</td>
+                                <td className="px-3 py-2 text-slate-600">{cycle.hypothesis}</td>
+                                <td className="px-3 py-2"><Badge variant="outline" className={cycle.status === 'won' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : cycle.status === 'lost' ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 text-slate-600'}>{cycle.status}</Badge></td>
+                                <td className="max-w-[220px] truncate px-3 py-2 text-slate-500" title={cycle.outcomeReason ?? ''}>{cycle.outcomeReason ?? '—'}</td>
+                                <td className="whitespace-nowrap px-3 py-2 text-slate-500">{cycle.nextMeasurementAt ? new Date(cycle.nextMeasurementAt).toLocaleDateString('ru-RU') : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     )}
                   </CardContent>

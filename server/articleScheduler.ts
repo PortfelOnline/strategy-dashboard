@@ -4,6 +4,8 @@ import { scanCatalog } from './_core/articleParser';
 import * as articlesDb from './articles.db';
 import { getAvgNewArticleImageCount } from './_core/imageStats';
 import { alertPublishFailure } from './_core/alert';
+import { scoreCandidate, type CandidateInput } from './seoImprovementScorer';
+import { segmentForUrl } from './seoPositionFeedback';
 
 export interface ArticleSchedulerConfig {
   enabled: boolean;
@@ -67,6 +69,16 @@ export function selectPositionFeedbackBatch(rankedUrls: string[], fallbackUrls: 
     if (urls.length === 3) break;
   }
   return { urls, usedFallback: rankedUrls.length === 0 };
+}
+
+/** The feature batch is selected by the shared scorer, not scheduler-local heuristics. */
+export function selectScoredPositionFeedbackBatch(candidates: CandidateInput[], now = new Date()): string[] {
+  return candidates
+    .map((candidate) => ({ candidate, score: scoreCandidate(candidate, now) }))
+    .filter(({ score }) => score.eligible)
+    .sort((left, right) => right.score.score - left.score.score || left.candidate.url.localeCompare(right.candidate.url))
+    .slice(0, 3)
+    .map(({ candidate }) => candidate.url);
 }
 
 export function getSchedulerConfig(): ArticleSchedulerConfig {
@@ -256,11 +268,14 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - config.skipImprovedDays);
     const history = await articlesDb.getUserAnalysisHistory(config.userId, 5000);
-    const recentUrls = new Set(
-      history
-        .filter(h => new Date(h.createdAt) >= cutoff)
-        .map(h => h.url),
-    );
+    const recentImprovedAt = new Map<string, Date>();
+    for (const item of history) {
+      const improvedAt = new Date(item.createdAt);
+      if (improvedAt < cutoff) continue;
+      const previous = recentImprovedAt.get(item.url);
+      if (!previous || improvedAt > previous) recentImprovedAt.set(item.url, improvedAt);
+    }
+    const recentUrls = new Set(recentImprovedAt.keys());
 
     // Приоритет: проблемные статьи из смыслового аудита (data/needs-improve.txt,
     // пишет scripts/map-audit.ts) — тонкие, без картинок, с обрывами. Берём их
@@ -340,9 +355,43 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
     const moneyFirst = (list: string[]) => [...list.filter(isMoney), ...list.filter(u => !isMoney(u))];
     const feedbackEnabled = process.env.SEO_POSITION_FEEDBACK_ENABLED === '1';
     const rankedUrls = [...moneyFirst(nm), ...moneyFirst(rest)];
-    const toProcess = feedbackEnabled
-      ? selectPositionFeedbackBatch(rankedUrls, priority).urls
+    let toProcess = feedbackEnabled
+      ? selectScoredPositionFeedbackBatch(rankedUrls.map((url): CandidateInput => {
+          const position = posMap.get(normPath(url));
+          return {
+            url,
+            segment: segmentForUrl(url),
+            impressions: position?.impressions ?? 0,
+            clicks: position?.clicks ?? 0,
+            ctr: position?.impressions ? position.clicks / position.impressions : 0,
+            position: position?.position ?? null,
+            indexStatus: null,
+            queued: priority.includes(url),
+            lastImprovedAt: recentImprovedAt.get(url) ?? null,
+            lostHypotheses: [],
+          };
+        }))
       : rankedUrls.slice(0, config.articlesPerNight);
+    if (feedbackEnabled && toProcess.length) {
+      const [{ seoPositionFeedbackRepository }, { chooseHypothesis }] = await Promise.all([
+        import('./seoPositionFeedback.db'),
+        import('./seoImprovementScorer'),
+      ]);
+      const now = new Date();
+      const allowed: string[] = [];
+      for (const url of toProcess) {
+        const position = posMap.get(normPath(url));
+        const hypothesis = chooseHypothesis({
+          lowCtr: Boolean(position?.impressions && position.impressions >= 100 && position.clicks / position.impressions < 0.02),
+        });
+        if (await seoPositionFeedbackRepository.hasActiveHypothesisCooldown(url, hypothesis, now)) {
+          console.log(`[SEO feedback] cooldown ${hypothesis}: ${url}`);
+          continue;
+        }
+        allowed.push(url);
+      }
+      toProcess = allowed;
+    }
     console.log(`[ArticleScheduler] денежных в батче: ${toProcess.filter(isMoney).length}/${toProcess.length}`);
     if (nm.length) {
       console.log(`[ArticleScheduler] 🎯 rank-feedback: ${nm.length} near-miss статей (поз.4-20) в приоритет — дожимаем в топ`);
@@ -360,7 +409,7 @@ export async function runScheduledBatch(config: ArticleSchedulerConfig): Promise
     console.log(`[ArticleScheduler] Обрабатываем ${toProcess.length} статей...`);
     const feedbackCycleIds = new Map<string, number>();
     if (feedbackEnabled) {
-      const [{ fetchGscPageSnapshot }, { seoPositionFeedbackRepository }, { normalizeGscSnapshot, segmentForUrl }, { chooseHypothesis }] = await Promise.all([
+      const [{ fetchGscPageSnapshot }, { seoPositionFeedbackRepository }, { normalizeGscSnapshot }, { chooseHypothesis }] = await Promise.all([
         import('./_core/gscClient'),
         import('./seoPositionFeedback.db'),
         import('./seoPositionFeedback'),

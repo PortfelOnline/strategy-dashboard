@@ -47,13 +47,17 @@ export interface GscPageSnapshotResult {
   reason?: string;
 }
 
+export function requireGscResponse(successfulProperties: number): void {
+  if (successfulProperties === 0) throw new Error('No GSC property responded');
+}
+
 /** Comparable delayed 28-day page window for the feedback loop; never throws. */
 export async function fetchGscPageSnapshot(pageUrl: string, now = new Date()): Promise<GscPageSnapshotResult> {
   try {
     const periodEnd = subDays(now, 3), periodStart = subDays(periodEnd, 27);
     const fullUrl = pageUrl.startsWith('http') ? pageUrl : `${DEFAULT_SITE_BASE}${pageUrl}`;
-    const queries = await fetchGscPageQueries(fullUrl, 28, 50);
-    const stats = await fetchGscAllPagePositions(28);
+    const queries = await fetchGscPageQueries(fullUrl, 28, 50, true);
+    const stats = await fetchGscAllPagePositions(28, 5000, true);
     const page = stats.get(pathnameOf(fullUrl));
     return { ok: true, snapshot: { periodStart, periodEnd, clicks: page?.clicks ?? 0, impressions: page?.impressions ?? 0, ctr: page?.impressions ? page.clicks / page.impressions : 0, position: page?.position ?? null, queries: queries.map(q => ({ ...q, ctr: q.impressions ? q.clicks / q.impressions : 0 })) } };
   } catch (error: any) { return { ok: false, reason: error?.message || 'GSC request failed' }; }
@@ -98,6 +102,7 @@ export async function fetchGscPageQueries(
   pageUrl: string,
   days = 28,
   limit = 20,
+  requireResponse = false,
 ): Promise<GscQuery[]> {
   const endDate = format(subDays(new Date(), 1), 'yyyy-MM-dd');
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
@@ -106,6 +111,7 @@ export async function fetchGscPageQueries(
 
   const sc = getService();
   const merged = new Map<string, { clicks: number; impressions: number; posW: number }>();
+  let successfulProperties = 0;
 
   for (const site of SITES) {
     try {
@@ -126,6 +132,7 @@ export async function fetchGscPageQueries(
           }],
         } as any,
       } as any);
+      successfulProperties++;
       for (const r of ((res as any).data?.rows || [])) {
         const q = r.keys[0] as string;
         const cur = merged.get(q) ?? { clicks: 0, impressions: 0, posW: 0 };
@@ -138,6 +145,7 @@ export async function fetchGscPageQueries(
       console.warn(`[GSC] fetchGscPageQueries(${site}) error:`, err?.message);
     }
   }
+  if (requireResponse) requireGscResponse(successfulProperties);
 
   return [...merged.entries()]
     .map(([query, m]) => ({
@@ -162,11 +170,12 @@ export interface GscPageStat {
  * Ключ карты — pathname с завершающим слэшем (домены property и сайта могут различаться).
  * Используется шедулером (скип уже-топовых) и scripts/position-report.ts.
  */
-export async function fetchGscAllPagePositions(days = 14, limit = 5000): Promise<Map<string, GscPageStat>> {
+export async function fetchGscAllPagePositions(days = 14, limit = 5000, requireResponse = false): Promise<Map<string, GscPageStat>> {
   const acc = new Map<string, { clicks: number; impressions: number; posW: number }>();
   const sc = getService();
   const endDate = format(subDays(new Date(), 1), 'yyyy-MM-dd');
   const startDate = format(subDays(new Date(), days), 'yyyy-MM-dd');
+  let successfulProperties = 0;
 
   for (const site of SITES) {
     try {
@@ -174,6 +183,7 @@ export async function fetchGscAllPagePositions(days = 14, limit = 5000): Promise
         siteUrl: site,
         requestBody: { startDate, endDate, dimensions: ['page'], rowLimit: limit } as any,
       } as any);
+      successfulProperties++;
       for (const r of ((res as any).data?.rows ?? [])) {
         try {
           const key = pathnameOf(r.keys[0]);
@@ -188,6 +198,7 @@ export async function fetchGscAllPagePositions(days = 14, limit = 5000): Promise
       console.warn(`[GSC] fetchGscAllPagePositions(${site}) error:`, err?.message);
     }
   }
+  if (requireResponse) requireGscResponse(successfulProperties);
 
   const map = new Map<string, GscPageStat>();
   for (const [key, m] of acc) {

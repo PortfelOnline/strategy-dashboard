@@ -67,4 +67,21 @@ describe("SEO position feedback repository", () => {
 
     expect((await repository.getSnapshot(snapshot.id))?.url).toBe(snapshot.url);
   });
+
+  it("lists newest improvement cycles for the read-only dashboard", async () => {
+    const repository = createInMemorySeoPositionFeedbackRepository();
+    await repository.createCycle({ url: "https://100zem.ru/kadastr/first/", segment: "article", snapshotBeforeId: null, hypothesis: "snippet" });
+    const newest = await repository.createCycle({ url: "https://100zem.ru/kadastr/newest/", segment: "article", snapshotBeforeId: null, hypothesis: "content_quality" });
+
+    expect((await repository.listRecentCycles(1)).map((cycle) => cycle.id)).toEqual([newest.id]);
+  });
+
+  it("detects an active cooldown only for the same URL and hypothesis", async () => {
+    const repository = createInMemorySeoPositionFeedbackRepository();
+    const cycle = await repository.createCycle({ url: "https://100zem.ru/kadastr/a/", segment: "article", snapshotBeforeId: null, hypothesis: "snippet" });
+    await repository.updateCycle(cycle.id, { cooldownUntil: new Date("2026-12-01") });
+
+    expect(await repository.hasActiveHypothesisCooldown(cycle.url, "snippet", new Date("2026-09-24"))).toBe(true);
+    expect(await repository.hasActiveHypothesisCooldown(cycle.url, "freshness", new Date("2026-09-24"))).toBe(false);
+  });
 });

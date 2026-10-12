@@ -1,0 +1,288 @@
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -6,6 +6,7 @@
+ import { TRPCError } from "@trpc/server";
+ import * as cheerio from "cheerio";
+ import { parseArticleFromUrl, toOriginFetch, scanCatalog } from "../_core/articleParser";
++import { existingFaqTarget, missingTopicsGuidance } from "../articleCompetitorGuidance";
+ import { selectSerpSnippetFallback } from "../_core/serpSnippets";
+ import { fetchGoogleSerp, fetchYandexSerp, fetchFreeGoogleSerp, SerpData } from "../_core/serpParser";
+ import * as fs from "fs";
+@@ -1993,9 +1994,7 @@
+       .filter(h => h && !ourH2s.has(h.toLowerCase()))
+   );
+   const uniqueMissingTopics = Array.from(new Set(missingTopics));
+-  const missingTopicsBlock = uniqueMissingTopics.length > 0
+-    ? `\nТЕМЫ КОНКУРЕНТОВ КОТОРЫХ НЕТ В НАШЕЙ СТАТЬЕ (обязательно добавить):\n${uniqueMissingTopics.map(t => `- ${t}`).join('\n')}\n`
+-    : '';
++  const missingTopicsBlock = missingTopicsGuidance(uniqueMissingTopics);
+   const lsiKeywords = extractLsiKeywords([...googleSerp.results, ...yandexSerp.results]);
+   const lsiBlock = lsiKeywords.length > 0
+     ? `\nLSI-ТЕРМИНЫ (должны встречаться в статье): ${lsiKeywords.join(', ')}\n`
+@@ -2320,7 +2319,7 @@
+     8,
+     Math.min(Number(process.env.MAX_FLUX_IMAGES ?? 60), avgCompetitorImages + 2),
+   );
+-  const targetFaq = Math.max(8, avgCompetitorFaq + 2);
++  const targetFaq = existingFaqTarget(parsed.contentHtml);
+ 
+   // New deep-competitor stats (auth links, internal links, videos, alts)
+   const avgAuthLinks = competitors.length
+@@ -2362,9 +2361,7 @@
+       ? `(полный текст конкурентов недоступен, используй сниппеты из SERP)\n${serpFallback}`
+       : null;
+ 
+-  const missingTopicsBlock = uniqueMissingTopics.length > 0
+-    ? `\nТЕМЫ КОНКУРЕНТОВ КОТОРЫХ НЕТ В НАШЕЙ СТАТЬЕ (обязательно добавить):\n${uniqueMissingTopics.map(t => `- ${t}`).join('\n')}\n`
+-    : '';
++  const missingTopicsBlock = missingTopicsGuidance(uniqueMissingTopics);
+ 
+   // LSI keywords from all SERP results
+   const lsiKeywords = extractLsiKeywords([...googleSerp.results, ...yandexSerp.results]);
+@@ -2373,10 +2370,10 @@
+     : '';
+   const seoBriefBlock = `\n${formatSeoBrief(buildSeoBrief(keyword, [...googleSerp.results, ...yandexSerp.results], uniqueMissingTopics))}\n`;
+ 
+-  const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
+-- Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
++  const top3Stats = `\nНАБЛЮДЕНИЯ ПО КОНКУРЕНТАМ (не квоты и не гарантия позиций):
++- Слов: лучший конкурент ${maxCompetitorWords}, текущая статья ${ourWords}, минимально сохраняемый объём ${targetWords}
+ - Изображения: ${imagePolicyInstruction}
+-- FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
++- FAQ: у конкурентов в среднем ${avgCompetitorFaq}; сохрани существующие ${targetFaq}, новые добавляй только при реальной пользе
+ - Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО добавить' : 'добавить для сравнения способов'}
+ - Авторитетные ссылки (E-E-A-T): у конкурентов макс. ${maxAuthLinks}, средн. ${avgAuthLinks} — наша цель ${targetAuthLinks}+ (rosreestr.gov.ru, consultant.ru, garant.ru, nalog.ru, pravo.gov.ru)
+ - Внутренние ссылки: у конкурентов средн. ${avgInternalLinks} — наша цель ${targetInternalLinks}+ на 100zem.ru (ссылки на /spravki/, другие статьи)
+@@ -2389,15 +2386,7 @@
+     : '';
+ 
+   const aggressiveBlock = aggressive
+-    ? `\n🔥 AGGRESSIVE MODE (предыдущие попытки не попали в топ-3):
+-- Пиши РАДИКАЛЬНО глубже и уникальнее конкурентов — минимум ${targetWords} слов (это +60% к лучшему конкуренту)
+-- Добавь 2-3 уникальных H2-раздела которых НЕТ ни у одного конкурента (чек-листы, готовые шаблоны, сравнительные таблицы, реальные кейсы с разбором)
+-- В каждом H2 — минимум 350 слов (вместо 250), больше конкретики: цифры, даты, статьи законов, примеры из судебной практики
+-- Featured snippet (первый <p>) — 55-70 слов, максимально конкретный ответ
+-- FAQ: минимум ${targetFaq + 3} вопросов, ответы 100-130 слов каждый
+-- Добавь раздел «Чек-лист перед заказом» с <ul><li> из 8-12 пунктов
+-- Добавь раздел «Типичные ошибки» с 5-7 пунктами и объяснениями
+-- Добавь раздел «Юридическая база» — перечисли ВСЕ применимые ФЗ, постановления, приказы с номерами и датами\n`
++    ? `\nПОВТОРНАЯ ПОПЫТКА: проверь исходный поисковый интент, факты и пробелы статьи. Добавляй только подтверждённые данные и полезные шаги, не наращивай H2/FAQ/слова ради числа.\n`
+     : '';
+ 
+   // Intent detection → structure adapts to what the user actually wants.
+@@ -2438,11 +2427,11 @@
+ ${competitorContext}
+ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}${competitorAuthDomainsBlock}${competitorAltSamplesBlock}${intentBlock}${aggressiveBlock}${slugPromiseBlock}
+ ТРЕБОВАНИЯ:
+-1. Объём: минимум ${targetWords} слов — это ${aggressive ? '25' : '15'}% больше лучшего конкурента (${maxCompetitorWords} слов). Пиши плотно, без воды — пользователь ищет ответ, а не километры текста. Каждый раздел завершён, но не разведён синонимами ради объёма.
+-2. HTML: H1, H2 (10-16), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
+-3. FEATURED SNIPPET (ОБЯЗАТЕЛЬНО): сразу после H1 — абзац 40-60 слов с прямым ответом на "${keyword}". Без вступлений типа "В этой статье...". Формат: "**${keyword}** — это [определение]. [Ключевой факт]. [CTA-намёк]." Это попадает в блок 0 Яндекса и Гугла.
+-4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
+-5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами-ответами в формате <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов — только <details>/<summary>. ⛔ КАЖДЫЙ вопрос обязан быть НАПРЯМУЮ связан с темой "${keyword}" — НЕ добавляй вопросы про смежные, но другие темы (газификация, самострой, ПЗЗ, мелиорация и т.п.), если статья не о них. Лучше меньше вопросов, чем нерелевантные — гейт публикации отклоняет статью целиком при обнаружении хотя бы одного faq_irrelevant.
++1. Объём: сохрани как минимум полезную фактуру существующей статьи (${targetWords} слов по техническому гейту), но не расширяй текст ради превышения конкурента; каждый новый раздел должен отвечать запросу.
++2. HTML: один H1, H2/H3 по смыслу, списки и таблица там, где они помогают разобраться в данных.
++3. Начни с короткого прямого ответа на "${keyword}" без обещаний попасть в специальный блок выдачи.
++4. Оцени темы из списка конкурентов выше и включи только те, что помогают ответить на исходный запрос; нерелевантные разделы не копируй.
++5. FAQ: сохрани существующие релевантные вопросы (${targetFaq}); новые добавляй только если они отвечают на реальные вопросы по теме "${keyword}". Если исходная статья без FAQ, шаблонный раздел не создавай. Для полезного FAQ используй <details class="faq-item"><summary>Вопрос?</summary><p>Проверенный ответ</p></details> (первый с open, остальные без).
+ 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(keyword)}
+ 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+ 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
+@@ -2488,7 +2477,7 @@
+     invokeLLM({
+       model: mainModel,
+       messages: [
+-        { role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь ТОЛЬКО на русском языке для русскоязычной аудитории — английские абзацы, заголовки и разделы СТРОГО ЗАПРЕЩЕНЫ (латиница допустима лишь в аббревиатурах, названиях законов и доменах). Пишешь длинные подробные статьи 3500+ слов для топа поиска. Каждый H2-раздел минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE]. СТРОГО ЗАПРЕЩЕНО: markdown-синтаксис (НЕ ставить # ## ### для заголовков, НЕ **жирный**, НЕ _курсив_, НЕ - списки). Используй ТОЛЬКО HTML-теги: <h1>, <h2>, <h3>, <p>, <ul><li>, <ol><li>, <strong>, <em>, <table><tr><td>, <details class="faq-item"><summary>. Если отдашь markdown — статья будет выглядеть сломанной.' },
++        { role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь ТОЛЬКО на русском языке для русскоязычной аудитории — английские абзацы, заголовки и разделы СТРОГО ЗАПРЕЩЕНЫ (латиница допустима лишь в аббревиатурах, названиях законов и доменах). Пиши по существу, сохраняя полезную фактуру существующей статьи; не добавляй воду, шаблонные разделы или вопросы ради объёма. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE]. СТРОГО ЗАПРЕЩЕНО: markdown-синтаксис (НЕ ставить # ## ### для заголовков, НЕ **жирный**, НЕ _курсив_, НЕ - списки). Используй ТОЛЬКО HTML-теги: <h1>, <h2>, <h3>, <p>, <ul><li>, <ol><li>, <strong>, <em>, <table><tr><td>, <details class="faq-item"><summary>. Если отдашь markdown — статья будет выглядеть сломанной.' },
+         { role: 'user', content: improvePrompt },
+       ],
+       maxTokens: 8192,
+@@ -2557,9 +2546,6 @@
+   improvedContent = enStrip.html;
+ 
+   improvedContent = beautifyArticleHtml(improvedContent);
+-
+-  // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+-  improvedContent = ensureMinFaq(improvedContent, keyword, targetFaq);
+ 
+   // QA log: verify article meets TOP-3 standards
+   const qaReport = checkArticleQuality(improvedContent, url, targetWords, targetFaq);
+@@ -3495,7 +3481,7 @@
+         8,
+         Math.min(Number(process.env.MAX_FLUX_IMAGES ?? 60), avgCompetitorImages + 2),
+       );
+-      const targetFaq = Math.max(8, avgCompetitorFaq + 2);
++      const targetFaq = existingFaqTarget(parsed.contentHtml);
+ 
+       // Extract unique H2 topics from competitors missing in our article
+       const ourH2s = new Set(
+@@ -3520,9 +3506,7 @@
+           ? `(полный текст конкурентов недоступен, используй сниппеты из SERP)\n${serpFallback}`
+           : null;
+ 
+-      const missingTopicsBlock = uniqueMissingTopics.length > 0
+-        ? `\nТЕМЫ КОНКУРЕНТОВ КОТОРЫХ НЕТ В НАШЕЙ СТАТЬЕ (обязательно добавить):\n${uniqueMissingTopics.map(t => `- ${t}`).join('\n')}\n`
+-        : '';
++      const missingTopicsBlock = missingTopicsGuidance(uniqueMissingTopics);
+ 
+       // LSI keywords from both SERPs
+       const lsiKeywords = extractLsiKeywords([...googleSerp.results, ...yandexSerp.results]);
+@@ -3531,10 +3515,10 @@
+         : '';
+       const seoBriefBlock = `\n${formatSeoBrief(buildSeoBrief(serpKeyword, [...googleSerp.results, ...yandexSerp.results], uniqueMissingTopics))}\n`;
+ 
+-      const top3Stats = `\nСТАНДАРТ ТОП-3 (мы должны превзойти):
+-- Слов: лучший конкурент ${maxCompetitorWords}, наша цель ${targetWords}+
++      const top3Stats = `\nНАБЛЮДЕНИЯ ПО КОНКУРЕНТАМ (не квоты и не гарантия позиций):
++- Слов: лучший конкурент ${maxCompetitorWords}, существующая статья ${parsed.wordCount}, минимально сохраняемый объём ${targetWords}
+ - Изображения: ${imagePolicyInstruction}
+-- FAQ-вопросов: средн. у конкурентов ${avgCompetitorFaq}, наша цель ${targetFaq}+
++- FAQ: у конкурентов в среднем ${avgCompetitorFaq}; сохрани существующие ${targetFaq}, новые добавляй только при реальной пользе
+ - Таблицы: конкуренты ${competitorHasTables ? 'используют' : 'не используют'} — ${competitorHasTables ? 'ОБЯЗАТЕЛЬНО' : 'желательно'}\n`;
+ 
+       const ourHeadings = parsed.headings.map(h => `${h.level}: ${h.text}`).join('; ');
+@@ -3574,11 +3558,11 @@
+ ${competitorContext}
+ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${top3Stats}
+ ТРЕБОВАНИЯ:
+-1. Объём: минимум ${targetWords} слов — это 30% БОЛЬШЕ лучшего конкурента (${maxCompetitorWords} слов). Каждый раздел должен быть полным, не обрывай мысль.
+-2. HTML: H1, H2 (8-14), H3 где уместно, <ul>/<ol>, <table> для сравнений и данных
++1. Объём: сохрани полезную фактуру существующей статьи (технический гейт ${targetWords} слов); не увеличивай текст ради процента к конкуренту.
++2. HTML: один H1, H2/H3 по смыслу, списки и таблица только когда они помогают читателю.
+ 3. Прямой ответ на "${serpKeyword}" в первых 2-3 предложениях (featured snippet для Яндекса)
+-4. Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ" выше плюс добавь уникальный угол — то чего нет ни у кого
+-5. FAQ: H2 "Часто задаваемые вопросы" с минимум ${targetFaq} вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов — только <details>/<summary>. ⛔ КАЖДЫЙ вопрос обязан быть НАПРЯМУЮ связан с темой "${serpKeyword}" — НЕ добавляй вопросы про смежные, но другие темы, если статья не о них. Лучше меньше вопросов, чем нерелевантные.
++4. Оцени темы из списка конкурентов выше и включи только те, что помогают ответить на исходный запрос; нерелевантные разделы не копируй.
++5. FAQ: сохрани существующие релевантные вопросы (${targetFaq}); новые только при реальной пользе читателю по теме "${serpKeyword}". Если исходная статья без FAQ, шаблонный раздел не создавай. Для уместного FAQ используй <details class="faq-item"><summary>Вопрос?</summary><p>Проверенный ответ</p></details> — первый с open, остальные без.
+ 6. E-E-A-T: конкретные числа, сроки, законы РФ, стоимости, примеры из практики. ${getShortcodesHint(serpKeyword)}
+ 7. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО писать «зайдите на сайт 100zem.ru», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — это абстрактные инструкции, которые у нас НЕ соответствуют реальной навигации. ✅ Вместо этого: «перейдите по ссылке на /spravki/», «воспользуйтесь формой заказа на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+ 8. Качество: пиши лучше конкурентов — более подробно, структурировано, с конкретными примерами и полезными деталями которых у них нет.
+@@ -3646,9 +3630,6 @@
+       improvedContent = filterGarbageH2(improvedContent, serpKeyword);
+       improvedContent = normalizeHeadings(improvedContent);
+       improvedContent = beautifyArticleHtml(improvedContent);
+-
+-      // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+-      improvedContent = ensureMinFaq(improvedContent, serpKeyword, targetFaq);
+ 
+       // QA log: verify article meets TOP-3 standards
+       checkArticleQuality(improvedContent, input.url, targetWords, targetFaq);
+--- a/server/_core/codeAssistLLM.ts
++++ b/server/_core/codeAssistLLM.ts
+@@ -9,6 +9,8 @@
+ 
+ type CodeAssistInvokerOptions = {
+   bridgeUrl?: string;
++  subscriptionUrl?: string;
++  subscriptionToken?: string;
+   fetchImpl?: FetchLike;
+ };
+ 
+@@ -69,6 +71,8 @@
+ 
+ export function createCodeAssistInvoker({
+   bridgeUrl,
++  subscriptionUrl = process.env.SUBSCRIPTION_BRIDGE_URL,
++  subscriptionToken = process.env.SUBSCRIPTION_BRIDGE_TOKEN,
+   fetchImpl = fetch,
+ }: CodeAssistInvokerOptions = {}) {
+   return async function invokeCodeAssist(params: InvokeParams): Promise<InvokeResult> {
+@@ -132,6 +136,39 @@
+           status: quotaExhausted ? "RESOURCE_EXHAUSTED" : payload?.status,
+         },
+       );
++      if (quotaExhausted && subscriptionUrl && subscriptionToken) {
++        try {
++          const fallback = await fetchImpl(`${subscriptionUrl.replace(/\/$/, "")}/generate`, {
++            method: "POST",
++            headers: {
++              "content-type": "application/json",
++              authorization: `Bearer ${subscriptionToken}`,
++            },
++            body: JSON.stringify({
++              messages: params.messages.map(message => ({ role: message.role, content: messageToText(message) })),
++              maxTokens: params.maxTokens ?? params.max_tokens ?? 4096,
++            }),
++            signal: AbortSignal.timeout(360_000),
++          });
++          if (fallback.ok) {
++            const result = await fallback.json() as { text?: string; model?: string };
++            if (typeof result.text === "string" && result.text.trim()) {
++              return {
++                id: `subscription-${Date.now()}`,
++                created: Math.floor(Date.now() / 1000),
++                model: result.model || "subscription-cli",
++                choices: [{
++                  index: 0,
++                  message: { role: "assistant", content: result.text.trim() },
++                  finish_reason: "stop",
++                }],
++              };
++            }
++          }
++        } catch {
++          // Keep the original quota error when the subscription bridge is offline.
++        }
++      }
+       throw error;
+     }
+ 
+--- a/server/_core/codeAssistLLM.test.ts
++++ b/server/_core/codeAssistLLM.test.ts
+@@ -62,6 +62,7 @@
+   let calls = 0;
+   const invoke = createCodeAssistInvoker({
+     bridgeUrl: "http://viralcraft:3000",
++    subscriptionUrl: "",
+     fetchImpl: async () => {
+       calls += 1;
+       return jsonResponse({
+@@ -81,3 +82,49 @@
+     })).rejects.toMatchObject({ code: 429, status: "RESOURCE_EXHAUSTED" });
+   expect(calls).toBe(1);
+ });
++
++it("uses the authorized subscription CLI only on primary quota exhaustion", async () => {
++  const urls: string[] = [];
++  const invoke = createCodeAssistInvoker({
++    bridgeUrl: "http://viralcraft:3000",
++    subscriptionUrl: "http://192.168.16.1:4407",
++    subscriptionToken: "test-token",
++    fetchImpl: async (input, init) => {
++      urls.push(String(input));
++      if (urls.length === 1) return jsonResponse({ error: { code: 429, status: "RESOURCE_EXHAUSTED", message: "quota" } }, 429);
++      expect(init?.headers).toMatchObject({ authorization: "Bearer test-token" });
++      expect(JSON.parse(String(init?.body))).toMatchObject({ maxTokens: 8192, messages: [{ role: "system", content: "Верни HTML" }] });
++      return jsonResponse({ text: "<h1>Готово</h1>", model: "claude-sonnet" });
++    },
++  });
++  const result = await invoke({ messages: [{ role: "system", content: "Верни HTML" }], maxTokens: 8192 });
++  expect(urls).toHaveLength(2);
++  expect(urls[1]).toBe("http://192.168.16.1:4407/generate");
++  expect(result.model).toBe("claude-sonnet");
++  expect(result.choices[0]?.message.content).toBe("<h1>Готово</h1>");
++});
++
++it("does not send validation failures to subscriptions", async () => {
++  let calls = 0;
++  const invoke = createCodeAssistInvoker({
++    subscriptionUrl: "http://192.168.16.1:4407",
++    subscriptionToken: "test-token",
++    fetchImpl: async () => { calls++; return jsonResponse({ error: { message: "invalid request" } }, 400); },
++  });
++  await expect(invoke({ messages: [{ role: "user", content: "test" }] })).rejects.toMatchObject({ code: 400 });
++  expect(calls).toBe(1);
++});
++
++it("fails closed with the original quota error if subscriptions are limited", async () => {
++  let calls = 0;
++  const invoke = createCodeAssistInvoker({
++    subscriptionUrl: "http://192.168.16.1:4407",
++    subscriptionToken: "test-token",
++    fetchImpl: async () => {
++      calls++;
++      return calls === 1 ? jsonResponse({ error: { status: "RESOURCE_EXHAUSTED", message: "quota" } }, 429) : jsonResponse({ error: "CLI rate limit" }, 429);
++    },
++  });
++  await expect(invoke({ messages: [{ role: "user", content: "test" }] })).rejects.toMatchObject({ code: 429, status: "RESOURCE_EXHAUSTED" });
++  expect(calls).toBe(2);
++});

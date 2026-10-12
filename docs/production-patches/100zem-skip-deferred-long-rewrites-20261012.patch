@@ -1,0 +1,40 @@
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -3319,7 +3319,7 @@
+   }
+ }
+ 
+-export async function runBatchRewrite(userId: number, urls: string[]): Promise<{ failed: string[]; skipped: string[]; failureReasons: Record<string, string>; published: PublishedRewriteResult[] }> {
++export async function runBatchRewrite(userId: number, urls: string[]): Promise<{ failed: string[]; failureReasons: Record<string, string>; published: PublishedRewriteResult[] }> {
+   underTargetUrls.clear();
+   let stopped = false;
+   const failed: string[] = [];
+@@ -3360,7 +3360,7 @@
+       console.error(`[BatchRewrite] Failed: ${url}`, err);
+       recordThroughput(url, _startedAt, false);
+       failed.push(url);
+-      failureReasons[url] = message;
++      failureReasons[url] = String(err?.message || 'неизвестная ошибка');
+       state.errors++;
+ 
+       // Code Assist quota exhaustion is batch-wide: retrying the remaining URLs
+@@ -3404,7 +3404,7 @@
+   setTimeout(() => { if (!batchRewriteJobs.get(userId)?.running) batchRewriteJobs.delete(userId); }, 30 * 60 * 1000);
+   if (failed.length) console.warn(`[BatchRewrite] не удалось: ${failed.length}/${urls.length}`);
+   if (skipped.length) console.warn(`[BatchRewrite] отложены для delta-редактирования: ${skipped.length}/${urls.length}`);
+-  return { failed, skipped, failureReasons, published };
++  return { failed, failureReasons, published };
+ }
+ 
+ // ─────────────────────────────────────────────────────────────────────────────
+--- a/server/articleCompetitorGuidance.test.ts
++++ b/server/articleCompetitorGuidance.test.ts
+@@ -44,7 +44,7 @@
+     expect(rewrite).toContain('validateArticleForPublish(improvedContent');
+     expect(source).toContain('const deferredRewrite = /^\\[RewriteSkip\\]/.test(message);');
+     expect(source).toContain('skipped.push(url);');
+-    expect(source).toContain('return { failed, skipped, failureReasons, published };');
++    expect(source).toContain('return { failed, failureReasons, published };');
+     const shortRewrite = validateArticleForPublish('<h2>Кратко</h2><table><tr><td>Факт</td></tr></table>', { targetWords: 11299, targetFaq: 0, minH2: 1 });
+     expect(shortRewrite.pass).toBe(false);
+     expect(shortRewrite.issues).toContain(`word_count=${shortRewrite.wordCount}/11299`);

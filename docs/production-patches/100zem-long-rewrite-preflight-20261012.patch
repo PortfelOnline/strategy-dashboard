@@ -1,0 +1,61 @@
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -24,7 +24,7 @@
+ import * as articlesDb from "../articles.db";
+ import { extractSlugPromises, findUncoveredPromises, buildSlugPromiseBlock } from "../slugPromise";
+ import { publicSiteBase } from "../_core/publicUrl";
+-import { getEnhancePassLimit, validateArticleForPublish } from "../articlePublishGate";
++import { getEnhancePassLimit, getRewriteDeferralReason, validateArticleForPublish } from "../articlePublishGate";
+ import * as wordpressDb from "../wordpress.db";
+ import { seoPositionFeedbackRepository } from "../seoPositionFeedback.db";
+ import { createImagePlan } from "../articleImagePolicy";
+@@ -2230,6 +2230,11 @@
+     if (!parsed) throw e;
+     console.log(`[Draft] публичной страницы нет, наполняю черновик: ${url}`);
+   }
++  const deferralReason = getRewriteDeferralReason(parsed.wordCount);
++  if (deferralReason) {
++    console.warn(`[RewriteSkip] ${url}: ${deferralReason}; original preserved for delta editing`);
++    throw new Error(`[RewriteSkip] ${deferralReason}`);
++  }
+   const ourDomain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } })();
+   const keyword = extractKeywordFromTitle(parsed.title);
+ 
+--- a/server/articlePublishGate.ts
++++ b/server/articlePublishGate.ts
+@@ -11,6 +11,16 @@
+   h2Count: number;
+   hasTable: boolean;
+   issues: string[];
++}
++
++export function getRewriteDeferralReason(originalWords: number): string | null {
++  // The full rewrite prompt includes only the first 5000 characters of the source.
++  // Preserve long originals for a separate delta-edit workflow instead of paying
++  // for a replacement that the final non-truncation gate must reject.
++  const maxRewriteWords = 4000;
++  return originalWords > maxRewriteWords
++    ? `original_word_count=${originalWords} exceeds_full_rewrite_limit=${maxRewriteWords}`
++    : null;
+ }
+ 
+ export function getEnhancePassLimit(raw: string | undefined): number {
+--- a/server/articleCompetitorGuidance.test.ts
++++ b/server/articleCompetitorGuidance.test.ts
+@@ -3,6 +3,7 @@
+ import { join } from 'path';
+ import { existingFaqTarget, missingTopicsGuidance } from './articleCompetitorGuidance';
+ import * as publishGate from './articlePublishGate';
++import { validateArticleForPublish } from './articlePublishGate';
+ 
+ describe('competitor-guided article improvement', () => {
+   it('preserves actual FAQ count instead of inflating it to match rivals', () => {
+@@ -41,5 +42,8 @@
+     expect(rewrite.indexOf('getRewriteDeferralReason(parsed.wordCount)')).toBeGreaterThan(0);
+     expect(rewrite.indexOf('getRewriteDeferralReason(parsed.wordCount)')).toBeLessThan(rewrite.indexOf('cachedGoogleSerp(keyword)'));
+     expect(rewrite).toContain('validateArticleForPublish(improvedContent');
++    const shortRewrite = validateArticleForPublish('<h2>Кратко</h2><table><tr><td>Факт</td></tr></table>', { targetWords: 11299, targetFaq: 0, minH2: 1 });
++    expect(shortRewrite.pass).toBe(false);
++    expect(shortRewrite.issues).toContain(`word_count=${shortRewrite.wordCount}/11299`);
+   });
+ });

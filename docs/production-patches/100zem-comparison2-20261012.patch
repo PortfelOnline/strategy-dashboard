@@ -1,0 +1,147 @@
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -802,16 +802,14 @@
+   const internalLinkCount = internalLinks.length;
+ 
+   const issues: string[] = [];
+-  if (wordCount < targetWords) issues.push(`слов: ${wordCount}/${targetWords}`);
+   const latinPct = latinShare(html);
+   if (latinPct > 0.12) issues.push(`латиница: ${Math.round(latinPct * 100)}%`);
+-  if (faqCount < targetFaq)    issues.push(`FAQ: ${faqCount}/${targetFaq}`);
+-  if (h2Count < 10)            issues.push(`H2: ${h2Count} (нужно 10+)`);
+-  if (!hasTable)               issues.push('нет таблицы');
+-  // External <a> links are NO LONGER required — authority sources are mentioned
+-  // as plain text (no PageRank leak). Auth mentions tracked via authLinksCount soft check.
+-  // soft checks — don't FAIL on these, but log for visibility
++  // Structure and length are diagnostic signals, not publication gates.
+   const softIssues: string[] = [];
++  if (targetWords > 0 && wordCount < targetWords) softIssues.push(`words:${wordCount}/${targetWords}`);
++  if (faqCount < targetFaq) softIssues.push(`faq:${faqCount}/${targetFaq}`);
++  if (h2Count < 10) softIssues.push(`h2:${h2Count}`);
++  if (!hasTable) softIssues.push('no-table');
+   if (h3Count < 3)                softIssues.push(`H3:${h3Count}`);
+   if (authLinksCount < 3)         softIssues.push(`auth-mentions:${authLinksCount}`);
+   if (internalLinkCount < 3)      softIssues.push(`internal-links:${internalLinkCount}`);
+@@ -977,6 +975,7 @@
+ ): Promise<string> {
+   // Проходов доводки. Было 6: при цели 5751 слово (максимум из десяти конкурентов
+   // × 1.15) статья успевала дорасти лишь до ~4200 и обрывалась на 73% пути.
++  if (process.env.ENHANCE_ARTICLE_PADDING !== '1') return html;
+   const MAX_PASSES = getEnhancePassLimit(process.env.ENHANCE_MAX_PASSES);
+ 
+   for (let pass = 0; pass < MAX_PASSES; pass++) {
+@@ -1977,7 +1976,8 @@
+     ? Math.round(saneWords1.reduce((s, w) => s + w, 0) / saneWords1.length)
+     : 1200;
+   const maxCompetitorWords = saneWords1.length ? Math.max(...saneWords1) : 1200;
+-  const targetWords = Math.max(3200, Math.round(maxCompetitorWords * 1.3));
++  const targetWords = Math.max(countWords(parsed.content), 0);
++  const targetFaq = existingFaqTarget(parsed.contentHtml);
+ 
+   const competitorContext = buildCompetitorContext(competitors);
+ 
+@@ -2039,22 +2039,22 @@
+ ${competitorContext}
+ ${missingTopicsBlock}${lsiBlock}${seoBriefBlock}${gscBlock}
+ ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
+-1. Объём: минимум ${targetWords} слов (конкуренты пишут в среднем ${avgCompetitorWords} слов — нужно превзойти)
+-2. Структура HTML: один H1, 6-10 подзаголовков H2, H3 где уместно, списки <ul>/<ol>, таблицы <table> где есть данные для сравнения
+-3. Начало: прямой ответ на запрос "${serpKeyword}" в первых 2-3 предложениях (featured snippet). КАЖДЫЙ H2-раздел тоже начинай с 1-2 предложений прямого ответа на под-вопрос раздела (для блока «Люди также спрашивают», Яндекс Нейро и Google AI Overview — короткие цитируемые пассажи)
+-4. Охват тем: включи ВСЕ темы конкурентов которых нет у нас
+-5. FAQ-раздел: H2 "Часто задаваемые вопросы" с минимум 10 вопросами СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> — первый с open, остальные без. НЕ используй <h3> для вопросов (важно для блока "Люди также спрашивают" в Яндексе)
++1. Сохрани фактуру существующей статьи; добавляй новые разделы только для подтверждённых пробелов в ответе, а не ради объёма конкурентов.
++2. Структура HTML: один H1, H2/H3 по смыслу, списки и таблица только при пользе читателю.
++3. Начало: прямой ответ на запрос "${serpKeyword}" в первых предложениях, без обещаний попасть в специальный блок выдачи.
++4. Оцени темы конкурентов: включай только релевантные исходному запросу и подтверждённые фактами.
++5. FAQ: сохрани полезные существующие вопросы; новые добавляй только при реальном запросе читателей.
+ 6. E-E-A-T: добавь конкретные факты, числа, сроки, стоимости, ссылки на законы где уместно. ${getShortcodesHint(serpKeyword)}
+ 7. Пошаговые инструкции: нумерованные списки для процессов
+ 8. Все упоминания заказа документов — ТОЛЬКО прямой ссылкой <a href="/spravki/">/spravki/</a>. ⛔ ЗАПРЕЩЕНО «зайдите на сайт», «на главной странице выберите раздел», «в меню нажмите», «найдите раздел «Заказать»» — такой навигации у нас нет. ✅ Пиши: «перейдите по ссылке на /spravki/», «воспользуйтесь формой на /spravki/», «заполните онлайн-анкету на /spravki/». НЕ упоминай Росреестр, Госуслуги, МФЦ как способы заказа.
+ 9. ЗАПРЕЩЕНО вставлять конкретные цены в рублях — используй ТОЛЬКО шорткод [BLOCK_PRICE] для раздела с ценами.
+ 10. Название сервиса пиши СТРОГО как "100zem.ru" (с буквой r: kadas-TR-map). Никогда не пиши "Kadastmap", "kadastmap", "KadastrMap" — только "100zem.ru".
+ 11. Сохрани язык и стиль оригинала
+-12. INFORMATION GAIN: добавь минимум один уникальный элемент, которого НЕТ у конкурентов — чек-лист, таблицу сравнения, разбор частых ошибок, мини-кейс или пошаговый пример с конкретными цифрами. Это решающий фактор для топа в 2026.
+-13. ТЕМАТИЧЕСКАЯ ПОЛНОТА (топикал-авторитет Яндекса): естественно упомяни связанные сущности — ЕГРН, Росреестр, ФЗ-218 «О госрегистрации недвижимости», кадастровый инженер, кадастровая стоимость — где это уместно по смыслу.
++12. ДОПОЛНИТЕЛЬНАЯ ПОЛЬЗА: если обнаружен подтверждённый пробел относительно релевантных ответов конкурентов, добавь проверяемый пример, практический шаг или разбор ошибки.
++13. ТЕМАТИЧЕСКАЯ ПОЛНОТА: упоминай связанные сущности только где это помогает ответить на запрос.
+ 14. АКТУАЛЬНОСТЬ: где уместно укажи, что порядок/данные действуют в 2026 году (свежесть — сигнал ранжирования).
+ 15. БЕЗ ВОДЫ: каждое предложение несёт факт или пользу. Запрещены пустые вводные «стоит отметить», «в современном мире», «как известно», «в данной статье». Плотность пользы как у текста-ответа, а не SEO-простыни.
+-16. ЭМОДЗИ В ТЕКСТЕ: активно используй эмодзи внутри параграфов и списков — минимум 20-30 на всю статью: 💡 советы, ⚠️ предупреждения, ✅ преимущества, 📌 факты, 📊 💰 ⏱️ по контексту. Ставь эмодзи в начале предложения или перед ключевым словом, НЕ в каждом предложении подряд. В каждом H2-разделе — 2-3 эмодзи в тексте.
++16. Эмодзи используй лишь если они помогают читателю; не вставляй их ради числа.
+ 
+ Верни ТОЛЬКО готовый HTML-текст статьи используя теги: <h1>, <h2>, <h3>, <p>, <ul>, <ol>, <li>, <table>, <tr>, <td>, <th>, <strong>, <em>. Без <html>/<body>/<head> тегов.`;
+ 
+@@ -2065,7 +2065,7 @@
+       maxTokens: 1200,
+       responseFormat: { type: 'json_object' },
+     }),
+-    invokeLLM({ messages: [{ role: 'system', content: 'Ты профессиональный SEO-копирайтер. Пишешь ТОЛЬКО на русском языке для русскоязычной аудитории — английские абзацы, заголовки и разделы СТРОГО ЗАПРЕЩЕНЫ (латиница допустима лишь в аббревиатурах, названиях законов и доменах). Пишешь длинные подробные статьи 3500+ слов для топа поиска. Никогда не сокращай разделы — каждый H2 минимум 250 слов. ВАЖНО: цены указывай ТОЛЬКО через [BLOCK_PRICE], не вставляй конкретные цифры цен в рублях.' }, { role: 'user', content: improvePrompt }], maxTokens: 8192 }),
++    invokeLLM({ messages: [{ role: 'system', content: 'Ты профессиональный SEO-редактор для русскоязычной аудитории. Сохраняй подтверждённые факты и полноту ответа на запрос; не добавляй шаблонные FAQ или разделы ради объёма. Отвечай только HTML; цены указывай через [BLOCK_PRICE].' }, { role: 'user', content: improvePrompt }], maxTokens: 8192 }),
+   ]);
+ 
+   let seo: SeoAnalysis;
+@@ -2087,21 +2087,18 @@
+         .replace(/^```html?\s*/i, '').replace(/\s*```$/i, '').trim()
+     : parsed.content;
+ 
+-  improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword, targetWords, 10);
++  improvedContent = await enhanceIfNeeded(improvedContent, serpKeyword, targetWords, targetFaq);
+   improvedContent = filterGarbageH2(improvedContent, serpKeyword);
+   improvedContent = stripSeoEmojiNoise(stripFirstH1(normalizeHeadings(convertMarkdownLeaks(improvedContent))));
+   improvedContent = beautifyArticleHtml(improvedContent);
+ 
+-  // Quality fixer: inject generic FAQ items if LLM produced fewer than target.
+-  improvedContent = ensureMinFaq(improvedContent, serpKeyword, 10);
+-
+-  // QA log
+-  checkArticleQuality(improvedContent, url, targetWords, 10);
++  // FAQ additions require actual reader intent; never inject generic questions.
++  checkArticleQuality(improvedContent, url, targetWords, targetFaq);
+ 
+   // Deterministic semantic gate: structural counters alone cannot catch
+   // unrelated FAQ answers or invented service promises. Keep unsafe output in
+   // history for review, but never trigger reindexing.
+-  const seoGate = validateSeoArticle(improvedContent, serpKeyword, seo.metaTitle || parsed.title, 10);
++  const seoGate = validateSeoArticle(improvedContent, serpKeyword, seo.metaTitle || parsed.title, targetFaq);
+   if (!seoGate.ok) {
+     console.warn(`[SEO-GATE] BLOCK ${url}: ${seoGate.issues.map((i) => i.message).join('; ')}`);
+   }
+@@ -4189,13 +4186,13 @@
+ ${competitorContext}
+ 
+ ТРЕБОВАНИЯ К СТАТЬЕ:
+-1. Объём: минимум ${targetWords} слов — превзойди конкурентов по полноте
++1. Объём: достаточно для полного ответа на запрос, без повторов и расширения ради объёма конкурентов
+ 2. H1: точно под запрос "${input.keyword}" + дополнительный контекст
+-3. Структура: 7-12 H2, H3 где уместно; не менее 3 нумерованных или маркированных списков
+-4. Вступление: прямой ответ на запрос в первых 2-3 предложениях (попадание в featured snippet)
+-5. Покрой ВСЕ темы которые есть у конкурентов — сделай статью исчерпывающей
+-6. Таблицы: добавь хотя бы одну сравнительную таблицу где уместно
+-7. FAQ: H2 "Часто задаваемые вопросы" → минимум 10 вопросов-ответов СТРОГО в формате: <details class="faq-item" open><summary>Вопрос?</summary><p>Ответ 70-100 слов</p></details> (первый с open, остальные без). НЕ используй <h3> для вопросов (для блока "Люди также спрашивают")
++3. Структура: H2/H3, списки и таблицы только по смыслу
++4. Вступление: прямой ответ на запрос без обещаний попасть в специальные блоки выдачи
++5. Проверь темы конкурентов как гипотезы и добавь только релевантные запросу и подтверждённые фактами
++6. Таблицы добавляй только если они помогают сравнить проверяемые данные
++7. FAQ добавляй только при реальных вопросах пользователей; не создавай шаблонные вопросы ради числа
+ 8. E-E-A-T: конкретные цифры, сроки, стоимости, ссылки на законы/постановления где уместно
+ 9. CTA: в конце статьи и в одном-двух местах по тексту добавь призыв — ${input.ctaHint}
+ 10. Стиль: информационный, деловой, без воды
+--- a/server/articleCompetitorGuidance.test.ts
++++ b/server/articleCompetitorGuidance.test.ts
+@@ -18,10 +18,14 @@
+   });
+   it('uses evidence-based FAQ and topic guidance in both rewrite paths', () => {
+     const source = readFileSync(join(__dirname, 'routers/articles.ts'), 'utf8');
+-    expect(source.match(/existingFaqTarget\(parsed\.contentHtml\)/g)).toHaveLength(2);
++    expect(source.match(/existingFaqTarget\(parsed\.contentHtml\)/g)).toHaveLength(3);
+     expect(source.match(/missingTopicsGuidance\(uniqueMissingTopics\)/g)).toHaveLength(3);
+     expect(source).not.toContain('ensureMinFaq(improvedContent, keyword, targetFaq)');
+-    expect(source).not.toContain('ensureMinFaq(improvedContent, serpKeyword, targetFaq)');
++    expect(source).not.toContain('ensureMinFaq(improvedContent, serpKeyword, 10)');
++    expect(source).not.toContain('Math.max(3200, Math.round(maxCompetitorWords * 1.3))');
++    expect(source).not.toContain('if (wordCount < targetWords) issues.push');
++    expect(source).not.toContain('Покрой ВСЕ темы которые есть у конкурентов');
++    expect(source).toContain("if (process.env.ENHANCE_ARTICLE_PADDING !== '1') return html;");
+     expect(source).not.toContain('Покрой ВСЕ темы из списка "ТЕМЫ КОНКУРЕНТОВ"');
+     expect(source).not.toContain('Пишешь длинные подробные статьи 3500+ слов для топа поиска. Каждый H2-раздел минимум 250 слов.');
+   });

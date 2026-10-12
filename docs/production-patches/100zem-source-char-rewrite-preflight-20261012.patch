@@ -1,0 +1,54 @@
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -2230,7 +2230,7 @@
+     if (!parsed) throw e;
+     console.log(`[Draft] публичной страницы нет, наполняю черновик: ${url}`);
+   }
+-  const deferralReason = getRewriteDeferralReason(parsed.wordCount);
++  const deferralReason = getRewriteDeferralReason(parsed.content.length);
+   if (deferralReason) {
+     console.warn(`[RewriteSkip] ${url}: ${deferralReason}; original preserved for delta editing`);
+     throw new Error(`[RewriteSkip] ${deferralReason}`);
+--- a/server/articlePublishGate.ts
++++ b/server/articlePublishGate.ts
+@@ -13,13 +13,13 @@
+   issues: string[];
+ }
+ 
+-export function getRewriteDeferralReason(originalWords: number): string | null {
++export function getRewriteDeferralReason(originalContentChars: number): string | null {
+   // The full rewrite prompt includes only the first 5000 characters of the source.
+-  // Preserve long originals for a separate delta-edit workflow instead of paying
+-  // for a replacement that the final non-truncation gate must reject.
+-  const maxRewriteWords = 4000;
+-  return originalWords > maxRewriteWords
+-    ? `original_word_count=${originalWords} exceeds_full_rewrite_limit=${maxRewriteWords}`
++  // Preserve originals that cannot fit intact instead of paying for a replacement
++  // that the final non-truncation gate must reject.
++  const maxRewriteSourceChars = 5000;
++  return originalContentChars > maxRewriteSourceChars
++    ? `original_content_chars=${originalContentChars} exceeds_full_rewrite_limit=${maxRewriteSourceChars}`
+     : null;
+ }
+ 
+--- a/server/articleCompetitorGuidance.test.ts
++++ b/server/articleCompetitorGuidance.test.ts
+@@ -34,13 +34,13 @@
+   it('defers a long original before paying for SERP or LLM and preserves the publication gate', () => {
+     const defer = (publishGate as any).getRewriteDeferralReason;
+     expect(typeof defer).toBe('function');
+-    expect(defer(11299)).toMatch(/11299/);
+-    expect(defer(4000)).toBeNull();
+-    expect(defer(3999)).toBeNull();
++    expect(defer(5001)).toMatch(/5001/);
++    expect(defer(5000)).toBeNull();
++    expect(defer(4999)).toBeNull();
+     const source = readFileSync(join(__dirname, 'routers/articles.ts'), 'utf8');
+     const rewrite = source.slice(source.indexOf('async function rewriteArticle('), source.indexOf('export async function runBatchRewrite('));
+-    expect(rewrite.indexOf('getRewriteDeferralReason(parsed.wordCount)')).toBeGreaterThan(0);
+-    expect(rewrite.indexOf('getRewriteDeferralReason(parsed.wordCount)')).toBeLessThan(rewrite.indexOf('cachedGoogleSerp(keyword)'));
++    expect(rewrite.indexOf('getRewriteDeferralReason(parsed.content.length)')).toBeGreaterThan(0);
++    expect(rewrite.indexOf('getRewriteDeferralReason(parsed.content.length)')).toBeLessThan(rewrite.indexOf('cachedGoogleSerp(keyword)'));
+     expect(rewrite).toContain('validateArticleForPublish(improvedContent');
+     expect(source).toContain('const deferredRewrite = /^\\[RewriteSkip\\]/.test(message);');
+     expect(source).toContain('skipped.push(url);');

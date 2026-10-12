@@ -1,0 +1,153 @@
+# Production source patch for c:/opt/n/apps/strategy-dashboard (2026-10-12).
+ # Base is the c checkout, NOT the older local Git branch. Apply only after verifying base hashes.
+# articles.ts base sha256 8cca6482466c3b17a4031b76e9cbddc410e21c6e0d9467e8b0272e3dfc0643b5
+# serpParser.ts base sha256 70d3a393d739190c12e2c300d0ae9ee3c37c3c45e2555e39841aef5afaf2993d
+# Old production image tag: strategy-dashboard-app:rollback-20261012-serp
+# New production image sha256:1954d10f94b18138250c8464f8ef11b5a8fb31f50c52adee44c6cd6b5a330cca
+--- a/server/routers/articles.ts
++++ b/server/routers/articles.ts
+@@ -6,6 +6,7 @@
+ import { TRPCError } from "@trpc/server";
+ import * as cheerio from "cheerio";
+ import { parseArticleFromUrl, toOriginFetch, scanCatalog } from "../_core/articleParser";
++import { selectSerpSnippetFallback } from "../_core/serpSnippets";
+ import { fetchGoogleSerp, fetchYandexSerp, fetchFreeGoogleSerp, SerpData } from "../_core/serpParser";
+ import * as fs from "fs";
+ import * as path from "path";
+@@ -202,7 +203,7 @@
+ }
+ 
+ export async function cachedGoogleSerp(keyword: string): Promise<SerpData> {
+-  const key = `google-searx-v1:${keyword}`;
++  const key = `google-searx-v2:${keyword}`;
+   const hit = cacheGet<SerpData>(serpCache, key);
+   if (hit) { console.log(`[cache] SERP HIT google:${keyword}`); return hit; }
+   const result = await fetchGoogleSerp(keyword);
+@@ -2347,11 +2348,7 @@
+   const uniqueMissingTopics = Array.from(new Set(missingTopics));
+ 
+   // Use SERP snippets as fallback context when competitor articles couldn't be parsed
+-  const serpFallback = googleSerp.results
+-    .filter((r: any) => !r.domain.includes(ourDomain) && r.snippet)
+-    .slice(0, 5)
+-    .map((r: any) => `- ${r.title}: ${r.snippet}`)
+-    .join('\n');
++  const serpFallback = selectSerpSnippetFallback(mergedSerp, ourDomain);
+ 
+   const competitorContext = competitors.length
+     ? competitors.map((c, idx) =>
+@@ -3513,11 +3510,7 @@
+       const uniqueMissingTopics = Array.from(new Set(missingTopics));
+ 
+       // SERP snippets fallback when full competitor content unavailable
+-      const serpFallback = googleSerp.results
+-        .filter((r: any) => !r.domain.includes(ourDomain) && r.snippet)
+-        .slice(0, 5)
+-        .map((r: any) => `- ${r.title}: ${r.snippet}`)
+-        .join('\n');
++      const serpFallback = selectSerpSnippetFallback(mergedSerpResults, ourDomain);
+ 
+       const competitorContext = competitors.length > 0
+         ? competitors.map(c =>
+--- a/server/_core/serpParser.ts
++++ b/server/_core/serpParser.ts
+@@ -305,8 +305,8 @@
+   }
+   const yx = await fetchSearxngSerp(keyword, 'yandex');
+   if (yx.results.length > 0) {
+-    console.warn(`[SERP] Google fallback via SearXNG/Yandex: ${yx.results.length} рез.`);
+-    return { ...yx, engine: 'google' };
++    console.warn(`[SERP] Google unavailable; Yandex is available separately (${yx.results.length} results)`);
++    return { engine: 'google', keyword, results: [], error: 'google unavailable; yandex available separately' };
+   }
+   const cse = await fetchGoogleSerpViaCse(keyword);
+   if (cse) return cse;
+--- a/server/top-article-quality.test.ts
++++ b/server/top-article-quality.test.ts
+@@ -8,7 +8,7 @@
+   it('uses SearXNG before paid Google SERP providers and avoids legacy paid-SERP cache entries', () => {
+     const fn = serpSource.slice(serpSource.indexOf('export async function fetchGoogleSerp'));
+     expect(fn.indexOf("fetchSearxngSerp(keyword, 'google')")).toBeLessThan(fn.indexOf('fetchGoogleSerpViaSerper(keyword)'));
+-    expect(articleSource).toContain('const key = `google-searx-v1:${keyword}`;');
++    expect(articleSource).toContain('const key = `google-searx-v2:${keyword}`;');
+   });
+ 
+   it('keeps all SERP candidates for a new article without an own domain yet', () => {
+--- /dev/null
++++ b/server/_core/serpSnippets.ts
+@@ -0,0 +1,10 @@
++export function selectSerpSnippetFallback(
++  results: { domain: string; title: string; snippet: string }[],
++  ourDomain: string,
++): string {
++  return results
++    .filter(r => r.snippet && (!ourDomain || !r.domain.includes(ourDomain)))
++    .slice(0, 5)
++    .map(r => `- ${r.title}: ${r.snippet}`)
++    .join('\n');
++}
+--- /dev/null
++++ b/server/_core/serpParser.origin.test.ts
+@@ -0,0 +1,33 @@
++import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
++
++vi.mock('axios', () => ({ default: { get: vi.fn(), post: vi.fn() } }));
++vi.mock('./browser', () => ({ fetchPageHtml: vi.fn() }));
++vi.mock('../bots', () => ({ getRandomWorkingProxy: vi.fn(), banProxy: vi.fn() }));
++
++import axios from 'axios';
++
++const get = vi.mocked(axios.get);
++
++describe('Google SERP provenance', () => {
++  beforeEach(() => {
++    vi.resetModules();
++    vi.clearAllMocks();
++    vi.stubEnv('SEARXNG_URL', 'http://searx.test');
++    vi.stubEnv('SERP_PAGES', '1');
++  });
++  afterEach(() => vi.unstubAllEnvs());
++
++  it('does not represent a Yandex-only SearXNG response as Google', async () => {
++    get.mockImplementation(async (_url, options: any) => {
++      if (options.params.engines === 'google') return { data: { results: [] } } as any;
++      if (options.params.engines === 'yandex') return { data: { results: [{ url: 'https://example.ru/article/', title: 'Example', engine: 'yandex', positions: [1], content: 'Snippet' }] } } as any;
++      throw new Error('Unexpected API call');
++    });
++    const { fetchGoogleSerp } = await import('./serpParser');
++    const result = await fetchGoogleSerp('кадастровый план');
++    expect(result.engine).toBe('google');
++    expect(result.results).toEqual([]);
++    expect(result.error).toMatch(/yandex/i);
++    expect(get).toHaveBeenCalledTimes(2);
++  });
++});
+--- /dev/null
++++ b/server/_core/serpSnippets.test.ts
+@@ -0,0 +1,26 @@
++import { describe, expect, it } from 'vitest';
++import { readFileSync } from 'fs';
++import { join } from 'path';
++import { selectSerpSnippetFallback } from './serpSnippets';
++
++const rows = [
++  { domain: 'other.ru', title: 'Как заказать', snippet: 'Пошаговая инструкция' },
++  { domain: '100zem.ru', title: 'Наш материал', snippet: 'Наш текст' },
++];
++
++describe('SERP snippet fallback', () => {
++  it('keeps competitor snippets when own domain is unknown', () => {
++    expect(selectSerpSnippetFallback(rows, '')).toContain('Пошаговая инструкция');
++  });
++  it('excludes own domain while retaining competitors', () => {
++    const text = selectSerpSnippetFallback(rows, '100zem.ru');
++    expect(text).toContain('Пошаговая инструкция');
++    expect(text).not.toContain('Наш текст');
++  });
++  it('is wired into both article rewrite paths and invalidates old mislabeled Google cache', () => {
++    const source = readFileSync(join(__dirname, '../routers/articles.ts'), 'utf8');
++    expect(source).toContain('selectSerpSnippetFallback(mergedSerp, ourDomain)');
++    expect(source).toContain('selectSerpSnippetFallback(mergedSerpResults, ourDomain)');
++    expect(source).toContain('google-searx-v2:');
++  });
++});
